@@ -57,4 +57,18 @@ Locked product/engineering decisions, newest groups appended. Companion to `PROG
   setting `STRIPE_*` keys (the SetupIntent endpoint + vault management are real and tested now; the
   card-entry form is config-gated exactly like the deposit/withdrawal rails).
 
-<!-- group 4 (estate) is DESIGN-ONLY — appended below -->
+## Group 4 — Estate / Inheritance / Gifting — DESIGN ONLY (2026-06-28, NOTHING BUILT)
+- Full design + **legal-questions checklist** in `plan/phase-estate-design.md`. **No code** (no
+  migration/models/services/routes/tests/frontend) — this group is **gated on a real lawyer**.
+- Key findings: the current `FamilyBeneficiaryGifting.tsx` is a 100% client-side mock with
+  **false legal claims** ("reviewed by our legal partners / legally binding", "Legally
+  acknowledged", "on verified death") and references **passive income** (PASSIVE is hard-locked).
+- Hard blockers requiring counsel BEFORE build: forced-heirship / Sharia inheritance vs free
+  allocation; **server-trusted** death/incapacity/inactivity verification (never client-asserted);
+  securities-transfer + AML + heir-KYC; tax; minors/guardianship; data-protection for beneficiary PII.
+- Provisional staged plan: E0 honesty (correct/disable copy) → E1 advisory beneficiary register →
+  E2 verified-event atomic transfer (reuse Phase-10 family-transfer + `reserved_units` + KYC
+  materialize; Group-2 storage for evidence) → E3 inter-vivos gifting. Each stage legal-gated.
+- **Recommended interim (owner decision):** correct the mock's false legal claims to an honest
+  "in development with our legal partners" state now (the one case where honest-disable is the
+  correct *interim*, because building it real without counsel is itself the unsafe outcome).
