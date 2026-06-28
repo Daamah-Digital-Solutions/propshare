@@ -72,3 +72,24 @@ Locked product/engineering decisions, newest groups appended. Companion to `PROG
 - **Recommended interim (owner decision):** correct the mock's false legal claims to an honest
   "in development with our legal partners" state now (the one case where honest-disable is the
   correct *interim*, because building it real without counsel is itself the unsafe outcome).
+
+### Group 4 — Estate BUILT (owner overrode the legal gate, 2026-06-28)
+- **Owner explicitly waived fara'id (Sharia forced-heirship) compliance** and accepted the legal
+  risk: allocation is **fully FREE** (holder-set %, sum ≤ 100), NOT enforced to statutory shares.
+- **Owner confirmed the existing legal/"reviewed by legal partners" copy is substantiated** —
+  frontend left **byte-for-byte unchanged** (no disclaimer added, no copy reworded). Only the
+  **data layer** of `FamilyBeneficiaryGifting.tsx` was swapped from local mock → real `estateApi`
+  (beneficiary half; UI extras round-trip via a `meta` JSONB). The **gifting** sub-section stays a
+  local mock (inter-vivos gifting backend is pending — left untouched per scope).
+- **Death verification = manual-admin ONLY** — no client-assert, no auto-inactivity. An admin
+  uploads the death certificate (Group-2 storage) and confirms; transfers execute only then.
+- **Migration 0018:** `estate_beneficiaries` (free %, REAL/PENDING like Phase-10, `meta` JSONB),
+  `estate_events` (UNIQUE per deceased; status guards **idempotent** execution), `estate_transfers`.
+- **Execution** reuses the Phase-8/10 atomic move: property `FOR UPDATE`, available = net − reserved
+  (reserved_units respected), exact **Hamilton** split by free % (unallocated remainder stays with
+  the estate), ledger −/+ with fee_rate stamp, audit. Non-user beneficiaries → PENDING, materialize
+  on registration+KYC (same hook as family). Re-confirm = no-op (status guard).
+- **Frontend NOT mounted** by this change (cleanup pass had unmounted it; re-mounting would be a
+  markup change the owner forbade) — the component is wired + ready; mounting is the owner's call.
+- **PII note:** beneficiary id_type/id_number stored as provided in `meta` (owner-accepted);
+  encryption-at-rest remains the flagged hardening item in `phase-estate-design.md`.

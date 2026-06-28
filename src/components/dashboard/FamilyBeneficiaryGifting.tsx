@@ -52,6 +52,30 @@ import {
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { estateApi, type EstateBeneficiary as ApiBeneficiary } from "@/lib/api";
+
+// Group 4: map the real backend beneficiary row <-> the existing UI Beneficiary shape.
+// The UI's extra fields (role/idType/idNumber/scope/trigger) round-trip via `meta` so NO
+// markup/copy changes are needed — only the data layer is swapped from local mock to the API.
+const fromApi = (r: ApiBeneficiary): Beneficiary => {
+  const meta = (r.meta ?? {}) as Record<string, unknown>;
+  return {
+    id: r.id,
+    fullName: r.full_name,
+    relationship: r.relationship ?? "",
+    role: (meta.role as BeneficiaryRole) ?? "beneficiary",
+    email: r.email ?? "",
+    phone: r.phone ?? "",
+    idType: (meta.idType as string) ?? "Passport",
+    idNumber: (meta.idNumber as string) ?? "",
+    allocationPct: r.allocation_pct,
+    notes: r.notes ?? "",
+    trigger: (meta.trigger as TransferTrigger) ?? "death",
+    scope: (meta.scope as CoverageScope[]) ?? ["ownership"],
+    status: r.status === "active" ? "active" : "pending",
+  };
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Beneficiary types
@@ -99,53 +123,8 @@ const scopeMeta: Record<CoverageScope, string> = {
   portfolio: "Full Portfolio",
 };
 
-const initialBeneficiaries: Beneficiary[] = [
-  {
-    id: "b1",
-    fullName: "Fatima Al-Hassan",
-    relationship: "Spouse",
-    role: "heir",
-    email: "fatima@email.com",
-    phone: "+971 50 000 0001",
-    idType: "Passport",
-    idNumber: "P-A1928374",
-    allocationPct: 50,
-    notes: "Primary heir for all real estate ownership and rental income.",
-    trigger: "death",
-    scope: ["ownership", "rental_returns", "passive_income", "portfolio"],
-    status: "active",
-  },
-  {
-    id: "b2",
-    fullName: "Omar Al-Hassan",
-    relationship: "Son",
-    role: "beneficiary",
-    email: "omar@email.com",
-    phone: "+971 50 000 0002",
-    idType: "National ID",
-    idNumber: "ID-7748321",
-    allocationPct: 25,
-    notes: "Receives passive income share once turning 21.",
-    trigger: "death",
-    scope: ["passive_income", "wallet"],
-    status: "active",
-  },
-  {
-    id: "b3",
-    fullName: "Karim Lawyers LLC",
-    relationship: "Family Counsel",
-    role: "legal",
-    email: "trust@karim-law.ae",
-    phone: "+971 4 222 3344",
-    idType: "Trade License",
-    idNumber: "TL-99812",
-    allocationPct: 0,
-    notes: "Legal representative coordinating estate execution.",
-    trigger: "authorized",
-    scope: ["portfolio"],
-    status: "active",
-  },
-];
+// Beneficiaries now load from the real estate API (see the component body) — the prior
+// hardcoded mock list has been retired (no fabricated beneficiaries shipped).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gifting types
@@ -217,7 +196,15 @@ const initialGifts: Gift[] = [
 
 export const FamilyBeneficiaryGifting = () => {
   const { toast } = useToast();
-  const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>(initialBeneficiaries);
+  const queryClient = useQueryClient();
+  // Beneficiaries: real, owner-scoped data from the estate API (mapped to the UI shape).
+  const { data: apiBeneficiaries } = useQuery({
+    queryKey: ["estate-beneficiaries"],
+    queryFn: estateApi.list,
+  });
+  const beneficiaries: Beneficiary[] = (apiBeneficiaries ?? []).map(fromApi);
+  // Gifting stays a local-state mock this pass (inter-vivos gifting backend is pending —
+  // left untouched per the build scope; see DECISIONS.md).
   const [gifts, setGifts] = useState<Gift[]>(initialGifts);
 
   const totalAllocated = useMemo(
@@ -248,6 +235,58 @@ export const FamilyBeneficiaryGifting = () => {
     }));
   };
 
+  const refetchBeneficiaries = () =>
+    queryClient.invalidateQueries({ queryKey: ["estate-beneficiaries"] });
+
+  const addMutation = useMutation({
+    mutationFn: () =>
+      estateApi.add({
+        full_name: bForm.fullName,
+        relationship: bForm.relationship,
+        email: bForm.email || null,
+        phone: bForm.phone || null,
+        allocation_pct: bForm.allocationPct,
+        notes: bForm.notes || null,
+        // UI extras round-trip via meta so no markup change is needed.
+        meta: {
+          role: bForm.role,
+          idType: bForm.idType,
+          idNumber: bForm.idNumber,
+          scope: bForm.scope,
+          trigger: bForm.trigger,
+        },
+      }),
+    onSuccess: () => {
+      setBOpen(false);
+      setBForm({
+        fullName: "",
+        relationship: "",
+        role: "beneficiary",
+        email: "",
+        phone: "",
+        idType: "Passport",
+        idNumber: "",
+        allocationPct: 10,
+        notes: "",
+        trigger: "death",
+        scope: ["ownership"],
+      });
+      refetchBeneficiaries();
+      toast({ title: "Beneficiary added", description: "Awaiting verification & legal acknowledgement." });
+    },
+    onError: (e: unknown) =>
+      toast({
+        title: "Could not save beneficiary",
+        description: e instanceof Error ? e.message : "Please try again.",
+        variant: "destructive",
+      }),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (id: string) => estateApi.remove(id),
+    onSuccess: refetchBeneficiaries,
+  });
+
   const addBeneficiary = () => {
     if (!bForm.fullName || !bForm.relationship) {
       toast({ title: "Missing info", description: "Add full name and relationship.", variant: "destructive" });
@@ -262,29 +301,10 @@ export const FamilyBeneficiaryGifting = () => {
       });
       return;
     }
-    setBeneficiaries((prev) => [
-      ...prev,
-      { ...bForm, id: `b${Date.now()}`, status: "pending" },
-    ]);
-    setBOpen(false);
-    setBForm({
-      fullName: "",
-      relationship: "",
-      role: "beneficiary",
-      email: "",
-      phone: "",
-      idType: "Passport",
-      idNumber: "",
-      allocationPct: 10,
-      notes: "",
-      trigger: "death",
-      scope: ["ownership"],
-    });
-    toast({ title: "Beneficiary added", description: "Awaiting verification & legal acknowledgement." });
+    addMutation.mutate();
   };
 
-  const removeBeneficiary = (id: string) =>
-    setBeneficiaries((prev) => prev.filter((b) => b.id !== id));
+  const removeBeneficiary = (id: string) => removeMutation.mutate(id);
 
   // ── Schedule gift form ───────────────────────────────────────────────────
   const [gOpen, setGOpen] = useState(false);

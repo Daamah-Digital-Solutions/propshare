@@ -736,6 +736,52 @@ export interface SetupIntentInfo {
   publishable_key: string;
 }
 
+// --- Estate / beneficiaries (Group 4) -------------------------------------- //
+export interface EstateBeneficiary {
+  id: string;
+  full_name: string;
+  relationship: string | null;
+  email: string | null;
+  phone: string | null;
+  allocation_pct: number;
+  notes: string | null;
+  status: string; // active | pending
+  is_user: boolean;
+  meta: Record<string, unknown>; // UI extras (role/scope/trigger/id) round-trip here
+  created_at: string;
+}
+export interface EstateBeneficiaryPayload {
+  full_name: string;
+  relationship?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  allocation_pct: number;
+  notes?: string | null;
+  meta?: Record<string, unknown>;
+}
+
+/** The caller's own beneficiary register (free allocation; non-user = pending). */
+export const estateApi = {
+  list(): Promise<EstateBeneficiary[]> {
+    return apiRequest<EstateBeneficiary[]>("/api/v1/estate/beneficiaries");
+  },
+  add(payload: EstateBeneficiaryPayload): Promise<EstateBeneficiary> {
+    return apiRequest<EstateBeneficiary>("/api/v1/estate/beneficiaries", {
+      method: "POST",
+      body: payload,
+    });
+  },
+  update(id: string, payload: Partial<EstateBeneficiaryPayload>): Promise<EstateBeneficiary> {
+    return apiRequest<EstateBeneficiary>(`/api/v1/estate/beneficiaries/${id}`, {
+      method: "PATCH",
+      body: payload,
+    });
+  },
+  remove(id: string): Promise<void> {
+    return apiRequest<void>(`/api/v1/estate/beneficiaries/${id}`, { method: "DELETE" });
+  },
+};
+
 export const paymentMethodsApi = {
   list(): Promise<SavedPaymentMethod[]> {
     return apiRequest<SavedPaymentMethod[]>("/api/v1/wallet/payment-methods");

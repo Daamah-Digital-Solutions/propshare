@@ -488,6 +488,11 @@ from app.models.developer_updates import (  # noqa: E402
     DeveloperUpdateRecipient,
 )
 from app.models.distributions import Distribution, DistributionItem  # noqa: E402
+from app.models.estate import (  # noqa: E402
+    EstateBeneficiary,
+    EstateEvent,
+    EstateTransfer,
+)
 from app.models.identity import (  # noqa: E402
     EmailToken,
     OAuthIdentity,
@@ -563,4 +568,8 @@ __all__ = [
     # saved payment methods (Group 3)
     "PaymentCustomer",
     "SavedPaymentMethod",
+    # estate / inheritance (Group 4)
+    "EstateBeneficiary",
+    "EstateEvent",
+    "EstateTransfer",
 ]

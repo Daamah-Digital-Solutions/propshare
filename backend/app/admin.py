@@ -33,6 +33,9 @@ from app.models import (
     DistributionItem,
     Document,
     EmailOutbox,
+    EstateBeneficiary,
+    EstateEvent,
+    EstateTransfer,
     FamilyGroup,
     FamilyMember,
     FamilyTransfer,
@@ -811,6 +814,58 @@ class PaymentCustomerAdmin(ModelView, model=PaymentCustomer):
     can_delete = False
 
 
+class EstateBeneficiaryAdmin(ModelView, model=EstateBeneficiary):
+    name = "Estate Beneficiary"
+    icon = "fa-solid fa-people-arrows"
+    column_list = [
+        EstateBeneficiary.owner_id,
+        EstateBeneficiary.full_name,
+        EstateBeneficiary.relationship,
+        EstateBeneficiary.allocation_pct,
+        EstateBeneficiary.status,
+        EstateBeneficiary.beneficiary_user_id,
+        EstateBeneficiary.created_at,
+    ]
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
+class EstateEventAdmin(ModelView, model=EstateEvent):
+    name = "Estate Event (Death)"
+    icon = "fa-solid fa-file-shield"
+    # Audit of admin-verified deaths + execution status (manual-admin only).
+    column_list = [
+        EstateEvent.subject_user_id,
+        EstateEvent.status,
+        EstateEvent.death_certificate_document_id,
+        EstateEvent.verified_by,
+        EstateEvent.verified_at,
+        EstateEvent.executed_at,
+    ]
+    column_default_sort = [(EstateEvent.created_at, True)]
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
+class EstateTransferAdmin(ModelView, model=EstateTransfer):
+    name = "Estate Transfer"
+    icon = "fa-solid fa-right-left"
+    column_list = [
+        EstateTransfer.estate_event_id,
+        EstateTransfer.beneficiary_id,
+        EstateTransfer.property_id,
+        EstateTransfer.units,
+        EstateTransfer.status,
+        EstateTransfer.materialized_at,
+        EstateTransfer.created_at,
+    ]
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
 class DocumentAdmin(ModelView, model=Document):
     name = "Document"
     icon = "fa-solid fa-file-lines"
@@ -921,6 +976,9 @@ def setup_admin(app) -> Admin:
         DocumentAdmin,
         SavedPaymentMethodAdmin,
         PaymentCustomerAdmin,
+        EstateBeneficiaryAdmin,
+        EstateEventAdmin,
+        EstateTransferAdmin,
     ):
         admin.add_view(view)
     return admin

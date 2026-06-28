@@ -93,6 +93,26 @@ async def create_property_document(
     return doc
 
 
+async def create_user_document(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    title: str,
+    doc_type: str,
+    filename: str,
+    data: bytes,
+) -> Document:
+    """Store a user-scoped document (e.g. a death certificate for estate verification).
+    Not served by the public download route (user_id is set)."""
+    safe = _safe_filename(filename)
+    key = f"documents/user/{user_id}/{uuid.uuid4().hex}-{safe}"
+    storage.save(key, data, content_type_for(safe))
+    doc = Document(property_id=None, user_id=user_id, title=title, type=doc_type, file_url=key)
+    session.add(doc)
+    await session.flush()
+    return doc
+
+
 async def list_property_documents(session: AsyncSession, id_or_slug: str) -> list[Document]:
     # get_public_detail enforces active/funded (404 otherwise) — public listing only.
     prop = await property_service.get_public_detail(session, id_or_slug)
