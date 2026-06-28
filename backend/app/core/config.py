@@ -137,6 +137,21 @@ class Settings(BaseSettings):
             else "https://api.nowpayments.io/v1"
         )
 
+    # --- Storage (documents / certificates / images). provider: "local" (dev) | "s3" (prod). ---
+    # local writes REAL files under storage_dir (gitignored) served by the app; s3 uses
+    # presigned URLs (boto3, lazily imported — prod only). No fake/placeholder files either way.
+    storage_provider: str = "local"
+    storage_dir: str = "var/storage"  # local provider root (relative to backend/ cwd)
+    storage_max_upload_mb: int = 25
+    s3_bucket: str = ""
+    s3_region: str = ""
+    s3_endpoint_url: str = ""  # MinIO / custom endpoint; empty => AWS default
+    s3_public_base_url: str = ""  # optional CDN/base; empty => presigned GET URLs
+
+    @property
+    def storage_max_upload_bytes(self) -> int:
+        return self.storage_max_upload_mb * 1024 * 1024
+
     # --- OAuth (Phase 1: Google + Apple). Empty => provider disabled (clear 503). ---
     google_client_id: str = ""
     google_client_secret: str = ""

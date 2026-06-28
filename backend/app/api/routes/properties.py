@@ -5,7 +5,7 @@
 - POST /properties                 owner: create a draft.
 - PATCH /properties/{id}           owner: edit while draft/under_review.
 - POST /properties/{id}/submit     owner: draft -> under_review.
-- POST /properties/{id}/images     owner: app-storage seam (honest 503 until wired).
+- POST /properties/{id}/images     owner: upload an image (real storage seam).
 - GET  /owner/properties           owner: all of my properties (any status).
 """
 
@@ -14,9 +14,10 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 
 from app.api.deps import Principal, SessionDep, require_active_role_db
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.schemas.property import (
     OwnerPropertyOut,
@@ -27,6 +28,7 @@ from app.schemas.property import (
     PropertyUpdateIn,
 )
 from app.services import milestone_service, property_service, settings_service
+from app.services.integrations import storage
 
 router = APIRouter(prefix="/api/v1", tags=["properties"])
 
@@ -133,15 +135,31 @@ async def submit_property(prop_id: uuid.UUID, principal: OwnerDep, session: Sess
     return OwnerPropertyOut(**property_service.serialize_detail(prop, owner_names))
 
 
-@router.post("/properties/{prop_id}/images", status_code=503)
+@router.post("/properties/{prop_id}/images", status_code=201)
 async def upload_property_image(
-    prop_id: uuid.UUID, request: Request, principal: OwnerDep, session: SessionDep
+    prop_id: uuid.UUID,
+    principal: OwnerDep,
+    session: SessionDep,
+    file: Annotated[UploadFile, File()],
 ):
-    # App object-storage (MinIO/S3) is the Phase-1 storage seam, not yet provisioned.
-    # Until the bucket is configured, this degrades honestly rather than faking a URL.
-    # Owners can still list properties by passing image URLs in the create payload.
-    raise AppError(
-        "STORAGE_NOT_CONFIGURED",
-        "Image upload is not available yet. Provide image URLs on create for now.",
-        status_code=503,
-    )
+    """Owner uploads a property image (real storage seam — replaces the old 503).
+    Stores the file and appends its public URL to ``properties.images``."""
+    prop = await property_service.get_owned_for_update(session, principal.user_id, prop_id)
+    data = await file.read()
+    if not data:
+        raise AppError("EMPTY_FILE", "Uploaded file is empty.", status_code=422)
+    if len(data) > get_settings().storage_max_upload_bytes:
+        raise AppError(
+            "FILE_TOO_LARGE",
+            f"File exceeds the {get_settings().storage_max_upload_mb} MB limit.",
+            status_code=413,
+        )
+    import re as _re
+
+    safe = _re.sub(r"[^A-Za-z0-9._-]+", "_", (file.filename or "image").split("/")[-1])[:120]
+    key = f"property-images/{prop_id}/{uuid.uuid4().hex}-{safe}"
+    storage.save(key, data, file.content_type or "application/octet-stream")
+    url = storage.public_url(key)
+    prop.images = [*(prop.images or []), url]
+    await session.commit()
+    return {"images": prop.images}

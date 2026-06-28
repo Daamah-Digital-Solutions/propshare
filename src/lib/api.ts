@@ -70,14 +70,17 @@ export async function refreshAccessToken(): Promise<boolean> {
 export async function apiRequest<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, auth = true, _retried = false } = opts;
   const headers: Record<string, string> = { ...(opts.headers ?? {}) };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  // FormData (file uploads) must NOT set Content-Type — the browser adds the multipart
+  // boundary — and must not be JSON-stringified.
+  const isForm = typeof FormData !== "undefined" && body instanceof FormData;
+  if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
   if (auth && accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
   const resp = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
     credentials: "include",
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body !== undefined ? (isForm ? (body as FormData) : JSON.stringify(body)) : undefined,
   });
 
   // Transparent one-shot refresh on an expired/again-unauthenticated access token.
@@ -97,6 +100,22 @@ export async function apiRequest<T = unknown>(path: string, opts: RequestOptions
     );
   }
   return data as T;
+}
+
+/** Absolute URL for a backend-relative path (e.g. a public file/download link). */
+export const apiUrl = (path: string): string => `${API_BASE}${path}`;
+
+/** Authenticated binary fetch (e.g. a generated PDF certificate). One-shot refresh on 401. */
+export async function fetchBlob(path: string, _retried = false): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+  const resp = await fetch(`${API_BASE}${path}`, { headers, credentials: "include" });
+  if (resp.status === 401 && !_retried) {
+    const ok = await refreshAccessToken();
+    if (ok) return fetchBlob(path, true);
+  }
+  if (!resp.ok) throw new ApiError("DOWNLOAD_FAILED", `Download failed (${resp.status})`, resp.status);
+  return resp.blob();
 }
 
 // ---- Types mirrored from the backend (app/schemas/auth.py) ----
@@ -660,6 +679,44 @@ export const ownerUpdatesApi = {
   list(propertyId?: string): Promise<DeveloperUpdate[]> {
     const q = propertyId ? `?property_id=${propertyId}` : "";
     return apiRequest<DeveloperUpdate[]>(`/api/v1/owner/updates${q}`);
+  },
+};
+
+// --- Documents + certificates (Group 2: storage) --------------------------- //
+export interface PropertyDocument {
+  id: string;
+  property_id: string | null;
+  title: string;
+  type: string;
+  download_url: string; // backend-relative; use apiUrl() for an <a href>
+  created_at: string;
+}
+
+export const documentsApi = {
+  /** Public list of a property's documents. */
+  listForProperty(idOrSlug: string): Promise<PropertyDocument[]> {
+    return apiRequest<PropertyDocument[]>(
+      `/api/v1/properties/${encodeURIComponent(idOrSlug)}/documents`,
+      { auth: false },
+    );
+  },
+  /** Owner uploads a property document (multipart). */
+  upload(propId: string, file: File, title: string, docType = "document"): Promise<PropertyDocument> {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("title", title);
+    fd.append("doc_type", docType);
+    return apiRequest<PropertyDocument>(`/api/v1/properties/${propId}/documents`, {
+      method: "POST",
+      body: fd,
+    });
+  },
+};
+
+export const certificateApi = {
+  /** Download a PDF certificate of the caller's current holding in a property. */
+  download(propertyId: string): Promise<Blob> {
+    return fetchBlob(`/api/v1/investments/certificate/${propertyId}`);
   },
 };
 

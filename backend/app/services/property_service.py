@@ -106,6 +106,18 @@ def serialize_detail(prop: Property, owner_names: dict[uuid.UUID, str | None]) -
     return data
 
 
+async def get_owned_for_update(
+    session: AsyncSession, owner_id: uuid.UUID, prop_id: uuid.UUID
+) -> Property:
+    """Load a property the caller owns (403 if not theirs, 404 if missing)."""
+    prop = await session.get(Property, prop_id)
+    if prop is None:
+        raise AppError("PROPERTY_NOT_FOUND", "Property not found.", status_code=404)
+    if prop.owner_id != owner_id:
+        raise AppError("NOT_PROPERTY_OWNER", "You do not own this property.", status_code=403)
+    return prop
+
+
 async def _owner_names(session: AsyncSession, props: list[Property]) -> dict[uuid.UUID, str | None]:
     ids = {p.owner_id for p in props if p.owner_id is not None}
     if not ids:

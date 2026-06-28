@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Request
+from fastapi.responses import Response
 
 from app.api.deps import AdminOrCronDep, KycVerifiedDep, PrincipalDep, SessionDep
 from app.core.config import get_settings
@@ -32,7 +33,12 @@ from app.schemas.investment import (
     ReinvestOut,
     ReinvestSettingsOut,
 )
-from app.services import distribution_service, investment_service, settings_service
+from app.services import (
+    certificate_service,
+    distribution_service,
+    investment_service,
+    settings_service,
+)
 
 router = APIRouter(prefix="/api/v1/investments", tags=["investments"])
 
@@ -138,6 +144,20 @@ async def reinvest(
 async def my_returns(principal: PrincipalDep, session: SessionDep):
     """The caller's distributed returns (history + monthly aggregation for charts)."""
     return MyReturnsOut(**await distribution_service.my_returns(session, principal.user_id))
+
+
+@router.get("/certificate/{property_id}")
+async def my_certificate(property_id: uuid.UUID, principal: PrincipalDep, session: SessionDep):
+    """A PDF certificate of the caller's CURRENT net holding in a property (live from the
+    ownership ledger; 404 if they hold none). Generated on demand — always current."""
+    filename, pdf = await certificate_service.build_for_holding(
+        session, user_id=principal.user_id, property_id=property_id
+    )
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @router.get("/{investment_id}", response_model=InvestmentOut)

@@ -20,6 +20,7 @@ from app.api.routes import (
     auth,
     broker,
     developer_updates,
+    documents,
     family,
     health,
     investments,
@@ -126,6 +127,7 @@ def create_app() -> FastAPI:
     app.include_router(owner_stats.router)
     app.include_router(milestones.router)
     app.include_router(developer_updates.router)
+    app.include_router(documents.router)
     app.include_router(admin_users.router)
     app.include_router(admin_kyc.router)
     app.include_router(admin_properties.router)

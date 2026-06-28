@@ -446,7 +446,7 @@ const PropertyDetails = () => {
                 </TabsContent>
 
                 <TabsContent value="documents" className="mt-6">
-                  <PropertyDocuments />
+                  <PropertyDocuments propertyId={propertyData.id} />
                 </TabsContent>
 
                 <TabsContent value="timeline" className="mt-6">

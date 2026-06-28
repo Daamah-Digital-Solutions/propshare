@@ -31,6 +31,7 @@ from app.models import (
     DeveloperUpdateRecipient,
     Distribution,
     DistributionItem,
+    Document,
     EmailOutbox,
     FamilyGroup,
     FamilyMember,
@@ -773,6 +774,25 @@ class NotificationPreferenceAdmin(ModelView, model=NotificationPreference):
     can_delete = False
 
 
+class DocumentAdmin(ModelView, model=Document):
+    name = "Document"
+    icon = "fa-solid fa-file-lines"
+    # Property/user documents (storage seam). Read-only here — files live in the
+    # storage provider; uploads go through the audited service/route.
+    column_list = [
+        Document.property_id,
+        Document.user_id,
+        Document.title,
+        Document.type,
+        Document.file_url,
+        Document.created_at,
+    ]
+    column_default_sort = [(Document.created_at, True)]
+    can_create = False
+    can_edit = False
+    can_delete = True  # allow removing a stale/incorrect document row
+
+
 class DeveloperUpdateAdmin(ModelView, model=DeveloperUpdate):
     name = "Investor Update"
     icon = "fa-solid fa-bullhorn"
@@ -861,6 +881,7 @@ def setup_admin(app) -> Admin:
         EmailOutboxAdmin,
         DeveloperUpdateAdmin,
         DeveloperUpdateRecipientAdmin,
+        DocumentAdmin,
     ):
         admin.add_view(view)
     return admin

@@ -14,6 +14,7 @@ import { InvestorWallet } from "./InvestorWallet";
 const walletGetMe = vi.fn();
 const walletTxns = vi.fn();
 const connectStatus = vi.fn();
+const holdingsMine = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   walletApi: {
@@ -22,6 +23,8 @@ vi.mock("@/lib/api", () => ({
   },
   withdrawApi: { create: vi.fn() },
   connectApi: { status: (...a: unknown[]) => connectStatus(...a), onboard: vi.fn() },
+  holdingsApi: { mine: (...a: unknown[]) => holdingsMine(...a) },
+  certificateApi: { download: vi.fn() },
   ApiError: class ApiError extends Error {
     code: string;
     constructor(code: string, message: string) {
@@ -30,6 +33,7 @@ vi.mock("@/lib/api", () => ({
     }
   },
 }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/components/dashboard/ReinvestReturns", () => ({
   ReinvestReturns: () => <div>reinvest</div>,
 }));
@@ -39,14 +43,22 @@ function wrap(node: React.ReactNode) {
   return render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>);
 }
 
-describe("InvestmentCertificates (honest-disabled)", () => {
-  it("renders a not-available state with no fabricated certificates", () => {
-    render(<InvestmentCertificates />);
-    expect(screen.getByText(/not available yet/i)).toBeInTheDocument();
-    expect(screen.queryByText(/CERT-2024-001/)).toBeNull();
-    expect(screen.queryByText(/Marina Heights SPV Ltd/)).toBeNull();
-    // No dead View/Download buttons.
-    expect(screen.queryByRole("button", { name: /download/i })).toBeNull();
+describe("InvestmentCertificates (real per-holding certificates, Group 2)", () => {
+  it("lists real holdings with a working certificate download; no fabricated certs", async () => {
+    holdingsMine.mockResolvedValue([
+      { property_id: "p1", title: "Marina Loft", location: "Dubai", units: 8, listed_units: 0, sellable_units: 8, unit_price: "100" },
+    ]);
+    wrap(<InvestmentCertificates />);
+    expect(await screen.findByText("Marina Loft")).toBeInTheDocument();
+    expect(screen.getByText(/8 units held/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /certificate/i })).toBeEnabled();
+    expect(screen.queryByText(/CERT-2024-001/)).toBeNull(); // no fabricated cert ids
+  });
+
+  it("shows an honest empty state when there are no holdings", async () => {
+    holdingsMine.mockResolvedValue([]);
+    wrap(<InvestmentCertificates />);
+    expect(await screen.findByText(/No certificates yet/i)).toBeInTheDocument();
   });
 });
 
