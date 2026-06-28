@@ -1,0 +1,64 @@
+name: backend-ci
+
+on:
+  push:
+    paths: ["backend/**", ".github/workflows/ci.yml"]
+  pull_request:
+    paths: ["backend/**"]
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]"
+      - name: Ruff (lint)
+        run: ruff check .
+      - name: Black (format check)
+        run: black --check .
+      - name: Mypy (types)
+        run: mypy app
+      - name: Pytest
+        run: pytest -q
+
+  migrate-schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: capimax
+          POSTGRES_PASSWORD: capimax
+          POSTGRES_DB: capimax
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U capimax"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://capimax:capimax@localhost:5432/capimax
+      ALEMBIC_DATABASE_URL: postgresql+psycopg://capimax:capimax@localhost:5432/capimax
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (+ psycopg for Alembic)
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev]" "psycopg[binary]>=3.1"
+      - name: Apply migrations (0001 reproduces the existing schema on a fresh DB)
+        run: alembic upgrade head
+      - name: Verify schema (14 tables + 6 enums)
+        run: python scripts/verify_migration.py
+      - name: Downgrade is clean
+        run: alembic downgrade base

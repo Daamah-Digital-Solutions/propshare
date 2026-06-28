@@ -1,0 +1,27 @@
+{
+  "name": "CapiMax PropShare",
+  "short_name": "CapiMax",
+  "description": "Invest in premium real estate through fractional ownership. Earn rental income and benefit from property appreciation starting at $100.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1a365d",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "investment", "real estate"],
+  "screenshots": [],
+  "prefer_related_applications": false
+}
