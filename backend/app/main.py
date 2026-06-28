@@ -29,6 +29,7 @@ from app.api.routes import (
     milestones,
     notifications,
     owner_stats,
+    payment_methods,
     payments,
     profiles,
     properties,
@@ -128,6 +129,7 @@ def create_app() -> FastAPI:
     app.include_router(milestones.router)
     app.include_router(developer_updates.router)
     app.include_router(documents.router)
+    app.include_router(payment_methods.router)
     app.include_router(admin_users.router)
     app.include_router(admin_kyc.router)
     app.include_router(admin_properties.router)

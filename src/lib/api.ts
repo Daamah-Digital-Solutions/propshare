@@ -720,6 +720,48 @@ export const certificateApi = {
   },
 };
 
+// --- Saved payment methods (Group 3: PCI-safe tokenization) ---------------- //
+export interface SavedPaymentMethod {
+  id: string;
+  type: string;
+  brand: string | null;
+  last4: string | null;
+  exp_month: number | null;
+  exp_year: number | null;
+  is_default: boolean;
+  created_at: string;
+}
+export interface SetupIntentInfo {
+  client_secret: string;
+  publishable_key: string;
+}
+
+export const paymentMethodsApi = {
+  list(): Promise<SavedPaymentMethod[]> {
+    return apiRequest<SavedPaymentMethod[]>("/api/v1/wallet/payment-methods");
+  },
+  /** Start card tokenization (Stripe SetupIntent client secret); confirmed via Stripe.js. */
+  setupIntent(): Promise<SetupIntentInfo> {
+    return apiRequest<SetupIntentInfo>("/api/v1/wallet/payment-methods/setup-intent", {
+      method: "POST",
+    });
+  },
+  add(paymentMethodId: string): Promise<SavedPaymentMethod> {
+    return apiRequest<SavedPaymentMethod>("/api/v1/wallet/payment-methods", {
+      method: "POST",
+      body: { payment_method_id: paymentMethodId },
+    });
+  },
+  remove(id: string): Promise<void> {
+    return apiRequest<void>(`/api/v1/wallet/payment-methods/${id}`, { method: "DELETE" });
+  },
+  setDefault(id: string): Promise<SavedPaymentMethod> {
+    return apiRequest<SavedPaymentMethod>(`/api/v1/wallet/payment-methods/${id}/default`, {
+      method: "POST",
+    });
+  },
+};
+
 // --- Returns / distributions (Phase 6) ------------------------------------- //
 export interface ReturnItem {
   distribution_id: string;

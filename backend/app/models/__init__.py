@@ -499,6 +499,7 @@ from app.models.investments import OwnershipLedger, PlatformSetting  # noqa: E40
 from app.models.liquidity import LpExitRequest, LpPoolTier, LpPosition  # noqa: E402
 from app.models.milestones import PropertyMilestone  # noqa: E402
 from app.models.notifications import EmailOutbox, NotificationPreference  # noqa: E402
+from app.models.payment_methods import PaymentCustomer, SavedPaymentMethod  # noqa: E402
 from app.models.payments import Payment, PaymentEvent  # noqa: E402
 from app.models.secondary import SecondaryTrade  # noqa: E402
 from app.models.withdrawals import ConnectAccount, PayoutEvent, Withdrawal  # noqa: E402
@@ -559,4 +560,7 @@ __all__ = [
     # investor communications (Phase 15c)
     "DeveloperUpdate",
     "DeveloperUpdateRecipient",
+    # saved payment methods (Group 3)
+    "PaymentCustomer",
+    "SavedPaymentMethod",
 ]

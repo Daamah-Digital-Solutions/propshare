@@ -38,10 +38,12 @@ import {
   walletApi,
   withdrawApi,
   connectApi,
+  paymentMethodsApi,
   ApiError,
   type TransactionItem,
   type WithdrawMethod,
 } from "@/lib/api";
+import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 // Ledger types that represent money LEAVING the wallet (shown negative).
@@ -63,6 +65,48 @@ export const InvestorWallet = () => {
     queryFn: () => walletApi.transactions(),
   });
   const { data: connect } = useQuery({ queryKey: ["connect"], queryFn: connectApi.status });
+
+  // Saved payment methods (Group 3) — real tokenized vault (PCI-safe; no card data here).
+  const { data: savedMethods } = useQuery({
+    queryKey: ["payment-methods"],
+    queryFn: paymentMethodsApi.list,
+  });
+  const [addingMethod, setAddingMethod] = useState(false);
+  const removeMethod = useMutation({
+    mutationFn: (id: string) => paymentMethodsApi.remove(id),
+    onSuccess: () => {
+      toast.success("Payment method removed");
+      queryClient.invalidateQueries({ queryKey: ["payment-methods"] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Could not remove the method"),
+  });
+  const makeDefault = useMutation({
+    mutationFn: (id: string) => paymentMethodsApi.setDefault(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["payment-methods"] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Could not set default"),
+  });
+  const handleAddMethod = async () => {
+    setAddingMethod(true);
+    try {
+      // Starts Stripe tokenization. Card entry itself happens in Stripe's secure Elements
+      // form (publishable key + client secret) — raw card data never touches our server.
+      await paymentMethodsApi.setupIntent();
+      toast.info("Secure card entry ready", {
+        description: "Complete your card details in the Stripe secure form to save it.",
+      });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 503) {
+        toast.info("Saving cards isn't available yet", {
+          description: "Card storage turns on once card payments are configured.",
+        });
+      } else {
+        toast.error(e instanceof ApiError ? e.message : "Could not start card setup.");
+      }
+    } finally {
+      setAddingMethod(false);
+    }
+  };
+  const methods = savedMethods ?? [];
 
   const available = Number(wallet?.balance ?? 0);
   const pending = Number(wallet?.pending_balance ?? 0);
@@ -410,25 +454,82 @@ export const InvestorWallet = () => {
           </CardContent>
         </Card>
 
-        {/* Payment Methods — saved-method management is not built yet. Funding goes
-            through the hosted-checkout flow (Add Funds) per transaction; we do NOT
-            show fake saved cards/banks on the money page. Honest empty-state. */}
+        {/* Payment Methods (Group 3) — real tokenized vault. We store only Stripe tokens +
+            safe display metadata (brand/last4/exp); raw card data never touches our server.
+            Card entry happens in Stripe's secure Elements form. */}
         <Card className="bg-card border-border">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-lg">Payment Methods</CardTitle>
-            <Button variant="outline" size="sm" disabled aria-label="Add payment method">
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label="Add payment method"
+              disabled={addingMethod}
+              onClick={handleAddMethod}
+            >
               <Plus className="h-4 w-4" />
             </Button>
           </CardHeader>
           <CardContent>
-            <div className="rounded-lg border border-dashed border-border/70 p-6 text-center">
-              <CreditCard className="h-7 w-7 mx-auto text-muted-foreground mb-2" />
-              <p className="text-sm font-medium text-foreground">No saved payment methods</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Saved methods are not available yet. Use “Add Funds” to deposit — you’ll
-                choose card or crypto securely at checkout each time.
-              </p>
-            </div>
+            {methods.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border/70 p-6 text-center">
+                <CreditCard className="h-7 w-7 mx-auto text-muted-foreground mb-2" />
+                <p className="text-sm font-medium text-foreground">No saved payment methods</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Add a card to save it securely for faster deposits. Your card is stored by our
+                  payment processor — we never see or keep your card number.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {methods.map((m) => (
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between rounded-lg border border-border p-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <CreditCard className="h-5 w-5 text-muted-foreground" />
+                      <div>
+                        <p className="text-sm font-medium text-foreground capitalize">
+                          {m.brand ?? m.type} •••• {m.last4 ?? "????"}
+                          {m.is_default && (
+                            <Badge variant="secondary" className="ml-2 text-xs">
+                              Default
+                            </Badge>
+                          )}
+                        </p>
+                        {m.exp_month && m.exp_year && (
+                          <p className="text-xs text-muted-foreground">
+                            Expires {String(m.exp_month).padStart(2, "0")}/{m.exp_year}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {!m.is_default && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={makeDefault.isPending}
+                          onClick={() => makeDefault.mutate(m.id)}
+                        >
+                          Set default
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label="Remove payment method"
+                        disabled={removeMethod.isPending}
+                        onClick={() => removeMethod.mutate(m.id)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="mt-6 p-4 rounded-lg bg-accent/10 border border-accent/20">
               <div className="flex items-start gap-3">

@@ -15,6 +15,7 @@ const walletGetMe = vi.fn();
 const walletTxns = vi.fn();
 const connectStatus = vi.fn();
 const holdingsMine = vi.fn();
+const pmList = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   walletApi: {
@@ -25,6 +26,13 @@ vi.mock("@/lib/api", () => ({
   connectApi: { status: (...a: unknown[]) => connectStatus(...a), onboard: vi.fn() },
   holdingsApi: { mine: (...a: unknown[]) => holdingsMine(...a) },
   certificateApi: { download: vi.fn() },
+  paymentMethodsApi: {
+    list: (...a: unknown[]) => pmList(...a),
+    setupIntent: vi.fn(),
+    add: vi.fn(),
+    remove: vi.fn(),
+    setDefault: vi.fn(),
+  },
   ApiError: class ApiError extends Error {
     code: string;
     constructor(code: string, message: string) {
@@ -62,20 +70,39 @@ describe("InvestmentCertificates (real per-holding certificates, Group 2)", () =
   });
 });
 
-describe("InvestorWallet payment methods (no fake saved methods)", () => {
+describe("InvestorWallet payment methods (real tokenized vault, Group 3)", () => {
   beforeEach(() => {
     walletGetMe.mockResolvedValue({ balance: "0", pending_balance: "0", total_returns: "0" });
     walletTxns.mockResolvedValue({ items: [] });
     connectStatus.mockResolvedValue({ configured: false, payouts_enabled: false });
+    pmList.mockReset();
   });
 
-  it("shows an empty-state and disables the add-method button; no mock cards", async () => {
+  it("empty vault: honest empty-state, add button ENABLED, no fake cards", async () => {
+    pmList.mockResolvedValue([]);
     wrap(<InvestorWallet />);
     expect(await screen.findByText(/No saved payment methods/i)).toBeInTheDocument();
     expect(screen.queryByText(/Emirates NBD/)).toBeNull();
     expect(screen.queryByText(/bc1q/)).toBeNull();
-    expect(
-      screen.getByRole("button", { name: /add payment method/i }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /add payment method/i })).toBeEnabled();
+  });
+
+  it("renders real saved methods (brand •••• last4 + Default), no card number stored", async () => {
+    pmList.mockResolvedValue([
+      {
+        id: "pm1",
+        type: "card",
+        brand: "visa",
+        last4: "4242",
+        exp_month: 12,
+        exp_year: 2030,
+        is_default: true,
+        created_at: "2026-06-01T00:00:00Z",
+      },
+    ]);
+    wrap(<InvestorWallet />);
+    expect(await screen.findByText(/4242/)).toBeInTheDocument();
+    expect(screen.getByText(/Default/)).toBeInTheDocument();
+    expect(screen.getByText(/Expires 12\/2030/)).toBeInTheDocument();
   });
 });

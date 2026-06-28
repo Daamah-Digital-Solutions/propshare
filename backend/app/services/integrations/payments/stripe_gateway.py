@@ -126,6 +126,66 @@ def verify_and_parse(raw_body: bytes, signature: str | None) -> ParsedWebhook:
     return ParsedWebhook(event_id, None, None, "ignored", None, etype, event)
 
 
+# --- Saved payment methods (Group 3, PCI-safe tokenization) ---------------- #
+# Raw card data NEVER touches our server: the card is collected client-side via the
+# SetupIntent (Stripe.js/Elements) and we only ever store TOKENS + safe display metadata
+# that Stripe returns (brand/last4/exp). All calls are gated on is_configured() => 503.
+async def create_customer(*, email: str) -> str:
+    if not is_configured():
+        raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)
+    cust = await _post("customers", {"email": email})
+    return str(cust["id"])
+
+
+async def create_setup_intent(*, customer_id: str) -> dict:
+    """A SetupIntent lets the SPA tokenize a card for future use (no charge)."""
+    if not is_configured():
+        raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)
+    si = await _post(
+        "setup_intents",
+        {"customer": customer_id, "usage": "off_session", "payment_method_types[]": "card"},
+    )
+    return {"id": str(si["id"]), "client_secret": str(si["client_secret"])}
+
+
+async def attach_payment_method(*, payment_method_id: str, customer_id: str) -> None:
+    if not is_configured():
+        raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)
+    await _post(f"payment_methods/{payment_method_id}/attach", {"customer": customer_id})
+
+
+async def retrieve_payment_method(payment_method_id: str) -> dict:
+    """Server-side metadata fetch — we trust Stripe for brand/last4/exp, never the client."""
+    if not is_configured():
+        raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(
+            f"{_API_BASE}/payment_methods/{payment_method_id}",
+            auth=(settings.stripe_secret_key, ""),
+        )
+    if resp.status_code >= 400:
+        raise AppError(
+            "PAYMENT_PROVIDER_ERROR", f"Stripe error ({resp.status_code}).", status_code=502
+        )
+    pm = resp.json()
+    card = pm.get("card") or {}
+    return {
+        "id": str(pm.get("id")),
+        "type": str(pm.get("type") or "card"),
+        "brand": card.get("brand"),
+        "last4": card.get("last4"),
+        "exp_month": card.get("exp_month"),
+        "exp_year": card.get("exp_year"),
+    }
+
+
+async def detach_payment_method(payment_method_id: str) -> None:
+    if not is_configured():
+        raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)
+    await _post(f"payment_methods/{payment_method_id}/detach", {})
+
+
 # --- Stripe Connect onboarding (Phase 7, bank withdrawals) ----------------- #
 async def _post(path: str, data: dict, *, idempotency_key: str | None = None) -> dict:
     settings = get_settings()

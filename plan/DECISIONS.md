@@ -39,4 +39,22 @@ Locked product/engineering decisions, newest groups appended. Companion to `PROG
 - **Frontend:** PropertyDocuments + InvestmentCertificates wired to real data (mock lists deleted);
   `apiRequest` now supports FormData; `fetchBlob` for authed PDF download.
 
-<!-- groups 3–4 appended below as they complete -->
+## Group 3 — Saved Payment Methods (PCI-safe) (DONE 2026-06-28)
+- **Tokens only, never card data.** Migration **0017**: `payment_customers` (one Stripe customer/user)
+  + `saved_payment_methods` (TOKEN `provider_payment_method_id` + safe metadata brand/last4/exp,
+  `is_default`; UNIQUE(provider, pm token) → idempotent re-add). No PAN/CVC ever stored.
+- **Flow:** card collected client-side via a Stripe **SetupIntent** (Stripe.js/Elements) — raw card
+  never hits our server; backend fetches brand/last4/exp **server-side** from Stripe (never trusts
+  the client). Reuses the Phase-4 Stripe gateway seam (mockable; **503 when unconfigured**, like
+  deposits/withdrawals).
+- **Service/routes:** `payment_method_service` + `routes/payment_methods.py` under
+  `/api/v1/wallet/payment-methods` (list/setup-intent/add/delete/set-default), PrincipalDep,
+  user-scoped (cross-user add → 403, foreign delete → 404), first method = default, delete reassigns
+  default. API response **never exposes the token**. Read-only SQLAdmin views.
+- **Frontend:** `paymentMethodsApi`; InvestorWallet "Payment Methods" is a **real vault** (list +
+  set-default + remove; Add starts the SetupIntent). DELETE NOTHING — honest empty-state kept.
+- **Deferred (prod wiring, documented):** mounting Stripe **Elements** for the card-entry widget +
+  setting `STRIPE_*` keys (the SetupIntent endpoint + vault management are real and tested now; the
+  card-entry form is config-gated exactly like the deposit/withdrawal rails).
+
+<!-- group 4 (estate) is DESIGN-ONLY — appended below -->

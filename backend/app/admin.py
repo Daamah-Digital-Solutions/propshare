@@ -43,9 +43,11 @@ from app.models import (
     LpPosition,
     NotificationPreference,
     OwnershipLedger,
+    PaymentCustomer,
     PlatformSetting,
     Property,
     PropertyMilestone,
+    SavedPaymentMethod,
     SecondaryListing,
     SecondaryTrade,
     Transaction,
@@ -774,6 +776,41 @@ class NotificationPreferenceAdmin(ModelView, model=NotificationPreference):
     can_delete = False
 
 
+class SavedPaymentMethodAdmin(ModelView, model=SavedPaymentMethod):
+    name = "Saved Payment Method"
+    icon = "fa-solid fa-credit-card"
+    # PCI-safe: tokens + safe display metadata only (never card data). Read-only here —
+    # add/remove flows through the audited service so Stripe stays in sync.
+    column_list = [
+        SavedPaymentMethod.user_id,
+        SavedPaymentMethod.type,
+        SavedPaymentMethod.brand,
+        SavedPaymentMethod.last4,
+        SavedPaymentMethod.exp_month,
+        SavedPaymentMethod.exp_year,
+        SavedPaymentMethod.is_default,
+        SavedPaymentMethod.created_at,
+    ]
+    column_default_sort = [(SavedPaymentMethod.created_at, True)]
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
+class PaymentCustomerAdmin(ModelView, model=PaymentCustomer):
+    name = "Payment Customer"
+    icon = "fa-solid fa-id-card-clip"
+    column_list = [
+        PaymentCustomer.user_id,
+        PaymentCustomer.provider,
+        PaymentCustomer.customer_id,
+        PaymentCustomer.created_at,
+    ]
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
 class DocumentAdmin(ModelView, model=Document):
     name = "Document"
     icon = "fa-solid fa-file-lines"
@@ -882,6 +919,8 @@ def setup_admin(app) -> Admin:
         DeveloperUpdateAdmin,
         DeveloperUpdateRecipientAdmin,
         DocumentAdmin,
+        SavedPaymentMethodAdmin,
+        PaymentCustomerAdmin,
     ):
         admin.add_view(view)
     return admin
