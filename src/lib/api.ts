@@ -782,6 +782,59 @@ export const estateApi = {
   },
 };
 
+// --- Inter-vivos gifting (Group 5: real scheduled + recurring gifts) -------- //
+// Only property_shares + wallet are real; the other UI options are honest-disabled.
+export type GiftAsset = "property_shares" | "wallet";
+export interface ScheduledGift {
+  id: string;
+  recipient_name: string;
+  recipient_email: string | null;
+  is_user: boolean;
+  asset_type: string;
+  property_id: string | null;
+  units: number | null;
+  amount: string | null;
+  occasion: string | null;
+  message: string | null;
+  scheduled_for: string; // ISO date
+  recurring: boolean;
+  recurrence_end: string | null;
+  status: string; // scheduled | pending | executed | cancelled | failed
+  failure_reason: string | null;
+  created_at: string;
+}
+export interface GiftSchedulePayload {
+  recipient_name: string;
+  recipient_email: string;
+  asset_type: GiftAsset;
+  property_id?: string | null;
+  units?: number | null;
+  amount?: string | null;
+  occasion?: string | null;
+  message?: string | null;
+  scheduled_for: string; // ISO date (YYYY-MM-DD)
+  recurring?: boolean;
+  recurrence_end?: string | null;
+}
+
+/** The caller's own scheduled gifts. Schedule reserves units / escrows cash so the UI's
+ *  "executes automatically on the date" promise is real (a cron executes due gifts). */
+export const giftsApi = {
+  list(): Promise<ScheduledGift[]> {
+    return apiRequest<ScheduledGift[]>("/api/v1/gifts");
+  },
+  schedule(payload: GiftSchedulePayload): Promise<ScheduledGift> {
+    return apiRequest<ScheduledGift>("/api/v1/gifts", {
+      method: "POST",
+      body: payload,
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
+  },
+  cancel(id: string): Promise<ScheduledGift> {
+    return apiRequest<ScheduledGift>(`/api/v1/gifts/${id}/cancel`, { method: "POST" });
+  },
+};
+
 export const paymentMethodsApi = {
   list(): Promise<SavedPaymentMethod[]> {
     return apiRequest<SavedPaymentMethod[]>("/api/v1/wallet/payment-methods");

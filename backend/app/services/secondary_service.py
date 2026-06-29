@@ -37,6 +37,7 @@ from app.models import (
     FamilyTransfer,
     LpExitRequest,
     Property,
+    ScheduledGift,
     SecondaryListing,
     SecondaryTrade,
     Wallet,
@@ -99,7 +100,20 @@ async def reserved_units(session: AsyncSession, user_id: uuid.UUID, property_id:
             FamilyTransfer.status == "pending",
         )
     )
-    return int(secondary or 0) + int(lp_open or 0) + int(family_pending or 0)
+    # Group 5: units this user has promised to a future gift (scheduled, or pending the
+    # recipient's KYC) are reserved against their holding — so a gifted unit can never be
+    # simultaneously listed, LP-exited, family-allocated, or double-gifted before the date.
+    gift_reserved = await session.scalar(
+        select(func.coalesce(func.sum(ScheduledGift.units), 0)).where(
+            ScheduledGift.giver_id == user_id,
+            ScheduledGift.property_id == property_id,
+            ScheduledGift.asset_type == "property_shares",
+            ScheduledGift.status.in_(("scheduled", "pending")),
+        )
+    )
+    return (
+        int(secondary or 0) + int(lp_open or 0) + int(family_pending or 0) + int(gift_reserved or 0)
+    )
 
 
 async def _earliest_acquisition(

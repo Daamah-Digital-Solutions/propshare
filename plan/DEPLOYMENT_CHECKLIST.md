@@ -116,7 +116,7 @@ Set before `npm run build`, then deploy `dist/`:
 
 ---
 
-## §4. Cron jobs (6) — system cron → admin endpoints
+## §4. Cron jobs (7) — system cron → admin endpoints
 
 All are **idempotent** and authenticate with the `X-Cron-Secret: $CRON_SECRET` header.
 Example crontab (adjust cadence to taste):
@@ -128,6 +128,7 @@ Example crontab (adjust cadence to taste):
 */5  * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/investments/maintenance/expire-reservations
 *    * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/notifications/dispatch-emails
 */10 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/liquidity/expire-requests
+*/30 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/gifts/run-due
 30 2 * * *    curl -fsS      -H "X-Cron-Secret: SECRET" API/api/v1/admin/reconciliation
 ```
 
@@ -138,6 +139,7 @@ Example crontab (adjust cadence to taste):
 | Reservation-expiry sweep | `POST …/investments/maintenance/expire-reservations` | release lapsed unpaid direct-pay holds |
 | Email outbox drainer | `POST …/admin/notifications/dispatch-emails` | send queued emails (Resend) |
 | LP exit-request expiry | `POST …/admin/liquidity/expire-requests` | free units reserved by lapsed LP exit requests |
+| Gift executor (Group 5) | `POST …/admin/gifts/run-due` | send 7-day gift reminders + execute due scheduled gifts (real transfer / wallet credit; recurring re-enqueue) |
 | Reconciliation report | `GET …/admin/reconciliation` | nightly DB-wide drift check (alert on non-zero) |
 
 (Scheduled rental distributions are **admin-triggered per property/period** in `/admin` — there is no auto-runner; run them when a period closes.)

@@ -51,6 +51,7 @@ from app.models import (
     Property,
     PropertyMilestone,
     SavedPaymentMethod,
+    ScheduledGift,
     SecondaryListing,
     SecondaryTrade,
     Transaction,
@@ -866,6 +867,28 @@ class EstateTransferAdmin(ModelView, model=EstateTransfer):
     can_delete = False
 
 
+class ScheduledGiftAdmin(ModelView, model=ScheduledGift):
+    name = "Scheduled Gift"
+    icon = "fa-solid fa-gift"
+    # Inter-vivos gifts (Group 5) — append-only-ish audit of scheduled/executed transfers.
+    column_list = [
+        ScheduledGift.giver_id,
+        ScheduledGift.recipient_name,
+        ScheduledGift.recipient_user_id,
+        ScheduledGift.asset_type,
+        ScheduledGift.units,
+        ScheduledGift.amount,
+        ScheduledGift.scheduled_for,
+        ScheduledGift.recurring,
+        ScheduledGift.status,
+        ScheduledGift.failure_reason,
+    ]
+    column_default_sort = [(ScheduledGift.scheduled_for, True)]
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
 class DocumentAdmin(ModelView, model=Document):
     name = "Document"
     icon = "fa-solid fa-file-lines"
@@ -979,6 +1002,7 @@ def setup_admin(app) -> Admin:
         EstateBeneficiaryAdmin,
         EstateEventAdmin,
         EstateTransferAdmin,
+        ScheduledGiftAdmin,
     ):
         admin.add_view(view)
     return admin

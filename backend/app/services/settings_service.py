@@ -36,6 +36,7 @@ _SETTING_SPECS: dict[str, str] = {
     "lp_exit_price_band_pct": "pct",
     "family_reinvest_discount_pct": "pct",
     "family_transfer_fee_pct": "pct",
+    "gift_fee_pct": "pct",
     "broker_commission_pct": "pct",
     "reinvest_discount_pct": "pct",
     "secondary_price_min_pct": "pct_open",
@@ -103,6 +104,9 @@ DEFAULTS: dict[str, str] = {
     # transfer fee default 0 makes the UI's "$0 family transfer" a real configurable source.
     "family_reinvest_discount_pct": "7.5",
     "family_transfer_fee_pct": "0",
+    # Inter-vivos gifting (Group 5). Default 0 — a gift isn't a sale (mirrors the family
+    # transfer fee); charged to the giver at execution when > 0.
+    "gift_fee_pct": "0",
     # Investor reinvest discount (Phase 14) — a real, server-applied subsidy (2nd narrow
     # D5 exception). Standard invest stays no-discount.
     "reinvest_discount_pct": "5.0",
@@ -146,6 +150,15 @@ async def get_reinvest_discount_pct(session: AsyncSession) -> Decimal:
         return Decimal(await get_setting(session, "reinvest_discount_pct"))
     except (ArithmeticError, ValueError):
         return Decimal("5.0")
+
+
+async def get_gift_fee_pct(session: AsyncSession) -> Decimal:
+    """Inter-vivos gift fee rate (percent of gifted value). Server-authoritative;
+    default 0 — a gift isn't a sale."""
+    try:
+        return Decimal(await get_setting(session, "gift_fee_pct"))
+    except (ArithmeticError, ValueError):
+        return Decimal("0")
 
 
 async def get_management_fee_pct(session: AsyncSession) -> Decimal:

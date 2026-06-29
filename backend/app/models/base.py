@@ -77,3 +77,4 @@ class TransactionType(enum.StrEnum):
     lp_deposit = "lp_deposit"  # Phase 9 — PASSIVE pool principal in/out
     lp_yield = "lp_yield"  # Phase 9 — PASSIVE fixed interest
     family_allocation = "family_allocation"  # Phase 10 — owner→member returns transfer
+    gift = "gift"  # Group 5 — inter-vivos wallet-gift escrow/credit/refund

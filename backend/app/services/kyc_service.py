@@ -195,12 +195,13 @@ async def _notify_outcome(
 
 async def _materialize_family(session: AsyncSession, user_id: uuid.UUID) -> None:
     """On KYC-verify, convert any pending family allocations for this user into real
-    ledger moves (Phase 10) — and any pending ESTATE inheritances (Group 4). Lazy import
-    avoids a module-load cycle."""
-    from app.services import estate_service, family_service
+    ledger moves (Phase 10) — plus any pending ESTATE inheritances (Group 4) and pending
+    GIFTS (Group 5). Lazy import avoids a module-load cycle."""
+    from app.services import estate_service, family_service, gift_service
 
     await family_service.materialize_for_user(session, user_id=user_id)
     await estate_service.materialize_for_user(session, user_id=user_id)
+    await gift_service.materialize_for_user(session, user_id=user_id)
 
 
 # Admin exception path -------------------------------------------------------- #

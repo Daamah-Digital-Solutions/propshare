@@ -493,6 +493,7 @@ from app.models.estate import (  # noqa: E402
     EstateEvent,
     EstateTransfer,
 )
+from app.models.gifting import ScheduledGift  # noqa: E402
 from app.models.identity import (  # noqa: E402
     EmailToken,
     OAuthIdentity,
@@ -572,4 +573,6 @@ __all__ = [
     "EstateBeneficiary",
     "EstateEvent",
     "EstateTransfer",
+    # inter-vivos gifting (Group 5)
+    "ScheduledGift",
 ]

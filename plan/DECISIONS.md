@@ -93,3 +93,42 @@ Locked product/engineering decisions, newest groups appended. Companion to `PROG
   markup change the owner forbade) — the component is wired + ready; mounting is the owner's call.
 - **PII note:** beneficiary id_type/id_number stored as provided in `meta` (owner-accepted);
   encryption-at-rest remains the flagged hardening item in `phase-estate-design.md`.
+
+---
+
+## Group 5 — Inter-vivos Gifting (DONE 2026-06-29)
+- **Owner: "follow the frontend and make it real."** The original mock was a SCHEDULED +
+  recurring gift ("executes automatically on the date", "7-day reminder"). We built the REAL
+  scheduling that backs every promise — NOT a redefinition to immediate-only, no fake
+  auto-execute, no fake reminder. Design in `plan/phase-gifting-design.md`.
+- **Migration 0019:** `scheduled_gifts` (giver, recipient user-or-pending-email, asset_type,
+  property/units or amount, scheduled_for, recurring + optional `recurrence_end`, `series_id`,
+  status [scheduled|pending|executed|cancelled|failed], failure_reason, reminder_sent_at,
+  idempotency_key; UNIQUE(series_id, scheduled_for) + UNIQUE(idempotency_key)).
+  `transaction_type += 'gift'`; `platform_settings += gift_fee_pct` (default 0).
+- **Reserve-now (truthful):** property-share gifts reserve units via the shared
+  `secondary_service.reserved_units` (a **4th term**: status ∈ {scheduled, pending}) — a gifted
+  unit can't also be listed / LP-exited / family-allocated / double-gifted. Wallet gifts are
+  **escrowed** at schedule via a real `wallet_service.debit`; refunded on cancel.
+- **Executor cron** `POST /api/v1/admin/gifts/run-due` (`AdminOrCronDep`, `FOR UPDATE
+  SKIP LOCKED`): pass 1 sends the **7-day reminder** (real Phase-12 `notify`, once via
+  `reminder_sent_at`); pass 2 executes due gifts via the family atomic-transfer engine
+  (ledger −N/+N, `fee_rate` stamped; wallet → credit recipient from escrow). REAL (KYC'd)
+  recipient → immediate; non-user recipient → **pending**, materializes on KYC (reuse the
+  Phase-10/Group-4 hook in `kyc_service`). Idempotent (no double move).
+- **Recurrence:** re-enqueue the **next single occurrence only** (not every future year) —
+  re-reserve units / re-escrow next year's cash then; skip + notify if the giver can no longer
+  cover it. `UNIQUE(series_id, scheduled_for)` makes re-runs safe. End = until cancelled or
+  optional `recurrence_end`.
+- **Asset scope:** `property_shares` + `wallet` are REAL; `passive_income` (PASSIVE
+  hard-locked), `rental_returns` (accrues to wallet, no separate stream), `tokenized`
+  (tokenization is the separate **BRX** project — PropShare has no blockchain), `allocation`
+  (no real backing) are **honest-disabled** in the UI (shown, not removed) and rejected by the
+  schema. **Tokenized is NOT aliased to property_shares** (would mislead).
+- **Zero-fee** via admin-editable `gift_fee_pct` (default 0 — a gift isn't a sale).
+- **Frontend:** the gifting section of `FamilyBeneficiaryGifting.tsx` restored to the real
+  compose flow (recipient name+email, occasion, asset [real enabled / others disabled],
+  property+units or wallet amount, date, yearly recurring, message) + real gift cards with
+  real statuses + Cancel; success toast only on a real 201. The reminder strip copy stays —
+  it's now TRUE (the cron sends it). `giftsApi` added; beneficiary section untouched.
+- **NEW cron** to add to the VPS crontab + DEPLOYMENT_CHECKLIST (now 7 jobs).
