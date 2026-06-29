@@ -27,6 +27,7 @@ import {
   User,
 } from "lucide-react";
 import { ApiError, familyApi, holdingsApi, type FamilyMember } from "@/lib/api";
+import { FamilyBeneficiaryGifting } from "./FamilyBeneficiaryGifting";
 
 const relationshipIcon = (relationship: string) => {
   if (/owner|self/i.test(relationship)) return <Crown className="h-4 w-4 text-amber-500" />;
@@ -373,23 +374,11 @@ export const FamilyInvestment = () => {
           </div>
         </TabsContent>
 
-        {/* Estate / Beneficiaries & Gifting — CapiMax's OWN feature (not BRX). Currently
-            honest-disabled (no fake estate functionality); the real backend is planned as
-            the final group of the "build real backends" roadmap, with a legal-design step.
-            The mock component (FamilyBeneficiaryGifting.tsx) is kept in the repo. */}
+        {/* Estate / Beneficiaries — CapiMax's OWN feature (not BRX). Real beneficiary
+            register wired to the estate API (Group 4); inheritance executes on admin-verified
+            death. The gifting section inside is an honest placeholder (backend pending). */}
         <TabsContent value="estate" className="space-y-4">
-          <Card className="border-dashed">
-            <CardContent className="py-12 flex flex-col items-center text-center gap-3">
-              <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                <Shield className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <h3 className="text-lg font-semibold">Beneficiaries &amp; inheritance are coming soon</h3>
-              <p className="text-sm text-muted-foreground max-w-md">
-                Estate planning, beneficiaries and inheritance are part of CapiMax PropShare
-                and are being built. This feature isn't available yet — check back soon.
-              </p>
-            </CardContent>
-          </Card>
+          <FamilyBeneficiaryGifting />
         </TabsContent>
         <TabsContent value="gifting" className="space-y-4">
           <Card className="border-dashed">
