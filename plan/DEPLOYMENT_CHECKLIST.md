@@ -81,6 +81,12 @@ Conventions used below:
 2. Env (backend): `APPLE_CLIENT_ID=...` (Services ID), `APPLE_TEAM_ID=...`, `APPLE_KEY_ID=...`, `APPLE_PRIVATE_KEY=<contents of the .p8>`
 3. Env (frontend): `VITE_APPLE_CLIENT_ID=...`
 
+### 1.9 File storage — documents / certificates / property images / avatars (BUILT, Group 2)
+Works with **no keys** on the default local-FS provider, but in production you should decide where files live:
+- **Local-FS (default):** `STORAGE_PROVIDER=local`, files under `STORAGE_DIR` (default `var/storage`, relative to the backend cwd). Put this on a **persistent, backed-up volume** — a container/VPS rebuild without it loses uploaded files. Served by the app.
+- **S3 (recommended for prod):** `STORAGE_PROVIDER=s3`, `S3_BUCKET=...`, `S3_REGION=...`, optionally `S3_ENDPOINT_URL=...` (MinIO/custom) and `S3_PUBLIC_BASE_URL=...` (CDN; otherwise presigned GET URLs). Uses boto3 (lazily imported).
+- `STORAGE_MAX_UPLOAD_MB=25` caps upload size (default 25).
+
 ---
 
 ## §2. Infrastructure
@@ -88,7 +94,7 @@ Conventions used below:
 1. **VPS (Hostinger, EU)** — provision Ubuntu; install Python 3.14, PostgreSQL 16, nginx.
 2. **Database** — create the `capimax` DB + user; set `DATABASE_URL=postgresql+asyncpg://USER:PASS@localhost:5432/capimax`.
 3. **App** — create the venv, `pip install -e backend`, then:
-   - `alembic upgrade head` (brings the schema to **0014**).
+   - `alembic upgrade head` (brings the schema to **0019** — the current head). This creates ALL tables, including milestones (0015), investor updates (0016), saved payment methods (0017), estate/beneficiaries (0018), and scheduled gifts (0019). A fresh deploy MUST reach 0019 or those features' tables will be missing.
    - `python backend/scripts/seed_admin.py` (creates the first admin — set its email/password).
    - (optional) `python backend/scripts/seed_properties.py` to load demo properties.
 4. **Run** — gunicorn + uvicorn workers behind nginx (see `backend/Dockerfile` CMD for the gunicorn invocation). Put nginx in front for TLS + reverse proxy to the app port.
@@ -157,12 +163,24 @@ Run each end-to-end once on production and confirm the expected result:
 5. **Sumsub KYC** — start verification → complete in the Sumsub SDK → the webhook flips KYC to `verified` (no manual admin step).
 6. **Resend email** — trigger a financial/security event (e.g. investment confirmed) → the outbox drainer (§4) delivers a real email; check Resend logs + the inbox.
 7. **OAuth** — sign in with Google and with Apple → account provisions + logs in.
-8. **Each cron** — fire all 6 manually once with the `X-Cron-Secret` header; confirm 200 + sensible counts.
-9. **Reconciliation** — `python backend/scripts/reconcile.py` (or `GET …/admin/reconciliation`) → **`ok: true`, zero drift** across every check.
-10. **Compliance copy** — the homepage/footer figures ("$50M+ AUM", "15,000+ owners", "Regulated by Financial Services Authority") are presented as substantiated marketing per the owner's assertion. Confirm each is backed before public launch (owner's responsibility).
+8. **Each cron** — fire all 7 (§4) manually once with the `X-Cron-Secret` header; confirm 200 + sensible counts.
+9. **Gift executor** — schedule a gift due today (property-share units or wallet amount) → confirm the units are reserved / the cash is escrowed at schedule → fire `POST …/admin/gifts/run-due` → confirm the real ownership transfer (or wallet credit) executed, and that a gift scheduled within 7 days produces the one-time 7-day reminder notification.
+10. **Reconciliation** — `python backend/scripts/reconcile.py` (or `GET …/admin/reconciliation`) → **`ok: true`, zero drift** across every check.
+11. **Compliance copy** — the homepage/footer figures ("$50M+ AUM", "15,000+ owners", "Regulated by Financial Services Authority") and the LiquiditySection "Up to 12% APY" teaser (PASSIVE is hard-locked) are presented as substantiated marketing per the owner's assertion. Confirm each is backed before public launch (owner's responsibility).
 
 ---
 
-## Notes / deferred (not part of launch wiring)
-- **PASSIVE LP pool**, **installment plans**, **virtual cards**, and **documents/file storage** (incl. avatar + property image upload) are intentionally deferred and degrade honestly in the UI ("not yet available"). No keys are needed; they ship in their own later phases.
-- The estate/beneficiary feature is handled by the separate **BRX** project, not CapiMax.
+## Notes — built vs genuinely deferred
+
+**Built and live (no longer deferred):**
+- **Documents / file storage** — BUILT (Group 2): real owner-scoped upload, public list/download, live PDF ownership certificates, and the property-image + avatar upload seams. Uses the storage seam in §1.9 (local-FS by default; S3 for prod). No "not available" stub remains.
+- **Estate / beneficiaries / inheritance** — BUILT (Group 4) as **CapiMax's own feature** (NOT BRX — that earlier note was wrong). Beneficiary register (free allocation, sum ≤ 100; REAL/PENDING) + **admin-verified-death** execution (death certificate via the storage seam + admin confirm; never client-asserted) + atomic ownership transfer reusing the family engine. Tables created by migration 0018.
+- **Inter-vivos gifting** — BUILT (Group 5): real **scheduled + recurring** gifts — units reserved / cash escrowed at schedule, executed on the date by the **gift executor cron** (the 7th job in §4), recurring re-enqueue, non-user recipient materializes on KYC. Tables created by migration 0019. Nothing here is deferred.
+
+**Genuinely deferred (still honest-disabled in the UI; no launch wiring needed):**
+- **PASSIVE LP (fixed-yield) pool** — engine built but **hard-locked** (`lp_passive_enabled=false`); stays locked pending the owner's yield-source + reserve-buffer + ALM + capital-adequacy + FSA-licence decision (with counsel). No real deposit is possible; the fixed APY must never render as guaranteed.
+- **Installment plans** — recurring scheduled purchase payments; the calculator's commit CTA stays honest-disabled until designed.
+- **Virtual cards** — not built; honest-disabled.
+
+**Hardening item (flagged, not blocking launch):**
+- **Beneficiary PII encryption-at-rest** — estate beneficiary `id_type`/`id_number` are stored as-provided in `estate_beneficiaries.meta` (owner-accepted). Encryption/tokenization-at-rest is the flagged hardening item in `plan/phase-estate-design.md`.
