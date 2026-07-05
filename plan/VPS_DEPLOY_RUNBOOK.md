@@ -154,7 +154,11 @@ sudo apt -y install nodejs
 openssl rand -base64 24            # >>> EDIT <<< copy this value somewhere safe (server only)
 sudo -u postgres psql <<'SQL'
 CREATE USER capimax_app WITH PASSWORD 'PASTE_THE_GENERATED_PASSWORD_HERE';  -- >>> EDIT <<<
-CREATE DATABASE capimax OWNER capimax_app;
+CREATE DATABASE capimaxpropshare OWNER capimax_app;
+\c capimaxpropshare
+-- PostgreSQL 15+/16: the public schema no longer grants CREATE to all users, so grant it
+-- to the app user explicitly (run WHILE connected to the new DB) or migrations will fail.
+GRANT ALL ON SCHEMA public TO capimax_app;
 SQL
 ```
 > If the password contains URL-reserved characters (`@ : / ? # %`), URL-encode them in
@@ -167,7 +171,7 @@ node --version                  # v20.x
 psql --version                  # psql ... 16.x
 systemctl is-active postgresql nginx   # both active
 # DB connectivity with the app user (enter the password):
-psql "postgresql://capimax_app@localhost/capimax" -c '\conninfo'
+psql "postgresql://capimax_app@localhost/capimaxpropshare" -c '\conninfo'
 ```
 
 ---
@@ -208,7 +212,7 @@ LOG_LEVEL=INFO
 JWT_SECRET=>>> EDIT: paste a fresh `openssl rand -hex 48` <<<
 
 # DB (Stage 2.3). asyncpg driver; URL-encode any reserved chars in the password.
-DATABASE_URL=postgresql+asyncpg://capimax_app:>>> EDIT: DB password <<<@localhost:5432/capimax
+DATABASE_URL=postgresql+asyncpg://capimax_app:>>> EDIT: DB password <<<@localhost:5432/capimaxpropshare
 
 # Cookies / CORS / links — HTTPS + the shared parent domain (Decision B).
 COOKIE_SECURE=true
@@ -286,7 +290,7 @@ alembic current                    # MUST print revision 0020 (head)
 cd /opt/capimax/app/backend
 alembic current | grep -q 0020 && echo "schema at head 0020 ✅" || echo "NOT at 0020 ❌"
 # all 20 migrations' tables exist — spot-check the latest groups:
-psql "postgresql://capimax_app@localhost/capimax" -c "\dt" | \
+psql "postgresql://capimax_app@localhost/capimaxpropshare" -c "\dt" | \
   grep -E 'installment_plans|installment_payments|scheduled_gifts|estate_beneficiaries|saved_payment_methods|developer_updates|property_milestones'
 ```
 You should see all listed (installments / gifting / estate / payment-methods / comms / milestones).
@@ -543,7 +547,7 @@ Now wire external providers **incrementally**. For **each** provider:
   sudo systemctl restart capimax
   cd /opt/capimax/app && npm ci && npm run build   # if the frontend changed / VITE_* changed
   ```
-- **Database backups (set up before real money flows):** a nightly `pg_dump capimax` to
+- **Database backups (set up before real money flows):** a nightly `pg_dump capimaxpropshare` to
   off-server storage, plus back up `STORAGE_DIR` (uploaded documents/certificates) alongside it.
 - **Secrets:** rotating `JWT_SECRET` invalidates all sessions (users re-login). `CRON_SECRET`
   rotation must be updated in both `.env` and the crontab.

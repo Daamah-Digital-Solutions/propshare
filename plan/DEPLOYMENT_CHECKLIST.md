@@ -100,7 +100,7 @@ Works with **no keys** on the default local-FS provider, but in production you s
 ## §2. Infrastructure
 
 1. **VPS (Hostinger, EU)** — provision Ubuntu; install Python 3.14, PostgreSQL 16, nginx.
-2. **Database** — create the `capimax` DB + user; set `DATABASE_URL=postgresql+asyncpg://USER:PASS@localhost:5432/capimax`.
+2. **Database** — create the `capimaxpropshare` DB + a dedicated user (`capimax_app`); set `DATABASE_URL=postgresql+asyncpg://USER:PASS@localhost:5432/capimaxpropshare`. (See `VPS_DEPLOY_RUNBOOK.md` §2.3 for the exact `CREATE DATABASE` + PG15+/16 `GRANT ALL ON SCHEMA public` step.)
 3. **App** — create the venv, `pip install -e backend`, then:
    - `alembic upgrade head` (brings the schema to **0020** — the current head). This creates ALL tables, including milestones (0015), investor updates (0016), saved payment methods (0017), estate/beneficiaries (0018), scheduled gifts (0019), and installment plans (0020). A fresh deploy MUST reach 0020 or those features' tables will be missing. Confirm with `alembic current` → `0020 (head)`.
    - `python backend/scripts/seed_admin.py` (creates the first admin — set its email/password).
