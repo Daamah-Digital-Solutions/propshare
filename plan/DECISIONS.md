@@ -169,10 +169,12 @@ Locked product/engineering decisions, newest groups appended. Companion to `PROG
   investor can pay one early (`POST /installments/payments/{id}/pay`). KYC-gated + Idempotency-Key.
 - **Due-payment cron** `POST /api/v1/admin/installments/run-due` (`AdminOrCronDep`, `FOR UPDATE
   SKIP LOCKED`): pass 1 sends the 3-day reminder (Phase-12 `notify`, once via `reminder_sent_at`),
-  pass 2 charges due installments (vesting). **Missed-payment rule (UI unspecified → safest
-  chosen + FLAGGED):** an uncharged due installment → `overdue` + investor notified; **GRACE —
-  retried each run, NO auto-forfeit, NO late fee, vested units untouched, plan stays active.**
-  (Late fees / forfeiture / cancellation-refund need an explicit owner rule — deferred.)
+  pass 2 charges due installments (vesting). **Missed-payment rule — OWNER-CONFIRMED
+  (2026-07-05): open-ended grace + reminder is the intended v1 rule.** An uncharged due
+  installment → `overdue` + investor notified; **retried each cron run, NO late fee, NO
+  forfeiture, vested units untouched, plan stays active** (indefinitely, until the balance is
+  topped up and the installment charges). Late fees / forfeiture are **explicitly NOT wanted in
+  v1** (owner). No time-boxed grace, no auto-cancel.
 - **Pre-handover yield exclusion (confirmed):** yes — partially-vested holders earn no rental
   distribution until the plan completes; the exclusion is in the distribution ownership base.
 - **Frontend:** `InstallmentCalculator` wired real (propertyId + server fee rate — no hardcoded 4%;
@@ -181,3 +183,10 @@ Locked product/engineering decisions, newest groups appended. Companion to `PROG
   renders real plans + statuses + a "Pay now" for due/overdue installments. `installmentsApi` added;
   property detail `fees.installment_fee` exposed.
 - **NEW cron** to add to the VPS crontab + DEPLOYMENT_CHECKLIST (now **8 jobs**).
+- **Plan cancellation + refund — DEFERRED to a later phase (owner decision, 2026-07-05).** NOT
+  built in v1. Verified no "cancel plan" / refund control exists in the installment UI
+  (`InstallmentCalculator`'s only "Cancel" is the down-payment confirmation-dialog dismiss —
+  it backs out *before* a plan is created; `InstallmentSchedule` has only "Pay now") — so
+  nothing fakes a cancel/refund and nothing needed honest-disabling. When built, cancellation
+  must define the refund policy for already-paid installments + the fate of already-vested
+  units (both riba/legal-sensitive) — needs an explicit owner rule before implementation.
