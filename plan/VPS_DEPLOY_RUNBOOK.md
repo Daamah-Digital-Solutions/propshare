@@ -42,21 +42,18 @@ The repository currently has **no git remote configured** and the canonical bran
 3. **`rsync` the working tree (last resort).** Loses git history; harder to update. Not advised.
 
 ### Decision B — Branch to deploy + subdomain scheme
-- **Branch:** all the "build-everything-real" work (groups 2–5: storage, payment methods,
-  estate, gifting) lives on **`build/storage-payments-estate`** — **8 commits ahead of
-  `master`**, in a **linear (fast-forward) line**. `master` is still at the pre-build baseline
-  `c804e90` and is **NOT deployable** (missing those features + migrations 0015–0019).
-  **Recommended:** fast-forward `master` to the build branch, tag a release, deploy `master`
-  (clean canonical default). The owner runs this **once**, locally or wherever `origin` lives,
-  before you clone:
+- **Branch:** all the "build-everything-real" work (groups 2–6: storage, payment methods,
+  estate, gifting, installments) is already merged to **`master`** — it was fast-forwarded to
+  the build tip **`6952666`** and tagged **`v1.0.0`** locally (a clean linear FF; no merge
+  commit). Deploy **`master`** at `v1.0.0`. The owner just needs to publish it once (Decision A):
+  create the private repo, add it as `origin`, and push the branch + tag:
   ```bash
-  git checkout master
-  git merge --ff-only build/storage-payments-estate   # linear FF — no merge commit
-  git tag -a v1.0.0 -m "CapiMax PropShare v1.0.0 (groups 0–5 complete)"
-  git push origin master --tags                        # if using Decision A.1
+  git remote add origin <YOUR_PRIVATE_REPO_SSH_URL>   # e.g. git@github.com:acme/capimax.git
+  git push -u origin master
+  git push origin v1.0.0
   ```
-  *(Alternative: deploy `build/storage-payments-estate` directly — same code, just a
-  non-default branch name. Either way the deployed tip must be commit `d3d0250` or later.)*
+  *(Alternative: deploy `build/storage-payments-estate` directly — identical code, just a
+  non-default branch name. Either way the deployed tip must be commit `6952666` / tag `v1.0.0`.)*
 - **Subdomains:** this runbook uses `api.example.com` (backend) + `app.example.com` (SPA),
   sharing the parent `example.com`. That lets the refresh-token cookie work across both via
   `COOKIE_DOMAIN=.example.com`. If you instead serve the SPA at the apex `example.com`, adjust
@@ -185,9 +182,9 @@ cd /opt/capimax
 # Decision A.1 (git host):   git clone <REPO_SSH_URL> app
 # Decision A.2 (bundle):     git clone /home/deploy/capimax.bundle app
 cd /opt/capimax/app
-# Deploy the chosen branch (Decision B). If you fast-forwarded master:
+# Deploy the chosen branch (Decision B) — master is at v1.0.0:
 git checkout master
-git log --oneline -1            # MUST be d3d0250 (or later) — the gifting/docs tip
+git log --oneline -1            # MUST be 6952666 (tag v1.0.0, or later) — the full-build tip
 
 # --- 3.2 Virtualenv + install the backend package ---
 python3.12 -m venv /opt/capimax/venv
@@ -237,9 +234,15 @@ STORAGE_MAX_UPLOAD_MB=25
 # ===================== PROVIDERS (leave blank now; fill in Stage 7) =====================
 # Names below are authoritative; values + webhook URLs are in DEPLOYMENT_CHECKLIST §1.
 # Until set, the related feature returns an honest 503 / shows disabled UI.
-EMAIL_PROVIDER=console        # 'resend' or 'smtp' in prod (DEPLOYMENT_CHECKLIST §1.6)
-# EMAIL_FROM=CapiMax <no-reply@example.com>
-# RESEND_API_KEY=
+# Email: the owner uses Hostinger SMTP in prod (DEPLOYMENT_CHECKLIST §1.6). Keep 'console'
+# (logs only) until you wire it in Stage 7, then set:
+EMAIL_PROVIDER=console        # -> 'smtp' in prod
+# SMTP_HOST=smtp.hostinger.com
+# SMTP_PORT=587               # 587 = STARTTLS (required); 465/implicit-SSL is NOT supported
+# SMTP_USER=no-reply@yourdomain.com
+# SMTP_PASSWORD=              # owner-held mailbox password
+# EMAIL_FROM=CapiMax <no-reply@yourdomain.com>
+# RESEND_API_KEY=            # only if you switch EMAIL_PROVIDER=resend instead
 # STRIPE_SECRET_KEY=
 # STRIPE_WEBHOOK_SECRET=
 # STRIPE_PUBLISHABLE_KEY=
@@ -272,7 +275,7 @@ mkdir -p /opt/capimax/storage      # matches STORAGE_DIR; back this up with the 
 # --- 3.5 Run migrations — MUST run from backend/ so .env loads ---
 cd /opt/capimax/app/backend
 alembic upgrade head
-alembic current                    # MUST print revision 0019 (head)
+alembic current                    # MUST print revision 0020 (head)
 ```
 > **Why `cd backend` matters:** pydantic loads `.env` from the **current working directory**.
 > Running alembic (and later gunicorn) from `backend/` is required or `DATABASE_URL` won't be
@@ -281,12 +284,12 @@ alembic current                    # MUST print revision 0019 (head)
 **✅ Verify before continuing:**
 ```bash
 cd /opt/capimax/app/backend
-alembic current | grep -q 0019 && echo "schema at head 0019 ✅" || echo "NOT at 0019 ❌"
-# all 19 migrations' tables exist — spot-check the latest groups:
+alembic current | grep -q 0020 && echo "schema at head 0020 ✅" || echo "NOT at 0020 ❌"
+# all 20 migrations' tables exist — spot-check the latest groups:
 psql "postgresql://capimax_app@localhost/capimax" -c "\dt" | \
-  grep -E 'scheduled_gifts|estate_beneficiaries|saved_payment_methods|developer_updates|property_milestones'
+  grep -E 'installment_plans|installment_payments|scheduled_gifts|estate_beneficiaries|saved_payment_methods|developer_updates|property_milestones'
 ```
-You should see all five tables listed (gifting / estate / payment-methods / comms / milestones).
+You should see all listed (installments / gifting / estate / payment-methods / comms / milestones).
 **Do not create the admin yet** — `seed_admin.py` promotes an *existing* user, so it runs at the
 end of Stage 4 after the API is up and you've registered the admin account.
 
@@ -487,7 +490,8 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST \
 curl -s -o /dev/null -w "%{http_code}\n" -X POST \
   -H "X-Cron-Secret: wrong" https://api.example.com/api/v1/admin/gifts/run-due   # -> 401
 ```
-The 7 endpoints + their purpose are documented in `plan/DEPLOYMENT_CHECKLIST.md` §4.
+The 8 endpoints + their purpose are documented in `plan/DEPLOYMENT_CHECKLIST.md` §4. (The
+installment executor `…/admin/installments/run-due` is verified end-to-end in Stage 7.)
 
 ---
 
@@ -508,13 +512,18 @@ Now wire external providers **incrementally**. For **each** provider:
    §5.1: deposit → hosted checkout → wallet credits via the webhook → check `/admin → Transactions`.
 2. **Stripe Connect payouts** (§1.2 / §5.3) → 3. **NOWPayments deposits** (§1.3 / §5.2) →
    4. **NOWPayments payouts** (§1.4 / §5.4) → 5. **Sumsub KYC** (§1.5 / §5.5) →
-   6. **Resend email** (§1.6 / §5.6 — flip `EMAIL_PROVIDER=resend`) →
+   6. **Email — Hostinger SMTP** (§1.6 / §5.6 — set `EMAIL_PROVIDER=smtp` + `SMTP_HOST=smtp.hostinger.com`
+      + `SMTP_PORT=587` + `SMTP_USER`/`SMTP_PASSWORD` + `EMAIL_FROM`) →
    7. **Google + Apple OAuth** (§1.7–1.8 / §5.7 — set the `VITE_*` IDs and **rebuild the
       frontend**, Stage 5).
 8. **Gift executor** end-to-end (§5.9): schedule a gift due today → confirm units reserved /
    cash escrowed → fire `…/admin/gifts/run-due` → real transfer/credit + the one-time 7-day reminder.
-9. **Final reconciliation** (§5.10): `scripts/reconcile.py` → `ok: true`, zero drift everywhere.
-10. **Compliance copy** (§5.11): confirm the marketing/legal claims (AUM / owners / "Regulated by
+9. **Installment executor** end-to-end (§5.10): start a plan on an under-construction property
+   (down payment charged + down-payment units vest) → fire `…/admin/installments/run-due` for a due
+   installment → confirm it charges + vests more units + the reminder; drain the wallet first to see
+   `overdue` (grace, retried, no forfeiture).
+10. **Final reconciliation** (§5.11): `scripts/reconcile.py` → `ok: true`, zero drift everywhere.
+11. **Compliance copy** (§5.12): confirm the marketing/legal claims (AUM / owners / "Regulated by
     FSA" / "Up to 12% APY") are substantiated **before public launch** — owner's responsibility.
 
 > **PASSIVE LP pool stays hard-locked** (`lp_passive_enabled=false`) — do not enable it; its

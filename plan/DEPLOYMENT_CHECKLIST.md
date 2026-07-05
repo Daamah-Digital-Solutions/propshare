@@ -61,13 +61,21 @@ Conventions used below:
    - `SUMSUB_LEVEL_NAME=basic-kyc-level`  (match your Sumsub level)
    - `SUMSUB_BASE_URL=https://api.sumsub.com`
 
-### 1.6 Resend — transactional email
-1. Create a Resend account; **verify your sending domain**; create an **API key**.
-2. Env (backend):
-   - `EMAIL_PROVIDER=resend`
-   - `RESEND_API_KEY=re_...`
-   - `EMAIL_FROM=CapiMax <no-reply@yourdomain.com>`  (must be on the verified domain)
-   - (Locally `EMAIL_PROVIDER=console` just logs emails; `smtp` is also supported via `SMTP_HOST/PORT/USER/PASSWORD`.)
+### 1.6 Transactional email — Hostinger SMTP (owner's choice)
+The owner sends via **Hostinger SMTP** (a mailbox on their domain), not Resend. The owner has
+the mailbox credentials; DevOps sets these env vars:
+   - `EMAIL_PROVIDER=smtp`
+   - `SMTP_HOST=smtp.hostinger.com`
+   - `SMTP_PORT=587`  ← **use 587 (STARTTLS)**. The sender does `SMTP(...)` + `starttls()`
+     (`app/services/integrations/email.py`), so it needs a STARTTLS port. **Port 465
+     (implicit SSL) is NOT supported** by the current sender — do not use 465.
+   - `SMTP_USER=<the Hostinger mailbox address>`  (e.g. `no-reply@yourdomain.com`)
+   - `SMTP_PASSWORD=<the mailbox password>`  (owner-held)
+   - `EMAIL_FROM=CapiMax <no-reply@yourdomain.com>`  (use the same mailbox address)
+   - (Locally `EMAIL_PROVIDER=console` just logs emails. `resend` is also supported —
+     `EMAIL_PROVIDER=resend` + `RESEND_API_KEY=re_...` — if you ever switch providers.)
+2. In Hostinger, ensure the mailbox exists and SMTP is enabled; set SPF/DKIM on the domain so
+   mail isn't spam-filtered. Send a test after wiring (§5.6).
 
 ### 1.7 Google OAuth
 1. Google Cloud Console → OAuth client (Web). Authorized redirect URI:
@@ -94,7 +102,7 @@ Works with **no keys** on the default local-FS provider, but in production you s
 1. **VPS (Hostinger, EU)** — provision Ubuntu; install Python 3.14, PostgreSQL 16, nginx.
 2. **Database** — create the `capimax` DB + user; set `DATABASE_URL=postgresql+asyncpg://USER:PASS@localhost:5432/capimax`.
 3. **App** — create the venv, `pip install -e backend`, then:
-   - `alembic upgrade head` (brings the schema to **0019** — the current head). This creates ALL tables, including milestones (0015), investor updates (0016), saved payment methods (0017), estate/beneficiaries (0018), and scheduled gifts (0019). A fresh deploy MUST reach 0019 or those features' tables will be missing.
+   - `alembic upgrade head` (brings the schema to **0020** — the current head). This creates ALL tables, including milestones (0015), investor updates (0016), saved payment methods (0017), estate/beneficiaries (0018), scheduled gifts (0019), and installment plans (0020). A fresh deploy MUST reach 0020 or those features' tables will be missing. Confirm with `alembic current` → `0020 (head)`.
    - `python backend/scripts/seed_admin.py` (creates the first admin — set its email/password).
    - (optional) `python backend/scripts/seed_properties.py` to load demo properties.
 4. **Run** — gunicorn + uvicorn workers behind nginx (see `backend/Dockerfile` CMD for the gunicorn invocation). Put nginx in front for TLS + reverse proxy to the app port.
@@ -144,7 +152,7 @@ Example crontab (adjust cadence to taste):
 | Withdrawal executor | `POST …/admin/withdrawals/execute` | submit approved payouts to the provider |
 | Withdrawal reconcile | `POST …/admin/withdrawals/reconcile` | re-query stuck `processing` payouts |
 | Reservation-expiry sweep | `POST …/investments/maintenance/expire-reservations` | release lapsed unpaid direct-pay holds |
-| Email outbox drainer | `POST …/admin/notifications/dispatch-emails` | send queued emails (Resend) |
+| Email outbox drainer | `POST …/admin/notifications/dispatch-emails` | send queued emails (Hostinger SMTP) |
 | LP exit-request expiry | `POST …/admin/liquidity/expire-requests` | free units reserved by lapsed LP exit requests |
 | Gift executor (Group 5) | `POST …/admin/gifts/run-due` | send 7-day gift reminders + execute due scheduled gifts (real transfer / wallet credit; recurring re-enqueue) |
 | Installment executor (Group 6) | `POST …/admin/installments/run-due` | send installment reminders + charge due installments from the wallet (progressive vesting); a missed one → overdue + notify (grace, retried) |
@@ -163,12 +171,13 @@ Run each end-to-end once on production and confirm the expected result:
 3. **Stripe Connect payout** — "Link your bank" onboarding completes → request a bank withdrawal ≤ the auto-approve limit → it executes and settles; over-limit lands in `/admin → Withdrawals` review.
 4. **NOWPayments payout** — request a crypto withdrawal → it executes; confirm funds leave; a returned/failed payout credits back.
 5. **Sumsub KYC** — start verification → complete in the Sumsub SDK → the webhook flips KYC to `verified` (no manual admin step).
-6. **Resend email** — trigger a financial/security event (e.g. investment confirmed) → the outbox drainer (§4) delivers a real email; check Resend logs + the inbox.
+6. **Email (Hostinger SMTP)** — trigger a financial/security event (e.g. investment confirmed) → the outbox drainer (§4) delivers a real email; check the mailbox + the app logs. (Locally `EMAIL_PROVIDER=console` just logs the message.)
 7. **OAuth** — sign in with Google and with Apple → account provisions + logs in.
-8. **Each cron** — fire all 7 (§4) manually once with the `X-Cron-Secret` header; confirm 200 + sensible counts.
+8. **Each cron** — fire all 8 (§4) manually once with the `X-Cron-Secret` header; confirm 200 + sensible counts.
 9. **Gift executor** — schedule a gift due today (property-share units or wallet amount) → confirm the units are reserved / the cash is escrowed at schedule → fire `POST …/admin/gifts/run-due` → confirm the real ownership transfer (or wallet credit) executed, and that a gift scheduled within 7 days produces the one-time 7-day reminder notification.
-10. **Reconciliation** — `python backend/scripts/reconcile.py` (or `GET …/admin/reconciliation`) → **`ok: true`, zero drift** across every check.
-11. **Compliance copy** — the homepage/footer figures ("$50M+ AUM", "15,000+ owners", "Regulated by Financial Services Authority") and the LiquiditySection "Up to 12% APY" teaser (PASSIVE is hard-locked) are presented as substantiated marketing per the owner's assertion. Confirm each is backed before public launch (owner's responsibility).
+10. **Installment executor** — start an installment plan on an under-construction property (down payment charged from the wallet at creation; allocation reserved; down-payment units vest) → for a due installment, fire `POST …/admin/installments/run-due` → confirm the installment charges from the wallet and vests more units; a due-soon installment produces the reminder notification; draining the wallet before the run marks the installment `overdue` (grace — no forfeiture, retried next run).
+11. **Reconciliation** — `python backend/scripts/reconcile.py` (or `GET …/admin/reconciliation`) → **`ok: true`, zero drift** across every check.
+12. **Compliance copy** — the homepage/footer figures ("$50M+ AUM", "15,000+ owners", "Regulated by Financial Services Authority") and the LiquiditySection "Up to 12% APY" teaser (PASSIVE is hard-locked) are presented as substantiated marketing per the owner's assertion. Confirm each is backed before public launch (owner's responsibility).
 
 ---
 
