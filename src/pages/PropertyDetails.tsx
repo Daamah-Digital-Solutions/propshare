@@ -103,6 +103,7 @@ const toViewModel = (d: PropertyDetail) => {
     fees: {
       platformFee: asNum(fees.platform_fee) ?? 2.0,
       managementFee: asNum(fees.management_fee) ?? 1.5,
+      installmentFee: asNum(fees.installment_fee) ?? 4.0,
       performanceFee: asNum(cFees.performance) ?? 10.0,
       exitFee: asNum(cFees.exit) ?? 1.0,
     },
@@ -460,6 +461,7 @@ const PropertyDetails = () => {
               <div className="sticky top-24 space-y-4">
                 {propertyData.type === "under_construction" ? (
                   <InstallmentCalculator
+                    propertyId={propertyData.id}
                     propertyData={propertyData}
                     investmentAmount={investmentAmount || propertyData.minInvestment}
                     setInvestmentAmount={setInvestmentAmount}

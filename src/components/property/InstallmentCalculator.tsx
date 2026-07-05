@@ -45,6 +45,8 @@ import {
 } from "lucide-react";
 import { format, addMonths } from "date-fns";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
+import { installmentsApi, ApiError } from "@/lib/api";
 
 interface PropertyData {
   propertyValue: number;
@@ -58,6 +60,9 @@ interface PropertyData {
   daysLeft: number;
   expectedCompletion?: string;
   constructionProgress?: number;
+  // Backend-supplied, admin-configurable installment fee rate (percent). The client
+  // displays it; the SERVER applies the authoritative rate at plan creation.
+  fees?: { installmentFee?: number };
 }
 
 interface InstallmentScheduleItem {
@@ -71,16 +76,26 @@ interface InstallmentScheduleItem {
 }
 
 interface InstallmentCalculatorProps {
+  propertyId: string;
   propertyData: PropertyData;
   investmentAmount: number;
   setInvestmentAmount: (amount: number) => void;
   propertyTitle: string;
 }
 
-const paymentMethods = [
-  { id: "card", icon: CreditCard, label: "Card", discount: 0 },
-  { id: "wallet", icon: Wallet, label: "Apple/Google Pay", discount: 0 },
-  { id: "pronova", icon: Coins, label: "Pronova Token", discount: 5 },
+// The plan is funded from the WALLET balance (down payment now; installments auto-charge on
+// their due dates). Pronova is disclosed but NOT_YET_ENABLED (no discount logic — D5), so it
+// carries no fabricated fee discount.
+const paymentMethods: {
+  id: string;
+  icon: typeof CreditCard;
+  label: string;
+  discount: number;
+  disabled?: boolean;
+  badge?: string;
+}[] = [
+  { id: "wallet", icon: Wallet, label: "Wallet Balance", discount: 0 },
+  { id: "pronova", icon: Coins, label: "Pronova Token", discount: 0, disabled: true, badge: "Coming soon" },
 ];
 
 const installmentDurations = [
@@ -90,30 +105,31 @@ const installmentDurations = [
   { value: "24", label: "24 Months", downPaymentPercent: 15 },
 ];
 
-const InstallmentCalculator = ({ 
-  propertyData, 
-  investmentAmount, 
+const InstallmentCalculator = ({
+  propertyId,
+  propertyData,
+  investmentAmount,
   setInvestmentAmount,
   propertyTitle
 }: InstallmentCalculatorProps) => {
-  const [selectedPayment, setSelectedPayment] = useState("card");
+  const [selectedPayment, setSelectedPayment] = useState("wallet");
   const [duration, setDuration] = useState("12");
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleReviewed, setScheduleReviewed] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const queryClient = useQueryClient();
 
   const selectedMethod = paymentMethods.find(m => m.id === selectedPayment);
   const discount = selectedMethod?.discount || 0;
   const selectedDuration = installmentDurations.find(d => d.value === duration);
   const months = parseInt(duration);
 
-  // Fee calculations based on Fees page specifications
-  // For under-construction properties:
-  // - 4% fee on down payment
-  // - 4% fee on each installment
-  // - 10% performance fee on annual profit (calculated separately, not upfront)
-  const FEE_RATE = 0.04; // 4%
-  
+  // Fee rate is server-authoritative + admin-configurable (installment_fee_pct), delivered
+  // via the property's fees payload — NOT a hardcoded literal. Applied to the down payment
+  // and to each installment; the SERVER recomputes the exact charge at plan creation.
+  const FEE_RATE = (propertyData.fees?.installmentFee ?? 4) / 100;
+
   // Installment calculations (fees applied separately to each payment)
   const downPaymentPercent = selectedDuration?.downPaymentPercent || 25;
   const baseDownPayment = (investmentAmount * downPaymentPercent) / 100;
@@ -170,20 +186,44 @@ const InstallmentCalculator = ({
 
   const quickAmounts = [1000, 2500, 5000, 10000, 25000];
 
-  const handleProceedToPayment = () => {
-    if (!scheduleReviewed) {
-      toast.error("Please review the installment schedule first");
-      return;
+  const handleConfirmPayment = async () => {
+    setIsSubmitting(true);
+    try {
+      // Server-authoritative: it reserves the allocation, snapshots the fee, builds the
+      // schedule and charges the down payment atomically from the wallet.
+      const plan = await installmentsApi.createPlan({
+        property_id: propertyId,
+        amount: investmentAmount,
+        duration_months: months,
+      });
+      const down = plan.payments.find((p) => p.seq === 0);
+      toast.success("Installment plan created!", {
+        description: `Down payment of $${down?.total_amount ?? ""} charged from your wallet. ${plan.payments.length} payments scheduled — track them in your dashboard.`,
+      });
+      setShowConfirmation(false);
+      setShowSchedule(false);
+      queryClient.invalidateQueries({ queryKey: ["property"] });
+      queryClient.invalidateQueries({ queryKey: ["wallet"] });
+      queryClient.invalidateQueries({ queryKey: ["installments"] });
+      queryClient.invalidateQueries({ queryKey: ["portfolio"] });
+    } catch (err) {
+      const code = err instanceof ApiError ? err.code : undefined;
+      const message =
+        code === "KYC_REQUIRED"
+          ? "Please complete identity verification before starting an installment plan."
+          : code === "INSUFFICIENT_FUNDS"
+            ? "Your wallet balance is too low for the down payment. Add funds and try again."
+            : code === "INSUFFICIENT_UNITS" || code === "PROPERTY_NOT_OPEN"
+              ? "Those units are no longer available."
+              : code === "AMOUNT_TOO_LOW"
+                ? "Increase the amount — it must cover at least one unit."
+                : err instanceof Error
+                  ? err.message
+                  : "Something went wrong. Please try again.";
+      toast.error("Could not create installment plan", { description: message });
+    } finally {
+      setIsSubmitting(false);
     }
-    setShowConfirmation(true);
-  };
-
-  const handleConfirmPayment = () => {
-    toast.success("Investment confirmed!", {
-      description: `Down payment of $${downPayment.toFixed(2)} processed. Installment plan added to your dashboard.`,
-    });
-    setShowConfirmation(false);
-    setShowSchedule(false);
   };
 
   const downloadSchedulePDF = () => {
@@ -367,20 +407,23 @@ const InstallmentCalculator = ({
             {paymentMethods.map((method) => (
               <button
                 key={method.id}
-                onClick={() => setSelectedPayment(method.id)}
+                disabled={method.disabled}
+                onClick={() => !method.disabled && setSelectedPayment(method.id)}
                 className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${
-                  selectedPayment === method.id
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:border-primary/50"
+                  method.disabled
+                    ? "border-border opacity-50 cursor-not-allowed"
+                    : selectedPayment === method.id
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/50"
                 }`}
               >
                 <div className="flex items-center gap-3">
                   <method.icon size={20} className="text-primary" />
                   <span className="font-medium text-foreground">{method.label}</span>
                 </div>
-                {method.discount > 0 && (
-                  <span className="text-sm font-semibold text-success bg-success/10 px-2 py-1 rounded-full">
-                    -{method.discount}% fees
+                {method.badge && (
+                  <span className="text-xs font-semibold text-muted-foreground bg-secondary px-2 py-1 rounded-full">
+                    {method.badge}
                   </span>
                 )}
               </button>
@@ -490,15 +533,22 @@ const InstallmentCalculator = ({
           </div>
         </div>
 
-        {/* Installment plans are deferred to their own phase — the calculator stays as an
-            illustrative estimator, but you can't yet commit to a plan (no fake success). */}
-        <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-700 dark:text-amber-400 text-center">
-          Installment plans are not available yet. Lump-sum investment is available on the
-          marketplace today.
-        </div>
-        <Button variant="hero" size="xl" className="w-full" disabled>
-          Installment Plans — Coming Soon
-          <Calendar size={20} />
+        {/* Start the plan: review the schedule, then confirm the down payment (real,
+            wallet-funded, server-authoritative). */}
+        <Button
+          variant="hero"
+          size="xl"
+          className="w-full"
+          onClick={() => {
+            if (!scheduleReviewed) {
+              setShowSchedule(true);
+            } else {
+              setShowConfirmation(true);
+            }
+          }}
+        >
+          Start Installment Plan
+          <ArrowRight size={20} />
         </Button>
 
         {/* Trust Indicators */}
@@ -706,19 +756,21 @@ const InstallmentCalculator = ({
             </div>
 
             <div className="flex gap-3">
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 className="flex-1"
                 onClick={() => setShowConfirmation(false)}
+                disabled={isSubmitting}
               >
                 Cancel
               </Button>
-              <Button 
-                variant="hero" 
+              <Button
+                variant="hero"
                 className="flex-1"
                 onClick={handleConfirmPayment}
+                disabled={isSubmitting}
               >
-                Pay ${downPayment.toFixed(2)}
+                {isSubmitting ? "Processing…" : `Pay $${downPayment.toFixed(2)}`}
               </Button>
             </div>
           </div>

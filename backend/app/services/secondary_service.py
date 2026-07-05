@@ -35,6 +35,7 @@ from app.core.errors import AppError
 from app.models import (
     FamilyMember,
     FamilyTransfer,
+    InstallmentPlan,
     LpExitRequest,
     Property,
     ScheduledGift,
@@ -111,8 +112,22 @@ async def reserved_units(session: AsyncSession, user_id: uuid.UUID, property_id:
             ScheduledGift.status.in_(("scheduled", "pending")),
         )
     )
+    # Group 6: units already VESTED under an ACTIVE (pre-handover) installment plan are held
+    # against the holder — they can't be listed/LP-exited/family-allocated/gifted until the
+    # plan completes at handover (the final payment). Completed plans release them.
+    installment_vested = await session.scalar(
+        select(func.coalesce(func.sum(InstallmentPlan.vested_units), 0)).where(
+            InstallmentPlan.investor_id == user_id,
+            InstallmentPlan.property_id == property_id,
+            InstallmentPlan.status == "active",
+        )
+    )
     return (
-        int(secondary or 0) + int(lp_open or 0) + int(family_pending or 0) + int(gift_reserved or 0)
+        int(secondary or 0)
+        + int(lp_open or 0)
+        + int(family_pending or 0)
+        + int(gift_reserved or 0)
+        + int(installment_vested or 0)
     )
 
 

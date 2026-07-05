@@ -38,6 +38,7 @@ from app.models import (
     FamilyMember,
     FamilyReturnAllocation,
     FamilyTransfer,
+    InstallmentPlan,
     Property,
 )
 from app.models.base import TransactionType
@@ -88,13 +89,31 @@ def hamilton(pool_cents: int, weights: list[tuple[Hashable, int]]) -> dict[Hasha
 
 
 async def _ownership(session: AsyncSession, property_id: uuid.UUID) -> list[tuple[uuid.UUID, int]]:
-    """Confirmed units per user from the append-only ownership ledger (units > 0)."""
+    """Rental-yield-eligible units per user from the append-only ownership ledger (units > 0).
+
+    Group 6: units vested under an ACTIVE (pre-handover) installment plan are EXCLUDED — a
+    partially-vested installment holder earns NO rental yield until the final payment
+    (handover), at which point the plan is 'completed' and its units become yield-eligible.
+    """
     res = await session.execute(
         select(OwnershipLedger.user_id, func.coalesce(func.sum(OwnershipLedger.units), 0))
         .where(OwnershipLedger.property_id == property_id)
         .group_by(OwnershipLedger.user_id)
     )
-    rows = [(uid, int(units)) for uid, units in res.all() if int(units) > 0]
+    ledger = {uid: int(units) for uid, units in res.all()}
+
+    pre_handover = await session.execute(
+        select(
+            InstallmentPlan.investor_id, func.coalesce(func.sum(InstallmentPlan.vested_units), 0)
+        )
+        .where(InstallmentPlan.property_id == property_id, InstallmentPlan.status == "active")
+        .group_by(InstallmentPlan.investor_id)
+    )
+    for uid, vested in pre_handover.all():
+        if uid in ledger:
+            ledger[uid] -= int(vested)
+
+    rows = [(uid, units) for uid, units in ledger.items() if units > 0]
     rows.sort(key=lambda r: str(r[0]))  # deterministic + sorted lock order
     return rows
 

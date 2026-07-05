@@ -456,9 +456,9 @@ npm run build        # outputs to /opt/capimax/app/dist (nginx 'app.' root alrea
 
 ---
 
-## Stage 6 — Cron jobs (7) — system cron → admin endpoints
+## Stage 6 — Cron jobs (8) — system cron → admin endpoints
 
-All 7 are idempotent and authenticate with the `X-Cron-Secret: $CRON_SECRET` header (the value
+All 8 are idempotent and authenticate with the `X-Cron-Secret: $CRON_SECRET` header (the value
 you put in `.env` at 3.3). Install them in the `deploy` user's crontab:
 
 ```bash
@@ -473,6 +473,7 @@ Paste (replace `SECRET` with the **real** `CRON_SECRET`, and the API host):
 *    * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/admin/notifications/dispatch-emails
 */10 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/admin/liquidity/expire-requests
 */30 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/admin/gifts/run-due
+0    * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/admin/installments/run-due
 30 2 * * *    curl -fsS      -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/admin/reconciliation
 ```
 (Cadence is adjustable. The last one is a nightly **GET**; the rest are POSTs.)

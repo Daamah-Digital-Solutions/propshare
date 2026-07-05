@@ -122,7 +122,7 @@ Set before `npm run build`, then deploy `dist/`:
 
 ---
 
-## §4. Cron jobs (7) — system cron → admin endpoints
+## §4. Cron jobs (8) — system cron → admin endpoints
 
 All are **idempotent** and authenticate with the `X-Cron-Secret: $CRON_SECRET` header.
 Example crontab (adjust cadence to taste):
@@ -135,6 +135,7 @@ Example crontab (adjust cadence to taste):
 *    * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/notifications/dispatch-emails
 */10 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/liquidity/expire-requests
 */30 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/gifts/run-due
+0    * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/installments/run-due
 30 2 * * *    curl -fsS      -H "X-Cron-Secret: SECRET" API/api/v1/admin/reconciliation
 ```
 
@@ -146,6 +147,7 @@ Example crontab (adjust cadence to taste):
 | Email outbox drainer | `POST …/admin/notifications/dispatch-emails` | send queued emails (Resend) |
 | LP exit-request expiry | `POST …/admin/liquidity/expire-requests` | free units reserved by lapsed LP exit requests |
 | Gift executor (Group 5) | `POST …/admin/gifts/run-due` | send 7-day gift reminders + execute due scheduled gifts (real transfer / wallet credit; recurring re-enqueue) |
+| Installment executor (Group 6) | `POST …/admin/installments/run-due` | send installment reminders + charge due installments from the wallet (progressive vesting); a missed one → overdue + notify (grace, retried) |
 | Reconciliation report | `GET …/admin/reconciliation` | nightly DB-wide drift check (alert on non-zero) |
 
 (Scheduled rental distributions are **admin-triggered per property/period** in `/admin` — there is no auto-runner; run them when a period closes.)
@@ -175,11 +177,11 @@ Run each end-to-end once on production and confirm the expected result:
 **Built and live (no longer deferred):**
 - **Documents / file storage** — BUILT (Group 2): real owner-scoped upload, public list/download, live PDF ownership certificates, and the property-image + avatar upload seams. Uses the storage seam in §1.9 (local-FS by default; S3 for prod). No "not available" stub remains.
 - **Estate / beneficiaries / inheritance** — BUILT (Group 4) as **CapiMax's own feature** (NOT BRX — that earlier note was wrong). Beneficiary register (free allocation, sum ≤ 100; REAL/PENDING) + **admin-verified-death** execution (death certificate via the storage seam + admin confirm; never client-asserted) + atomic ownership transfer reusing the family engine. Tables created by migration 0018.
-- **Inter-vivos gifting** — BUILT (Group 5): real **scheduled + recurring** gifts — units reserved / cash escrowed at schedule, executed on the date by the **gift executor cron** (the 7th job in §4), recurring re-enqueue, non-user recipient materializes on KYC. Tables created by migration 0019. Nothing here is deferred.
+- **Inter-vivos gifting** — BUILT (Group 5): real **scheduled + recurring** gifts — units reserved / cash escrowed at schedule, executed on the date by the **gift executor cron**, recurring re-enqueue, non-user recipient materializes on KYC. Tables created by migration 0019. Nothing here is deferred.
+- **Installment plans** — BUILT (Group 6): **progressive-vesting** purchase of under-construction units (owner-confirmed licensed). Down payment + monthly installments charged from the wallet; ownership vests per payment; the **installment executor cron** (§4) charges due installments (missed → overdue + grace, retried); admin-configurable `installment_fee_pct` (default 4.0); pre-handover units are reserved + excluded from rental yield. Tables created by migration 0020. Missed-payment late-fee/forfeiture + plan cancellation-refund are intentionally NOT implemented (need an explicit owner rule).
 
 **Genuinely deferred (still honest-disabled in the UI; no launch wiring needed):**
 - **PASSIVE LP (fixed-yield) pool** — engine built but **hard-locked** (`lp_passive_enabled=false`); stays locked pending the owner's yield-source + reserve-buffer + ALM + capital-adequacy + FSA-licence decision (with counsel). No real deposit is possible; the fixed APY must never render as guaranteed.
-- **Installment plans** — recurring scheduled purchase payments; the calculator's commit CTA stays honest-disabled until designed.
 - **Virtual cards** — not built; honest-disabled.
 
 **Hardening item (flagged, not blocking launch):**

@@ -37,6 +37,7 @@ _SETTING_SPECS: dict[str, str] = {
     "family_reinvest_discount_pct": "pct",
     "family_transfer_fee_pct": "pct",
     "gift_fee_pct": "pct",
+    "installment_fee_pct": "pct",
     "broker_commission_pct": "pct",
     "reinvest_discount_pct": "pct",
     "secondary_price_min_pct": "pct_open",
@@ -107,6 +108,10 @@ DEFAULTS: dict[str, str] = {
     # Inter-vivos gifting (Group 5). Default 0 — a gift isn't a sale (mirrors the family
     # transfer fee); charged to the giver at execution when > 0.
     "gift_fee_pct": "0",
+    # Installment plans (Group 6). Fee applied to the down payment + each installment on the
+    # under-construction path (owner-accepted; admin-configurable). Snapshotted onto a plan at
+    # creation. Server-applied — the client never computes it.
+    "installment_fee_pct": "4.0",
     # Investor reinvest discount (Phase 14) — a real, server-applied subsidy (2nd narrow
     # D5 exception). Standard invest stays no-discount.
     "reinvest_discount_pct": "5.0",
@@ -159,6 +164,15 @@ async def get_gift_fee_pct(session: AsyncSession) -> Decimal:
         return Decimal(await get_setting(session, "gift_fee_pct"))
     except (ArithmeticError, ValueError):
         return Decimal("0")
+
+
+async def get_installment_fee_pct(session: AsyncSession) -> Decimal:
+    """Installment fee rate (percent of the base principal per payment). Server-authoritative;
+    snapshotted onto a plan at creation. Default 4.0 (owner-accepted, admin-configurable)."""
+    try:
+        return Decimal(await get_setting(session, "installment_fee_pct"))
+    except (ArithmeticError, ValueError):
+        return Decimal("4.0")
 
 
 async def get_management_fee_pct(session: AsyncSession) -> Decimal:

@@ -39,6 +39,8 @@ from app.models import (
     FamilyGroup,
     FamilyMember,
     FamilyTransfer,
+    InstallmentPayment,
+    InstallmentPlan,
     Investment,
     KycVerification,
     LpExitRequest,
@@ -889,6 +891,46 @@ class ScheduledGiftAdmin(ModelView, model=ScheduledGift):
     can_delete = False
 
 
+class InstallmentPlanAdmin(ModelView, model=InstallmentPlan):
+    name = "Installment Plan"
+    icon = "fa-solid fa-calendar-days"
+    column_list = [
+        InstallmentPlan.investor_id,
+        InstallmentPlan.property_id,
+        InstallmentPlan.units_total,
+        InstallmentPlan.vested_units,
+        InstallmentPlan.down_payment_pct,
+        InstallmentPlan.duration_months,
+        InstallmentPlan.fee_rate,
+        InstallmentPlan.status,
+        InstallmentPlan.created_at,
+        InstallmentPlan.completed_at,
+    ]
+    column_default_sort = [(InstallmentPlan.created_at, True)]
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
+class InstallmentPaymentAdmin(ModelView, model=InstallmentPayment):
+    name = "Installment Payment"
+    icon = "fa-solid fa-money-check-dollar"
+    column_list = [
+        InstallmentPayment.plan_id,
+        InstallmentPayment.seq,
+        InstallmentPayment.kind,
+        InstallmentPayment.due_date,
+        InstallmentPayment.total_amount,
+        InstallmentPayment.vest_units,
+        InstallmentPayment.status,
+        InstallmentPayment.paid_at,
+    ]
+    column_default_sort = [(InstallmentPayment.due_date, False)]
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
 class DocumentAdmin(ModelView, model=Document):
     name = "Document"
     icon = "fa-solid fa-file-lines"
@@ -1003,6 +1045,8 @@ def setup_admin(app) -> Admin:
         EstateEventAdmin,
         EstateTransferAdmin,
         ScheduledGiftAdmin,
+        InstallmentPlanAdmin,
+        InstallmentPaymentAdmin,
     ):
         admin.add_view(view)
     return admin

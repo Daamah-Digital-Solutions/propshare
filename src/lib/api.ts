@@ -835,6 +835,61 @@ export const giftsApi = {
   },
 };
 
+// --- Installment plans (Group 6: progressive-vesting, under-construction) -- //
+export interface InstallmentPayment {
+  id: string;
+  seq: number;
+  kind: string; // downpayment | installment | final
+  due_date: string; // ISO date
+  base_amount: string;
+  fee_amount: string;
+  total_amount: string;
+  vest_units: number;
+  status: string; // scheduled | paid | overdue
+  paid_at: string | null;
+}
+export interface InstallmentPlan {
+  id: string;
+  property_id: string;
+  units_total: number;
+  unit_price: string;
+  down_payment_pct: number;
+  duration_months: number;
+  fee_rate: string;
+  vested_units: number;
+  status: string; // active | completed
+  created_at: string;
+  completed_at: string | null;
+  payments: InstallmentPayment[];
+}
+export interface InstallmentPlanPayload {
+  property_id: string;
+  amount: number; // USD; the server floors to whole units at the locked unit_price
+  duration_months: number; // 6 | 12 | 18 | 24
+}
+
+/** The caller's installment plans. Creating a plan reserves the allocation + charges the
+ *  down payment from the wallet (server-authoritative); installments auto-charge on their
+ *  due dates (a cron), vesting ownership progressively until handover. */
+export const installmentsApi = {
+  list(): Promise<InstallmentPlan[]> {
+    return apiRequest<InstallmentPlan[]>("/api/v1/installments");
+  },
+  createPlan(payload: InstallmentPlanPayload): Promise<InstallmentPlan> {
+    return apiRequest<InstallmentPlan>("/api/v1/installments", {
+      method: "POST",
+      body: payload,
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
+  },
+  pay(paymentId: string): Promise<InstallmentPlan> {
+    return apiRequest<InstallmentPlan>(`/api/v1/installments/payments/${paymentId}/pay`, {
+      method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
+  },
+};
+
 export const paymentMethodsApi = {
   list(): Promise<SavedPaymentMethod[]> {
     return apiRequest<SavedPaymentMethod[]>("/api/v1/wallet/payment-methods");

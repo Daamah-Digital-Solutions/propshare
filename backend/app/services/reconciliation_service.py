@@ -9,6 +9,7 @@ Invariants checked:
   1. wallet_balance        wallets.balance == Σ transactions.amount (per user)
   2. pending_balance       wallets.pending_balance == Σ non-terminal withdrawals
   3. property_units        total_units == available + Σ pending-reservation + Σ issued(ledger)
+                           + Σ not-yet-vested units of active installment plans
   4. ownership_nonneg      no (user, property) holds negative net units
   5. family_pending        Σ pending family transfers ≤ holder's net holding (per property)
   6. distribution_split    Σ(item.net + item.management_fee) == distribution.gross_pool
@@ -47,13 +48,17 @@ _CHECKS: dict[str, str] = {
                COALESCE((SELECT SUM(o.units) FROM ownership_ledger o
                          WHERE o.property_id = p.id), 0) AS issued,
                COALESCE((SELECT SUM(i.units) FROM investments i
-                         WHERE i.property_id = p.id AND i.status = 'pending'), 0) AS reserved
+                         WHERE i.property_id = p.id AND i.status = 'pending'), 0) AS reserved,
+               COALESCE((SELECT SUM(ip.units_total - ip.vested_units) FROM installment_plans ip
+                         WHERE ip.property_id = p.id AND ip.status = 'active'), 0) AS unvested
         FROM properties p
         WHERE p.total_units <> p.available_units
               + COALESCE((SELECT SUM(o.units) FROM ownership_ledger o
                           WHERE o.property_id = p.id), 0)
               + COALESCE((SELECT SUM(i.units) FROM investments i
                           WHERE i.property_id = p.id AND i.status = 'pending'), 0)
+              + COALESCE((SELECT SUM(ip.units_total - ip.vested_units) FROM installment_plans ip
+                          WHERE ip.property_id = p.id AND ip.status = 'active'), 0)
     """,
     "ownership_nonneg": """
         SELECT user_id::text AS user_id, property_id::text AS property_id,

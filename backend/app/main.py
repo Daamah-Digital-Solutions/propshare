@@ -25,6 +25,7 @@ from app.api.routes import (
     family,
     gifts,
     health,
+    installments,
     investments,
     kyc,
     liquidity,
@@ -41,6 +42,7 @@ from app.api.routes import (
 )
 from app.api.routes.admin import distributions as admin_distributions
 from app.api.routes.admin import gifts as admin_gifts
+from app.api.routes.admin import installments as admin_installments
 from app.api.routes.admin import kyc as admin_kyc
 from app.api.routes.admin import liquidity as admin_liquidity
 from app.api.routes.admin import properties as admin_properties
@@ -135,6 +137,7 @@ def create_app() -> FastAPI:
     app.include_router(payment_methods.router)
     app.include_router(estate.router)
     app.include_router(gifts.router)
+    app.include_router(installments.router)
     app.include_router(admin_users.router)
     app.include_router(admin_kyc.router)
     app.include_router(admin_properties.router)
@@ -142,6 +145,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_withdrawals.router)
     app.include_router(admin_liquidity.router)
     app.include_router(admin_gifts.router)
+    app.include_router(admin_installments.router)
     app.include_router(admin_reconciliation.router)
 
     # Server-rendered, admin-gated management panel at /admin.

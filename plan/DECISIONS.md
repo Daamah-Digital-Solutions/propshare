@@ -132,3 +132,52 @@ Locked product/engineering decisions, newest groups appended. Companion to `PROG
   real statuses + Cancel; success toast only on a real 201. The reminder strip copy stays —
   it's now TRUE (the cron sends it). `giftsApi` added; beneficiary section untouched.
 - **NEW cron** to add to the VPS crontab + DEPLOYMENT_CHECKLIST (now 7 jobs).
+
+---
+
+## Group 6 — Installment Plans (DONE 2026-07-05)
+- **Both first-session hard stops resolved by the owner** (recorded here):
+  - **Model = progressive vesting, owner-confirmed as LICENSED.** The investor commits to a
+    fixed unit allocation at today's locked `unit_price` and pays a down payment + N monthly
+    installments; ownership **vests proportionally** into `ownership_ledger` per PAID payment,
+    fully transferring at handover (final payment). NAV appreciation is inherent (vested units
+    are real ledger rows valued by the milestone value_index); **rental yield is excluded until
+    handover.** (Resolves hard-stop (a): financing/credit nature — owner accepts + is licensed.)
+  - **Installment fee = owner-accepted + admin-configurable.** A fee on the down payment AND on
+    each installment at `platform_settings.installment_fee_pct` (**default 4.0**, validated
+    0–100 like `platform_fee_pct`/`broker_commission_pct`), **snapshotted** onto the plan at
+    creation (an admin rate change never rewrites existing schedules). **Server-authoritative** —
+    the client never computes the fee; it reads the rate from the property `fees` payload for
+    display only. (Resolves hard-stop (b): riba-sensitive fee — owner-accepted, handled on their side.)
+- **Migration 0020:** `installment_plans` (investor, property, units_total, locked unit_price,
+  down_payment_pct, duration_months, fee_rate + management_fee_rate snapshots, vested_units,
+  status active|completed, idempotency_key) + `installment_payments` (seq [0=down], kind, due_date,
+  base/fee/total, vest_units, status scheduled|paid|overdue, paid_at, reminder_sent_at,
+  idempotency_key). `platform_settings += installment_fee_pct = '4.0'`. No new enum (base reuses
+  `investment`, fee reuses `fee`, vesting = `ownership_ledger` reason `installment_vest`).
+- **Vesting → ledger:** at creation the whole allocation is RESERVED out of `available_units`
+  (mirrors the Phase-5 direct-pay reservation); each paid payment vests its Hamilton-split slice
+  (∝ base principal, sums EXACTLY to units_total) into the ledger + books `funded_amount`. Units
+  **conserve**: `available + Σ ledger + Σ plan-unvested(active) == total_units` — the
+  reconciliation `property_units` check now includes the plan-unvested term.
+- **Pre-handover protections (both requested):** (1) a plan's vested units are RESERVED via the
+  shared `secondary_service.reserved_units` (**5th term**) — can't be listed/LP-exited/family-
+  allocated/gifted until handover; (2) `distribution_service._ownership` **excludes** active-plan
+  vested units so **rental yield is not paid pre-handover**. Both release when the plan completes.
+- **Payment path:** down payment charged atomically from the wallet AT CREATION (INSUFFICIENT_FUNDS
+  rolls the whole plan back — no orphan reservation); installments auto-charge via the cron, or the
+  investor can pay one early (`POST /installments/payments/{id}/pay`). KYC-gated + Idempotency-Key.
+- **Due-payment cron** `POST /api/v1/admin/installments/run-due` (`AdminOrCronDep`, `FOR UPDATE
+  SKIP LOCKED`): pass 1 sends the 3-day reminder (Phase-12 `notify`, once via `reminder_sent_at`),
+  pass 2 charges due installments (vesting). **Missed-payment rule (UI unspecified → safest
+  chosen + FLAGGED):** an uncharged due installment → `overdue` + investor notified; **GRACE —
+  retried each run, NO auto-forfeit, NO late fee, vested units untouched, plan stays active.**
+  (Late fees / forfeiture / cancellation-refund need an explicit owner rule — deferred.)
+- **Pre-handover yield exclusion (confirmed):** yes — partially-vested holders earn no rental
+  distribution until the plan completes; the exclusion is in the distribution ownership base.
+- **Frontend:** `InstallmentCalculator` wired real (propertyId + server fee rate — no hardcoded 4%;
+  the mock confirm → real `installmentsApi.createPlan`; coming-soon block removed; Pronova
+  honest-disabled with no fabricated discount; wallet-funded). `InstallmentSchedule` (dashboard)
+  renders real plans + statuses + a "Pay now" for due/overdue installments. `installmentsApi` added;
+  property detail `fees.installment_fee` exposed.
+- **NEW cron** to add to the VPS crontab + DEPLOYMENT_CHECKLIST (now **8 jobs**).

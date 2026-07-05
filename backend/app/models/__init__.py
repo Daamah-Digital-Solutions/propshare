@@ -501,6 +501,7 @@ from app.models.identity import (  # noqa: E402
     RoleGrantRequest,
     User,
 )
+from app.models.installments import InstallmentPayment, InstallmentPlan  # noqa: E402
 from app.models.investments import OwnershipLedger, PlatformSetting  # noqa: E402
 from app.models.liquidity import LpExitRequest, LpPoolTier, LpPosition  # noqa: E402
 from app.models.milestones import PropertyMilestone  # noqa: E402
@@ -575,4 +576,7 @@ __all__ = [
     "EstateTransfer",
     # inter-vivos gifting (Group 5)
     "ScheduledGift",
+    # installment plans (Group 6)
+    "InstallmentPlan",
+    "InstallmentPayment",
 ]

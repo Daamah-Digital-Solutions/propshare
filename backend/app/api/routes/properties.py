@@ -97,6 +97,9 @@ async def get_property(id_or_slug: str, session: SessionDep):
     fees = dict(data.get("fees") or {})
     fees["platform_fee"] = float(rates["platform_fee_pct"])
     fees["management_fee"] = float(rates["management_fee_pct"])
+    # Group 6 — the installment-path fee (down payment + per-installment), so the
+    # under-construction calculator displays the exact server-applied rate (no hardcoded 4%).
+    fees["installment_fee"] = float(await settings_service.get_installment_fee_pct(session))
     data["fees"] = fees
     # Phase 15b — embed the real milestones + the construction % computed from them.
     milestones = await milestone_service.list_for_property(session, prop.id)

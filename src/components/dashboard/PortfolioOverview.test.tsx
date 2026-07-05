@@ -1,7 +1,7 @@
 /**
  * Phase 13: PortfolioOverview reads the server-authoritative portfolio (the hardcoded
- * $125,000 mock is retired); ProShareCards + InstallmentSchedule honest-disable (D9 /
- * deferred); SecondaryMarketTab routes to the live page. DELETE NOTHING — components stay.
+ * $125,000 mock is retired); ProShareCards honest-disables (D9); InstallmentSchedule is now
+ * REAL (Group 6, wired to installmentsApi); SecondaryMarketTab routes to the live page.
  */
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -15,6 +15,7 @@ import { SecondaryMarketTab } from "./SecondaryMarketTab";
 const portfolioMock = vi.fn();
 const listMock = vi.fn();
 const returnsMock = vi.fn();
+const installmentsListMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   investApi: {
@@ -22,6 +23,11 @@ vi.mock("@/lib/api", () => ({
     list: (...a: unknown[]) => listMock(...a),
   },
   returnsApi: { getMine: (...a: unknown[]) => returnsMock(...a) },
+  installmentsApi: {
+    list: (...a: unknown[]) => installmentsListMock(...a),
+    createPlan: vi.fn(),
+    pay: vi.fn(),
+  },
 }));
 vi.mock("@/components/exit/ExitButton", () => ({ ExitButton: () => <button>exit</button> }));
 
@@ -62,9 +68,10 @@ describe("Phase 13 honest-disabled surfaces", () => {
     expect(screen.getByRole("button", { name: /Request Card/i })).toBeDisabled();
   });
 
-  it("InstallmentSchedule is not available yet", () => {
-    render(<InstallmentSchedule />);
-    expect(screen.getByText(/not available yet/i)).toBeInTheDocument();
+  it("InstallmentSchedule is REAL now — honest empty state when there are no plans", async () => {
+    installmentsListMock.mockResolvedValue([]); // Group 6: wired to the real API
+    wrap(<InstallmentSchedule />);
+    expect(await screen.findByText("No installment plans yet")).toBeInTheDocument();
   });
 
   it("SecondaryMarketTab routes to the live secondary market", () => {
