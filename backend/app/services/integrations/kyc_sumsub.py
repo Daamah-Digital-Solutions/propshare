@@ -130,3 +130,16 @@ async def create_access_token(external_user_id: str) -> str:
     path = f"/resources/accessTokens?userId={external_user_id}&levelName={level}&ttlInSecs=600"
     resp = await _request("POST", path)
     return str(resp.json()["token"])
+
+
+async def get_applicant_status(applicant_id: str) -> dict:
+    """Poll an applicant's CURRENT review status (safety net for a missed/duplicate
+    webhook — see kyc_service.sync_pending_applicants). Returns Sumsub's status payload:
+
+        {"reviewId": ..., "reviewStatus": "completed"|"pending"|"init"|...,
+         "reviewResult": {"reviewAnswer": "GREEN"|"RED", ...}}
+
+    ``reviewStatus == "completed"`` means a terminal decision is available in
+    ``reviewResult``; anything else is still under review (leave the row untouched)."""
+    resp = await _request("GET", f"/resources/applicants/{applicant_id}/status")
+    return dict(resp.json())

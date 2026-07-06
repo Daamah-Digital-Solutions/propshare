@@ -12,6 +12,7 @@ from app.services.integrations import kyc_sumsub
 EXPECTED_PATHS = {
     "/api/v1/kyc/me",
     "/api/v1/kyc/me/start",
+    "/api/v1/kyc/maintenance/sync",
     "/api/v1/kyc/webhook/sumsub",
     "/api/v1/admin/kyc",
     "/api/v1/admin/kyc/{user_id}/decision",

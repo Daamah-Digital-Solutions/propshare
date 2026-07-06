@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,8 +113,22 @@ async def process_webhook(session: AsyncSession, *, payload: dict, event_key: st
         return {"status": "ignored_unknown_applicant"}
 
     outcome = kyc_sumsub.map_review_result(payload)
-    before = {"status": str(kyc.status), "manual_review_required": kyc.manual_review_required}
+    await _apply_outcome(session, kyc, outcome, source="webhook")
+    return {"status": "processed", "result": str(kyc.status)}
 
+
+async def _apply_outcome(
+    session: AsyncSession,
+    kyc: KycVerification,
+    outcome: kyc_sumsub.ReviewOutcome,
+    *,
+    source: str,
+) -> None:
+    """Apply a mapped Sumsub decision to a KYC row — SHARED by the webhook and the
+    reconcile/sync cron so both flip status identically: verify (+ materialize any pending
+    family/estate/gift allocations), reject (+ reason), or leave under review. Notifies the
+    user and audits. ``source`` tags the audit action (``kyc.webhook`` | ``kyc.sync``)."""
+    before = {"status": str(kyc.status), "manual_review_required": kyc.manual_review_required}
     kyc.last_review_answer = outcome.answer
     kyc.manual_review_required = outcome.manual_review
     if outcome.status == "verified":
@@ -132,7 +147,7 @@ async def process_webhook(session: AsyncSession, *, payload: dict, event_key: st
     await _notify_outcome(session, kyc.user_id, outcome)
     await write_audit(
         session,
-        action="kyc.webhook",
+        action=f"kyc.{source}",
         entity_type="kyc_verification",
         entity_id=str(kyc.id),
         before=before,
@@ -142,7 +157,76 @@ async def process_webhook(session: AsyncSession, *, payload: dict, event_key: st
             "answer": outcome.answer,
         },
     )
-    return {"status": "processed", "result": str(kyc.status)}
+
+
+async def sync_pending_applicants(session: AsyncSession, *, limit: int = 500) -> dict:
+    """Reconcile applicants still under review against Sumsub's LIVE decision — a safety net
+    for a missed or duplicated ``applicantReviewed`` webhook (the webhook stays the primary
+    path). For each non-terminal row it polls ``GET /applicants/{id}/status`` and, only when
+    the review is COMPLETED, applies the exact transition the webhook would (GREEN → verified
+    + materialize pending allocations; RED → rejected). Idempotent: verified/rejected rows are
+    never re-queried, and an under-review applicant is left untouched.
+
+    Cron-safe. No-op (``configured: False``) when Sumsub isn't set up (honest degradation).
+    A per-applicant provider/network error is counted and skipped — one bad row never aborts
+    the batch (each row's own read happens before any write, so the session stays clean)."""
+    if not kyc_sumsub.is_configured():
+        return {
+            "configured": False,
+            "checked": 0,
+            "verified": 0,
+            "rejected": 0,
+            "pending": 0,
+            "errors": 0,
+        }
+    rows = (
+        (
+            await session.execute(
+                select(KycVerification)
+                .where(
+                    KycVerification.provider == "sumsub",
+                    KycVerification.provider_applicant_id.isnot(None),
+                    KycVerification.status.in_([KycStatus.pending, KycStatus.submitted]),
+                )
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    verified = rejected = pending = errors = 0
+    for kyc in rows:
+        try:
+            status = await kyc_sumsub.get_applicant_status(kyc.provider_applicant_id)
+        except httpx.HTTPError:
+            errors += 1
+            continue
+        if str(status.get("reviewStatus")) != "completed":
+            pending += 1
+            continue
+        outcome = kyc_sumsub.map_review_result(
+            {
+                "type": "applicantReviewed",
+                "applicantId": kyc.provider_applicant_id,
+                "reviewResult": status.get("reviewResult") or {},
+            }
+        )
+        if outcome.status == "verified":
+            await _apply_outcome(session, kyc, outcome, source="sync")
+            verified += 1
+        elif outcome.status == "rejected":
+            await _apply_outcome(session, kyc, outcome, source="sync")
+            rejected += 1
+        else:
+            pending += 1
+    return {
+        "configured": True,
+        "checked": len(rows),
+        "verified": verified,
+        "rejected": rejected,
+        "pending": pending,
+        "errors": errors,
+    }
 
 
 async def _find_kyc(session: AsyncSession, payload: dict) -> KycVerification | None:

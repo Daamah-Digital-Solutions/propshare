@@ -13,7 +13,7 @@ import json
 
 from fastapi import APIRouter, Request
 
-from app.api.deps import PrincipalDep, SessionDep
+from app.api.deps import AdminOrCronDep, PrincipalDep, SessionDep
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.schemas.kyc import KycStartOut, KycStatusOut
@@ -40,6 +40,14 @@ async def my_kyc(principal: PrincipalDep, session: SessionDep):
 async def start_kyc(principal: PrincipalDep, session: SessionDep):
     result = await kyc_service.start_verification(session, principal.user_id)
     return KycStartOut(**result)
+
+
+@router.post("/maintenance/sync")
+async def sync_kyc(caller: AdminOrCronDep, session: SessionDep) -> dict:
+    """Reconcile applicants still under review against Sumsub's live decision — the safety
+    net for a missed/duplicated ``applicantReviewed`` webhook. Cron target (admin OR a valid
+    ``X-Cron-Secret``); idempotent; also runs on demand. No-op if Sumsub isn't configured."""
+    return await kyc_service.sync_pending_applicants(session)
 
 
 @router.post("/webhook/sumsub")
