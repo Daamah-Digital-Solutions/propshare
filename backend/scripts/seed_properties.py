@@ -519,6 +519,203 @@ SAMPLES: list[dict] = [
             ],
         },
     },
+    {
+        "slug": "demo-land-neom-coinvest",
+        "model": "shared-development",
+        "property_type": "land",
+        "title": "Sample - NEOM Land Co-Investment",
+        "subtitle": "Co-invest in prime development land ahead of infrastructure delivery",
+        "location": "NEOM, Tabuk, KSA",
+        "country": "Saudi Arabia",
+        "city": "NEOM",
+        "total_value": 9000000,
+        "minimum_investment": 500,
+        "capital_appreciation": 40,
+        "funding_progress": 15,
+        "investors_count": 37,
+        "description": (
+            "Educational sample of a land co-investment. Investors pool capital to acquire a "
+            "plot of development land alongside the developer and share the uplift as "
+            "infrastructure and permits mature toward a build or resale exit."
+        ),
+        "images": ["https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1200&auto=format&fit=crop&q=80"],
+        "content": {
+            "badge": "Land - Shared Development",
+            "badgeTone": "shared",
+            "developer": {"name": "Vision Land Partners", "rating": 4.5, "projectsCompleted": 19},
+            "ownershipStructure": [
+                {"label": "Vehicle", "value": "Land SPV (LP / GP)"},
+                {"label": "Investor Role", "value": "Limited Partner"},
+                {"label": "Asset", "value": "Freehold development plot"},
+            ],
+            "investmentStructure": [
+                {"label": "Min. Ticket", "value": "$500"},
+                {"label": "Profit Split", "value": "75% LPs / 25% GP after hurdle"},
+                {"label": "Hurdle Rate", "value": "8% pref"},
+            ],
+            "sharedTerms": {
+                "landShare": "Investors fund 100% of the land acquisition",
+                "constructionShare": "Build phase funded in a later round (optional)",
+                "profitSplit": "75/25 split of net profit after 8% preferred return",
+                "governance": "Quarterly LP reporting + major-decision voting rights",
+            },
+            "timeline": [
+                {"label": "Land acquired", "date": "Today", "progress": 100, "valueIndex": 100, "status": "done"},
+                {"label": "Master-plan approval", "date": "+8m", "progress": 30, "valueIndex": 112, "status": "active"},
+                {"label": "Infrastructure", "date": "+20m", "progress": 60, "valueIndex": 128, "status": "upcoming"},
+                {"label": "Build / Resale", "date": "+36m", "progress": 100, "valueIndex": 140, "status": "upcoming"},
+            ],
+            "scenarios": [
+                {"label": "Resale post-permits", "outcome": "Projected +40% land uplift", "tone": "positive"},
+                {"label": "Hold to build", "outcome": "Convert to a development co-investment", "tone": "neutral"},
+                {"label": "Permit delay", "outcome": "Timeline extends; land value resilient", "tone": "negative"},
+            ],
+            "exitMechanisms": [
+                {"name": "LP Interest Sale", "description": "Transfer LP interest to a qualified investor.", "eta": "Quarterly window"},
+                {"name": "Land Resale", "description": "Distribute proceeds on plot sale.", "eta": "On exit"},
+            ],
+            "risks": [
+                {"label": "Liquidity", "level": "high", "note": "Land is illiquid until a resale/build event."},
+                {"label": "Permit", "level": "medium", "note": "Zoning/approval timing risk."},
+                {"label": "Market", "level": "medium", "note": "Regional land-cycle exposure."},
+            ],
+            "documents": _BASE_DOCS,
+            "marketAnalysis": [
+                {"label": "Regional land 3y change", "value": "+31%"},
+                {"label": "Comparable plot IRRs", "value": "18-26%"},
+            ],
+        },
+    },
+    {
+        "slug": "demo-ready-income-emirates-hills-villa",
+        "model": "ready-income",
+        "property_type": "villa",
+        "title": "Sample - Emirates Hills Income Villa",
+        "subtitle": "Leased luxury villa generating monthly rental income",
+        "location": "Emirates Hills, Dubai, UAE",
+        "country": "UAE",
+        "city": "Dubai",
+        "total_value": 5200000,
+        "minimum_investment": 250,
+        "expected_yield": 6.8,
+        "capital_appreciation": 5.2,
+        "total_return": 12.0,
+        "funding_progress": 44,
+        "investors_count": 129,
+        "description": (
+            "Educational sample of a ready, leased luxury villa. Investors own fractional "
+            "shares through the SPV and receive monthly net rental distributions plus "
+            "long-term capital appreciation."
+        ),
+        "images": ["https://images.unsplash.com/photo-1613977257363-707ba9348227?w=1200&auto=format&fit=crop&q=80"],
+        "content": {
+            "badge": "Ready - Income Villa",
+            "badgeTone": "ready",
+            "developer": {"name": "Prime Villas Estate", "rating": 4.8, "projectsCompleted": 33},
+            "ownershipStructure": [
+                {"label": "Ownership Vehicle", "value": "DIFC SPV"},
+                {"label": "Income Type", "value": "Monthly Net Rental + Appreciation"},
+                {"label": "Custody", "value": "Independent Trustee"},
+            ],
+            "investmentStructure": [
+                {"label": "Min. Ticket", "value": "$250"},
+                {"label": "Distribution Frequency", "value": "Monthly"},
+                {"label": "Holding Period", "value": "Open-ended"},
+                {"label": "Lock-up", "value": "None (secondary market)"},
+            ],
+            "timeline": [
+                {"label": "Listed", "date": "Today", "progress": 100, "valueIndex": 100, "status": "done"},
+                {"label": "Funding Closes", "date": "+30d", "progress": 44, "valueIndex": 100, "status": "active"},
+                {"label": "First Distribution", "date": "+60d", "progress": 0, "valueIndex": 101, "status": "upcoming"},
+                {"label": "Annual Revaluation", "date": "+12m", "progress": 0, "valueIndex": 105, "status": "upcoming"},
+            ],
+            "scenarios": [
+                {"label": "Base case", "outcome": "6.8% yield + 5.2% appreciation = 12% total", "tone": "positive"},
+                {"label": "Vacancy 1 month", "outcome": "~6.2% yield + appreciation", "tone": "neutral"},
+                {"label": "Market downturn", "outcome": "Income steady, NAV may dip 4-7%", "tone": "negative"},
+            ],
+            "exitMechanisms": [
+                {"name": "Secondary Market", "description": "List units to other investors.", "eta": "1-7 days"},
+                {"name": "Liquidity Provider", "description": "Instant exit at a small discount.", "eta": "Same day"},
+            ],
+            "risks": [
+                {"label": "Vacancy", "level": "medium", "note": "Premium segment, longer re-let cycle."},
+                {"label": "Liquidity", "level": "low", "note": "Active secondary market."},
+                {"label": "Market", "level": "medium", "note": "Prime-villa cycle exposure."},
+            ],
+            "documents": _BASE_DOCS,
+            "marketAnalysis": [
+                {"label": "Avg. Villa Rent (Emirates Hills)", "value": "$29,000 / mo"},
+                {"label": "Occupancy Rate", "value": "88%"},
+                {"label": "12m Price change", "value": "+6.1%"},
+            ],
+        },
+    },
+    {
+        "slug": "demo-ready-income-difc-office",
+        "model": "ready-income",
+        "property_type": "commercial",
+        "title": "Sample - DIFC Grade-A Office Floor",
+        "subtitle": "Fully leased office floor with a blue-chip corporate tenant",
+        "location": "DIFC, Dubai, UAE",
+        "country": "UAE",
+        "city": "Dubai",
+        "total_value": 7800000,
+        "minimum_investment": 200,
+        "expected_yield": 9.1,
+        "capital_appreciation": 3.6,
+        "total_return": 12.7,
+        "funding_progress": 57,
+        "investors_count": 241,
+        "description": (
+            "Educational sample of a ready, fully leased Grade-A office floor. Investors "
+            "receive monthly net rental income from a blue-chip corporate tenant on a "
+            "multi-year lease, plus capital appreciation."
+        ),
+        "images": ["https://images.unsplash.com/photo-1497366754035-f200968a6e72?w=1200&auto=format&fit=crop&q=80"],
+        "content": {
+            "badge": "Ready - Commercial Income",
+            "badgeTone": "ready",
+            "developer": {"name": "Gulf Commercial REIT Mgmt.", "rating": 4.7, "projectsCompleted": 51},
+            "ownershipStructure": [
+                {"label": "Ownership Vehicle", "value": "DIFC SPV"},
+                {"label": "Income Type", "value": "Monthly Net Rental + Appreciation"},
+                {"label": "Lease", "value": "5-year corporate lease"},
+            ],
+            "investmentStructure": [
+                {"label": "Min. Ticket", "value": "$200"},
+                {"label": "Distribution Frequency", "value": "Monthly"},
+                {"label": "Holding Period", "value": "Open-ended"},
+                {"label": "Lock-up", "value": "None (secondary market)"},
+            ],
+            "timeline": [
+                {"label": "Listed", "date": "Today", "progress": 100, "valueIndex": 100, "status": "done"},
+                {"label": "Funding Closes", "date": "+30d", "progress": 57, "valueIndex": 100, "status": "active"},
+                {"label": "First Distribution", "date": "+45d", "progress": 0, "valueIndex": 101, "status": "upcoming"},
+                {"label": "Annual Revaluation", "date": "+12m", "progress": 0, "valueIndex": 104, "status": "upcoming"},
+            ],
+            "scenarios": [
+                {"label": "Base case", "outcome": "9.1% yield + 3.6% appreciation = 12.7% total", "tone": "positive"},
+                {"label": "Tenant renewal", "outcome": "Rent step-up on renewal", "tone": "positive"},
+                {"label": "Vacancy risk", "outcome": "Single-tenant re-let exposure", "tone": "negative"},
+            ],
+            "exitMechanisms": [
+                {"name": "Secondary Market", "description": "Resell units to other investors.", "eta": "1-7 days"},
+                {"name": "Liquidity Provider", "description": "Instant exit at a small discount.", "eta": "Same day"},
+            ],
+            "risks": [
+                {"label": "Single-tenant", "level": "medium", "note": "Concentration on one corporate lease."},
+                {"label": "Liquidity", "level": "low", "note": "Active secondary market."},
+                {"label": "Market", "level": "medium", "note": "Office-sector cycle exposure."},
+            ],
+            "documents": _BASE_DOCS,
+            "marketAnalysis": [
+                {"label": "DIFC Grade-A yield", "value": "8-10%"},
+                {"label": "Occupancy Rate", "value": "92%"},
+                {"label": "12m Rent change", "value": "+4.3%"},
+            ],
+        },
+    },
 ]
 # fmt: on
 
