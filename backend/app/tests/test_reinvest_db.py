@@ -2,7 +2,8 @@
 
 Acceptance bar: the reinvest discount is server-applied + admin-configurable; the client
 sends only an amount (never a price); units = floor(amount / effective_price); the wallet
-is debited the amount; idempotent on the Idempotency-Key; KYC + key required.
+is charged units × effective_price (whole units; the remainder stays); idempotent on the
+Idempotency-Key; KYC + key required.
 """
 
 from __future__ import annotations
@@ -91,9 +92,31 @@ async def test_reinvest_applies_server_discount(client, db):
     # Ownership recorded at the NOMINAL unit price (asset value), discount is the subsidy.
     led = db("SELECT units, unit_price, reason FROM ownership_ledger WHERE user_id=:u", u=uid)[0]
     assert led[0] == 10 and str(led[1]) == "100.00" and led[2] == "reinvest"
-    # Wallet debited the full amount; available units dropped by the discounted unit count.
-    assert str(db("SELECT balance FROM wallets WHERE user_id=:u", u=uid)[0][0]) == "4000.00"
+    # Wallet debited units × effective_price (10 × 95 = 950); available units dropped by 10.
+    assert str(db("SELECT balance FROM wallets WHERE user_id=:u", u=uid)[0][0]) == "4050.00"
     assert db("SELECT available_units FROM properties WHERE id=:p", p=pid)[0][0] == 990
+
+
+@pytest.mark.asyncio
+async def test_reinvest_charges_whole_units_not_raw_amount(client, db):
+    """Regression: reinvest debits units × effective_price (whole units), NOT the raw amount,
+    so a non-aligned amount never over-charges — the unspent remainder stays in the wallet."""
+    t = await _verified_user(client, db, "re6@capimax.com")
+    uid = _uid(db, "re6@capimax.com")
+    pid = _seed_property(db)
+    _fund_wallet(db, uid, 5000)
+    _set_setting(db, "reinvest_discount_pct", "5.0")
+    # $555 @ effective 95 -> units = floor(555/95) = 5; cost = 5×95 = 475; remainder 80 stays.
+    r = await client.post(
+        "/api/v1/investments/reinvest",
+        json={"property_id": pid, "amount": 555},
+        headers=_hdr(t, "auto"),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["units"] == 5
+    assert r.json()["amount"] == "475.00"  # charged the whole-unit cost, not the raw 555
+    assert str(db("SELECT balance FROM wallets WHERE user_id=:u", u=uid)[0][0]) == "4525.00"
+    assert str(db("SELECT total_invested FROM wallets WHERE user_id=:u", u=uid)[0][0]) == "475.00"
 
 
 @pytest.mark.asyncio
@@ -137,8 +160,8 @@ async def test_reinvest_idempotent(client, db):
     )
     assert first.status_code == 200 and second.status_code == 200
     assert second.json().get("replayed") is True
-    # exactly one debit / one ledger row
-    assert str(db("SELECT balance FROM wallets WHERE user_id=:u", u=uid)[0][0]) == "4000.00"
+    # exactly one debit (units × effective_price = 950) / one ledger row
+    assert str(db("SELECT balance FROM wallets WHERE user_id=:u", u=uid)[0][0]) == "4050.00"
     assert db("SELECT COUNT(*) FROM ownership_ledger WHERE user_id=:u", u=uid)[0][0] == 1
 
 

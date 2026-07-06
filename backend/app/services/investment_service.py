@@ -510,9 +510,10 @@ async def reinvest_from_wallet(
 ) -> dict:
     """Reinvest returns from the wallet at the admin-configured ``reinvest_discount_pct``
     (the 2nd narrow D5 exception — a REAL, server-applied subsidy, mirroring the family
-    reinvest). The buyer pays ``amount`` from their wallet and receives
-    ``units = floor(amount / effective_price)`` where ``effective_price = unit_price ×
-    (1 − discount/100)``. Server-authoritative — the client never computes the price.
+    reinvest). ``units = floor(amount / effective_price)`` where ``effective_price =
+    unit_price × (1 − discount/100)``; the buyer is charged ``units × effective_price``
+    (whole units only, mirroring the direct-buy quote) — any remainder stays in the wallet.
+    Server-authoritative — the client never computes the price.
     Atomic (lock order property → wallet); idempotent on the Idempotency-Key."""
     amount_dec = decimal.Decimal(str(amount)).quantize(_CENTS)
     if amount_dec <= 0:
@@ -551,18 +552,22 @@ async def reinvest_from_wallet(
             details={"available_units": prop.available_units, "requested": units},
         )
 
+    # Charge only for the WHOLE units acquired, at the discounted price (mirrors the direct-buy
+    # _quote, which debits units × unit_price). Debiting the raw amount over-charged the
+    # remainder and defeated the discount; the unspent remainder now stays in the wallet.
+    cost = _q(effective_price * units)
     # Lock order property -> wallet: property already locked; debit() locks the wallet.
     mgmt_rate = await settings_service.get_management_fee_pct(session)
     wallet = await wallet_service.debit(
         session,
         user_id=user_id,
         reference_id=property_id,
-        line_items=[(TransactionType.investment, amount_dec, f"Reinvest — {prop.title}")],
+        line_items=[(TransactionType.investment, cost, f"Reinvest — {prop.title}")],
         actor_id=user_id,
     )
-    wallet.total_invested = wallet.total_invested + amount_dec
+    wallet.total_invested = wallet.total_invested + cost
     prop.available_units = prop.available_units - units
-    prop.funded_amount = prop.funded_amount + amount_dec
+    prop.funded_amount = prop.funded_amount + cost
     prop.investors_count = prop.investors_count + 1
     _recompute_progress(prop)
     if prop.available_units <= 0:
@@ -585,7 +590,8 @@ async def reinvest_from_wallet(
         entity_id=str(property_id),
         actor_id=user_id,
         after={
-            "amount": str(amount_dec),
+            "amount": str(cost),
+            "requested": str(amount_dec),
             "discount_pct": str(discount),
             "effective_price": str(effective_price),
             "units": units,
@@ -597,12 +603,12 @@ async def reinvest_from_wallet(
         user_id=user_id,
         type="investment",
         title="Reinvestment confirmed",
-        message=f"You reinvested {amount_dec} and now own {units} more unit(s) of {prop.title}.",
+        message=f"You reinvested {cost} and now own {units} more unit(s) of {prop.title}.",
         email_category="investment_updates",
     )
     return {
         "property_id": str(property_id),
-        "amount": str(amount_dec),
+        "amount": str(cost),
         "discount_pct": str(discount),
         "effective_price": str(effective_price),
         "units": units,
