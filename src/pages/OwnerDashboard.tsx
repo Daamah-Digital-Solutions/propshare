@@ -54,6 +54,7 @@ import {
 import { VirtualCardRequest } from "@/components/dashboard/VirtualCardRequest";
 import { InvestorWallet } from "@/components/dashboard/InvestorWallet";
 import { OwnerFinancials } from "@/components/dashboard/OwnerFinancials";
+import { OwnerDocuments } from "@/components/dashboard/OwnerDocuments";
 import { PropertyCreationForm } from "@/components/developer/PropertyCreationForm";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -445,18 +446,7 @@ const OwnerDashboard = () => {
               {/* Documents Tab — deferred to the documents phase (needs app storage).
                   Honest-disabled (kept, not removed). */}
               <TabsContent value="documents" className="space-y-6">
-                <Card className="border-dashed">
-                  <CardContent className="py-12 flex flex-col items-center text-center gap-3">
-                    <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                      <FileText className="h-6 w-6 text-muted-foreground" />
-                    </div>
-                    <h3 className="text-lg font-semibold">Documents are not available yet</h3>
-                    <p className="text-sm text-muted-foreground max-w-md">
-                      Property statements and reports are planned for a future release once
-                      document storage is provisioned.
-                    </p>
-                  </CardContent>
-                </Card>
+                <OwnerDocuments />
               </TabsContent>
 
               {/* List Property Tab — same create→review workflow as the developer
