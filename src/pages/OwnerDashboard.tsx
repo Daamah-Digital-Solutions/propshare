@@ -53,6 +53,7 @@ import {
 } from "lucide-react";
 import { VirtualCardRequest } from "@/components/dashboard/VirtualCardRequest";
 import { InvestorWallet } from "@/components/dashboard/InvestorWallet";
+import { OwnerFinancials } from "@/components/dashboard/OwnerFinancials";
 import { PropertyCreationForm } from "@/components/developer/PropertyCreationForm";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
@@ -433,7 +434,7 @@ const OwnerDashboard = () => {
                   Owners use the same per-user wallet as everyone else; the prior mock
                   ($125k + fake withdraw) is retired. */}
               <TabsContent value="financials" className="space-y-6">
-                <InvestorWallet />
+                <OwnerFinancials onWithdraw={() => setActiveTab("wallet")} />
               </TabsContent>
 
               {/* Wallet Tab — the real per-user wallet (balance + deposit + Phase-7 withdraw). */}
