@@ -304,13 +304,16 @@ const getNavigationForRole = (role: UserRole): NavSection[] => {
   }
 };
 
-const ROLE_LABELS: Partial<Record<UserRole, string>> = {
-  investor: "Investor",
-  owner: "Property Owner",
-  broker: "Broker",
-  liquidity_provider: "Liquidity Provider",
-  admin: "Admin",
-};
+// Views a visitor can explore from the always-on switcher. This is a CLIENT-SIDE preview of
+// each role's navigation so anyone (guests included) can see the whole platform; the backend
+// still enforces real roles + KYC on every action, so previewing never grants access.
+const EXPLORABLE_VIEWS: { value: UserRole; label: string }[] = [
+  { value: "guest", label: "Guest" },
+  { value: "investor", label: "Investor" },
+  { value: "owner", label: "Property Owner" },
+  { value: "broker", label: "Broker" },
+  { value: "liquidity_provider", label: "Liquidity Provider" },
+];
 
 export function AppSidebar() {
   const { state } = useSidebar();
@@ -319,8 +322,23 @@ export function AppSidebar() {
   const { userRole, authorizedRoles, switchActiveRole, isAuthenticated, signOut } = useAuth();
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
-  
-  const navigation = getNavigationForRole(userRole);
+  // Which role's view the sidebar shows. Defaults to (and follows) the real active role, but
+  // anyone can switch it to preview another role's navigation via the switcher below.
+  const [previewRole, setPreviewRole] = useState<UserRole>(userRole);
+  useEffect(() => {
+    setPreviewRole(EXPLORABLE_VIEWS.some((v) => v.value === userRole) ? userRole : "guest");
+  }, [userRole]);
+
+  const handleViewChange = (role: UserRole) => {
+    setPreviewRole(role);
+    // If the signed-in user genuinely holds this role, also switch their REAL active role so
+    // their dashboards load real data; otherwise this is purely a navigation preview.
+    if (isAuthenticated && role !== "guest" && role !== userRole && authorizedRoles.includes(role)) {
+      void switchActiveRole(role);
+    }
+  };
+
+  const navigation = getNavigationForRole(previewRole);
 
   useEffect(() => {
     const isDark = document.documentElement.classList.contains("dark");
@@ -369,20 +387,24 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      {/* Active-role switcher — only the roles this user is actually authorized
-          for (fetched from the backend). Switching is enforced server-side; the
-          backend rejects any role not in the user's authorized set. Shown only
-          when the user genuinely holds more than one role. */}
-      {!collapsed && isAuthenticated && authorizedRoles.length > 1 && (
+      {/* View switcher — ALWAYS visible so anyone (guests included) can explore every role's
+          view of the platform. This is a client-side navigation preview; the backend still
+          enforces real roles + KYC on every action, so it never grants access and never
+          interferes with signing up / logging in. When the signed-in user actually holds the
+          picked role, we also switch their real active role so dashboards load their data. */}
+      {!collapsed && (
         <div className="px-4 py-3 border-b border-border">
-          <Select value={userRole} onValueChange={(v) => void switchActiveRole(v as UserRole)}>
-            <SelectTrigger className="w-full h-9 text-xs">
+          <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+            Explore as
+          </span>
+          <Select value={previewRole} onValueChange={(v) => handleViewChange(v as UserRole)}>
+            <SelectTrigger className="w-full h-9 text-xs mt-1">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {authorizedRoles.map((role) => (
-                <SelectItem key={role} value={role}>
-                  {ROLE_LABELS[role] ?? role}
+              {EXPLORABLE_VIEWS.map((view) => (
+                <SelectItem key={view.value} value={view.value}>
+                  {view.label}
                 </SelectItem>
               ))}
             </SelectContent>
