@@ -285,13 +285,38 @@ async def issue_email_token(session: AsyncSession, user: User, *, kind: str) -> 
         )
     )
     path = "/verify-email" if kind == "verify" else "/reset-password"
-    subject = "Verify your CapiMax email" if kind == "verify" else "Reset your CapiMax password"
     link = email_provider.build_link(path, raw)
-    await email_provider.send_email(
-        to=user.email,
-        subject=subject,
-        text=f"Open this link to continue:\n\n{link}\n\nThis link expires soon.",
+    if kind == "verify":
+        subject = "Verify your CapiMax PropShare email"
+        intro = (
+            "Welcome to CapiMax PropShare! Please confirm your email address to activate your "
+            "account and start exploring fractional property ownership."
+        )
+        cta_label = "Verify email address"
+        expiry = "24 hours"
+        footnote = (
+            "If you didn't create a CapiMax PropShare account, "
+            "you can safely ignore this email."
+        )
+    else:
+        subject = "Reset your CapiMax PropShare password"
+        intro = "We received a request to reset the password for your CapiMax PropShare account."
+        cta_label = "Reset password"
+        expiry = "1 hour"
+        footnote = (
+            "If you didn't request a password reset, you can safely ignore this email — "
+            "your password won't change."
+        )
+    text = f"{intro}\n\n{cta_label}: {link}\n\nThis secure link expires in {expiry}.\n\n{footnote}"
+    html = email_provider.render_email_html(
+        title=subject,
+        paragraphs=[intro, f"This secure link expires in {expiry}."],
+        cta_label=cta_label,
+        cta_url=link,
+        footnote=footnote,
+        preheader=intro,
     )
+    await email_provider.send_email(to=user.email, subject=subject, text=text, html=html)
     return raw
 
 
