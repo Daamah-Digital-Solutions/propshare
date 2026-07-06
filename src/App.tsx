@@ -48,6 +48,8 @@ const AccountSettings = lazy(() => import("./pages/AccountSettings"));
 const AboutCapimaxPropShare = lazy(() => import("./pages/AboutCapimaxPropShare"));
 const FAQ = lazy(() => import("./pages/FAQ"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
@@ -137,6 +139,8 @@ const App = () => (
                   <Route path="/fees" element={<Fees />} />
                   <Route path="/auth" element={<Auth />} />
                   <Route path="/auth/callback/:provider" element={<AuthCallback />} />
+                  <Route path="/reset-password" element={<ResetPassword />} />
+                  <Route path="/verify-email" element={<VerifyEmail />} />
                   <Route path="/install" element={<InstallApp />} />
                   <Route path="/support" element={<Support />} />
                   <Route path="/disclaimer" element={<Disclaimer />} />
