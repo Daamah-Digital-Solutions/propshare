@@ -64,6 +64,10 @@ def _balance(db, uid: str) -> float:
     return float(db("SELECT balance FROM wallets WHERE user_id=:u", u=uid)[0][0])
 
 
+def _total_invested(db, uid: str) -> float:
+    return float(db("SELECT total_invested FROM wallets WHERE user_id=:u", u=uid)[0][0])
+
+
 def _net(db, uid: str, pid: str) -> int:
     return int(
         db(
@@ -178,6 +182,28 @@ async def test_pay_to_completion_conserves_and_completes(client, db):
     assert _available(db, pid) == 88
     assert _plan_unvested(db, pid) == 0
     assert _available(db, pid) + _total_ledger(db, pid) + _plan_unvested(db, pid) == 100
+
+
+# --- regression: installment principal counts toward invested cost basis ----- #
+async def test_installment_principal_counts_toward_total_invested(client, db):
+    """wallet.total_invested (the portfolio's 'invested') must include installment principal —
+    the vested units already raise current_value, so omitting it reported a phantom gain."""
+    tok, uid = await _user(client, db, "in-invested@x.com")
+    _kyc_verify(db, uid)
+    _set_balance(db, uid, 100000)
+    pid = _seed_property(db)  # unit_price 100, 100 units
+    plan = (await _create(client, tok, pid, amount=1200, duration=12)).json()  # 12 units, 25% down
+    # after the down payment: invested == down-payment PRINCIPAL (base only; the 4% fee excluded)
+    assert _total_invested(db, uid) == 300.0
+    # pay through to handover: invested == full principal (1200) == 12 units @ $100
+    for p in plan["payments"]:
+        if p["status"] != "paid":
+            resp = await client.post(
+                f"/api/v1/installments/payments/{p['id']}/pay", headers={**_h(tok), **_idem()}
+            )
+            assert resp.status_code == 200, resp.text
+    assert _total_invested(db, uid) == 1200.0
+    assert _net(db, uid, pid) == 12
 
 
 # --- pre-handover: units reserved (not sellable) ---------------------------- #

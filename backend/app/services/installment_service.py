@@ -291,13 +291,17 @@ async def _charge_payment(
     ]
     if payment.fee_amount > 0:
         line_items.append((TransactionType.fee, payment.fee_amount, "Installment fee"))
-    await wallet_service.debit(
+    inv_wallet = await wallet_service.debit(
         session,
         user_id=plan.investor_id,
         reference_id=plan.id,
         line_items=line_items,
         actor_id=plan.investor_id,
     )
+    # Count the installment PRINCIPAL toward the investor's invested cost basis — parity with a
+    # direct buy (investment_service adds the subtotal). The vested units already contribute to
+    # the portfolio's current_value, so without this the portfolio reports a phantom gain.
+    inv_wallet.total_invested = inv_wallet.total_invested + payment.base_amount
 
     # Vest this payment's units into the append-only ledger (real ownership; NAV appreciation
     # is inherent from the milestone value_index that values these rows).
