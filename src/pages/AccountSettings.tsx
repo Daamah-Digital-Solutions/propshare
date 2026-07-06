@@ -61,6 +61,7 @@ const AccountSettings = () => {
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
   const emailVerified = !!user?.email_verified;
+  const kycVerified = user?.kyc_status === "verified";
   
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -385,16 +386,24 @@ const AccountSettings = () => {
             <CardContent>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center">
-                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${kycVerified ? "bg-green-500/10" : "bg-amber-500/10"}`}>
+                    {kycVerified ? (
+                      <CheckCircle className="h-5 w-5 text-green-600" />
+                    ) : (
+                      <AlertTriangle className="h-5 w-5 text-amber-500" />
+                    )}
                   </div>
                   <div>
                     <p className="font-medium text-foreground">KYC Verification</p>
-                    <p className="text-sm text-muted-foreground">Complete verification to unlock all features</p>
+                    <p className="text-sm text-muted-foreground">
+                      {kycVerified
+                        ? "Your identity is verified — all features unlocked."
+                        : "Complete verification to unlock all features"}
+                    </p>
                   </div>
                 </div>
                 <Button variant="outline" onClick={() => navigate("/kyc")}>
-                  Complete KYC
+                  {kycVerified ? "View" : "Complete KYC"}
                 </Button>
               </div>
             </CardContent>
