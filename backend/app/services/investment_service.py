@@ -44,7 +44,10 @@ from app.services import (
 _CENTS = decimal.Decimal("0.01")
 _HUNDRED = decimal.Decimal(100)
 RESERVATION_TTL = dt.timedelta(minutes=30)
-_DIRECT_METHODS = {"card", "crypto"}
+# Direct-pay rails (reserve units -> hosted checkout -> webhook confirms). "pronova" is a
+# branded rail that settles via Stripe card (D5); it behaves exactly like "card" except a
+# server-applied discount reduces only the CHARGED amount (see create_investment).
+_DIRECT_METHODS = {"card", "crypto", "pronova"}
 
 
 def _utcnow() -> dt.datetime:
@@ -141,6 +144,16 @@ async def create_investment(
         "platform_fee_pct": str(rates["platform_fee_pct"]),
         "management_fee_pct": str(rates["management_fee_pct"]),
     }
+    # Pronova (D5, owner-set): a discount off the TOTAL payable on a rail that SETTLES VIA
+    # STRIPE CARD. Reduce ONLY the amount charged — units, booked subtotal and platform fee
+    # stay full, so the property funds in full and the discount is a platform-funded promo
+    # subsidy (recorded on the investment snapshot + audited). Server-authoritative.
+    if method == "pronova":
+        pct = await settings_service.get_pronova_discount_pct(session)
+        discount_amount = _q(quote["total_charge"] * pct / _HUNDRED)
+        quote["total_charge"] = _q(quote["total_charge"] - discount_amount)
+        snapshot["pronova_discount_pct"] = str(pct)
+        snapshot["pronova_discount_amount"] = str(discount_amount)
     inv = Investment(
         user_id=user_id,
         property_id=prop.id,

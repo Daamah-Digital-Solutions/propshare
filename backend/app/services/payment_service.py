@@ -27,7 +27,17 @@ from app.models.base import PaymentMethod
 from app.services import notification_service, wallet_service
 from app.services.integrations.payments import ParsedWebhook, nowpayments_gateway, stripe_gateway
 
-_PROVIDER_FOR_METHOD = {"card": "stripe", "crypto": "nowpayments"}
+# "pronova" is a BRANDED rail that settles via Stripe card (D5 owner decision) — the buyer
+# sees the Pronova experience + discount, the money moves on Stripe. Kept as a distinct method
+# from plain "card" so it's recorded/branded separately.
+_PROVIDER_FOR_METHOD = {"card": "stripe", "crypto": "nowpayments", "pronova": "stripe"}
+
+# Human label shown on the hosted-checkout line item (branding). Deposits keep the wallet
+# label; investments name the property purchase, and Pronova carries its brand.
+_CHECKOUT_LABEL = {
+    "card": "CapiMax investment",
+    "pronova": "CapiMax investment · Pronova",
+}
 
 
 def _gateway(provider: str):
@@ -179,6 +189,7 @@ async def create_investment_checkout(
             success_url=success_url,
             cancel_url=cancel_url,
             idempotency_key=None,
+            product_name=_CHECKOUT_LABEL.get(method, "CapiMax investment"),
         )
     else:
         result = await nowpayments_gateway.create_checkout(

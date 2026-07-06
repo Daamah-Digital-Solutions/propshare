@@ -16,7 +16,9 @@ from pydantic import BaseModel, Field
 class InvestmentCreateIn(BaseModel):
     property_id: uuid.UUID
     amount: float = Field(gt=0, le=1_000_000_000)
-    method: str = Field(pattern="^(wallet|card|crypto)$")
+    # "pronova" is a branded rail that settles via Stripe card (D5) with a server-applied
+    # discount off the total; otherwise identical to "card".
+    method: str = Field(pattern="^(wallet|card|crypto|pronova)$")
 
 
 class InvestmentCreateOut(BaseModel):
@@ -75,3 +77,9 @@ class ReinvestOut(BaseModel):
 
 class ReinvestSettingsOut(BaseModel):
     discount_pct: str  # admin-configurable reinvest_discount_pct (server-authoritative)
+
+
+class PronovaSettingsOut(BaseModel):
+    # Live, admin-configurable Pronova pay discount (% off the total payable). The UI shows
+    # this real rate; the server applies it to the charged amount at purchase.
+    discount_pct: str

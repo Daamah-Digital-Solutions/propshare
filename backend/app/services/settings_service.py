@@ -40,6 +40,7 @@ _SETTING_SPECS: dict[str, str] = {
     "installment_fee_pct": "pct",
     "broker_commission_pct": "pct",
     "reinvest_discount_pct": "pct",
+    "pronova_discount_pct": "pct",
     "secondary_price_min_pct": "pct_open",
     "secondary_price_max_pct": "pct_open",
     "secondary_lockup_days": "int",
@@ -115,6 +116,11 @@ DEFAULTS: dict[str, str] = {
     # Investor reinvest discount (Phase 14) — a real, server-applied subsidy (2nd narrow
     # D5 exception). Standard invest stays no-discount.
     "reinvest_discount_pct": "5.0",
+    # Pronova pay discount (D5, owner-set). "Pay with Pronova" is a branded rail that SETTLES
+    # VIA STRIPE CARD; the buyer pays (subtotal + platform fee) x (1 - this/100), receives the
+    # FULL units, and the property books the FULL subtotal — the 5% is a platform-funded promo
+    # subsidy (recorded per-investment). Server-applied; the client never computes it.
+    "pronova_discount_pct": "5.0",
     # Broker commissions (Phase 11). Percent of the PLATFORM REVENUE attributable to a
     # referred client (purchase platform fee + rental mgmt fee), NEVER of the investment
     # amount. Admin-editable live; each accrual snapshots the rate so history is immutable.
@@ -153,6 +159,16 @@ async def get_reinvest_discount_pct(session: AsyncSession) -> Decimal:
     applies it as an effective unit price — the client never computes the final price."""
     try:
         return Decimal(await get_setting(session, "reinvest_discount_pct"))
+    except (ArithmeticError, ValueError):
+        return Decimal("5.0")
+
+
+async def get_pronova_discount_pct(session: AsyncSession) -> Decimal:
+    """Pronova pay discount rate (percent off the TOTAL payable). Server-authoritative;
+    applied only to the amount charged via Stripe — units + booked subtotal stay full, so
+    the 5% is a platform-funded promo subsidy. Default 5.0 (owner-set, admin-configurable)."""
+    try:
+        return Decimal(await get_setting(session, "pronova_discount_pct"))
     except (ArithmeticError, ValueError):
         return Decimal("5.0")
 

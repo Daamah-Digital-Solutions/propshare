@@ -46,6 +46,7 @@ async def create_checkout(
     success_url: str,
     cancel_url: str,
     idempotency_key: str | None,
+    product_name: str = "CapiMax wallet deposit",
 ) -> CheckoutResult:
     if not is_configured():
         raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)
@@ -59,7 +60,7 @@ async def create_checkout(
         "line_items[0][quantity]": "1",
         "line_items[0][price_data][currency]": currency.lower(),
         "line_items[0][price_data][unit_amount]": str(minor),
-        "line_items[0][price_data][product_data][name]": "CapiMax wallet deposit",
+        "line_items[0][price_data][product_data][name]": product_name,
         "metadata[payment_id]": str(payment_id),
         "payment_intent_data[metadata][payment_id]": str(payment_id),
     }

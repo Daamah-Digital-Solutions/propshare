@@ -29,6 +29,7 @@ from app.schemas.investment import (
     InvestmentListOut,
     InvestmentOut,
     PortfolioOut,
+    PronovaSettingsOut,
     ReinvestIn,
     ReinvestOut,
     ReinvestSettingsOut,
@@ -115,6 +116,14 @@ async def reinvest_settings(principal: PrincipalDep, session: SessionDep):
     server-honored discount — never a client literal)."""
     pct = await settings_service.get_reinvest_discount_pct(session)
     return ReinvestSettingsOut(discount_pct=str(pct))
+
+
+@router.get("/pronova-settings", response_model=PronovaSettingsOut)
+async def pronova_settings(principal: PrincipalDep, session: SessionDep):
+    """The live, admin-configurable Pronova pay discount (% off the total payable), so the UI
+    shows the real, server-honored rate — the server applies it to the charge at purchase."""
+    pct = await settings_service.get_pronova_discount_pct(session)
+    return PronovaSettingsOut(discount_pct=str(pct))
 
 
 @router.post("/reinvest", response_model=ReinvestOut)

@@ -46,8 +46,9 @@ interface InvestmentCalculatorProps {
   setInvestmentAmount: (amount: number) => void;
 }
 
-// Funding rails the invest UI offers. Pay-from-wallet (Phase 4 balance) + card.
-// Pronova is disclosed but NOT_YET_ENABLED in v1 (no discount logic — D5).
+// Funding rails the invest UI offers: pay-from-wallet (Phase 4 balance), card, and Pronova
+// (a branded rail that settles via card with a server-applied discount off the total — D5,
+// owner-enabled). The server computes the real charge; the client only displays the rate.
 const paymentMethods: {
   id: string;
   icon: typeof CreditCard;
@@ -58,7 +59,9 @@ const paymentMethods: {
 }[] = [
   { id: "wallet", icon: Wallet, label: "Wallet Balance", apiMethod: "wallet" },
   { id: "card", icon: CreditCard, label: "Card", apiMethod: "card" },
-  { id: "pronova", icon: Coins, label: "Pronova Token", disabled: true, badge: "Coming soon" },
+  // Pronova is a branded rail that settles via card behind the scenes; the server applies a
+  // real discount off the total. Distinct from plain "Card" (D5, owner-enabled).
+  { id: "pronova", icon: Coins, label: "Pronova Token", apiMethod: "pronova", badge: "5% OFF" },
 ];
 
 const InvestmentCalculator = ({
@@ -74,7 +77,7 @@ const InvestmentCalculator = ({
   const queryClient = useQueryClient();
 
   const selectedMethod = paymentMethods.find(m => m.id === selectedPayment);
-  const paymentDiscount = 0; // discounts are NOT_YET_ENABLED in v1 (D5)
+  const pronovaSelected = selectedPayment === "pronova";
 
   // Fee rates come from the backend (admin-configurable platform_settings), not
   // hardcoded constants. Platform fee is charged once AT PURCHASE; the management
@@ -96,15 +99,25 @@ const InvestmentCalculator = ({
   });
   const reinvestDiscountPct = Number(reinvestCfg?.discount_pct ?? 0);
 
+  // Pronova pay: a REAL, server-applied discount off the TOTAL payable. "Pay with Pronova"
+  // settles via card behind the scenes; the server reduces the CHARGED amount by this rate
+  // (units + booked value stay full — the discount is a platform-funded promo). The client
+  // only DISPLAYS the live rate; it never computes the final charge.
+  const { data: pronovaCfg } = useQuery({
+    queryKey: ["pronova", "settings"],
+    queryFn: investApi.pronovaSettings,
+    enabled: pronovaSelected,
+  });
+  const pronovaDiscountPct = Number(pronovaCfg?.discount_pct ?? 0);
+
   // Reinvest is funded from the wallet with NO separate purchase fee (the subsidy is the
   // discounted unit price). Standard invest charges the platform fee at purchase.
   const purchaseFee = reinvesting ? 0 : investmentAmount * PURCHASE_FEE_RATE;
   const annualManagementFee = investmentAmount * ANNUAL_MANAGEMENT_FEE_RATE;
-  const totalUpfrontFees = purchaseFee;
-  const paymentDiscountAmount = (totalUpfrontFees * paymentDiscount) / 100;
-  const finalUpfrontFee = totalUpfrontFees - paymentDiscountAmount;
-  // You pay the amount (from returns when reinvesting) + any standard purchase fee.
-  const totalPayable = investmentAmount + finalUpfrontFee;
+  const nominalPayable = investmentAmount + purchaseFee;
+  // Pronova promo: discount off the WHOLE payable (server-authoritative; shown to match the charge).
+  const paymentDiscountAmount = pronovaSelected ? (nominalPayable * pronovaDiscountPct) / 100 : 0;
+  const totalPayable = nominalPayable - paymentDiscountAmount;
   const investmentValue = investmentAmount;
 
   // Expected returns (net of annual management fee) - based on full investment value
@@ -404,9 +417,9 @@ const InvestmentCalculator = ({
               </span>
               <span className="text-foreground">+${purchaseFee.toFixed(2)}</span>
             </div>
-            {paymentDiscount > 0 && (
+            {pronovaSelected && paymentDiscountAmount > 0 && (
               <div className="flex justify-between text-success">
-                <span>Pronova Discount (-{paymentDiscount}%)</span>
+                <span>Pronova discount (-{pronovaDiscountPct}% of total)</span>
                 <span>-${paymentDiscountAmount.toFixed(2)}</span>
               </div>
             )}
@@ -496,9 +509,9 @@ const InvestmentCalculator = ({
                 </span>
                 <span className="font-medium text-foreground">+${purchaseFee.toFixed(2)}</span>
               </div>
-              {paymentDiscount > 0 && (
+              {pronovaSelected && paymentDiscountAmount > 0 && (
                 <div className="flex justify-between text-success">
-                  <span>Pronova Discount</span>
+                  <span>Pronova discount (-{pronovaDiscountPct}%)</span>
                   <span>-${paymentDiscountAmount.toFixed(2)}</span>
                 </div>
               )}

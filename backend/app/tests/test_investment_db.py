@@ -363,6 +363,48 @@ async def test_direct_pay_reserves_then_webhook_confirms(client, db, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_pronova_charges_discounted_total_but_funds_in_full(client, db, monkeypatch):
+    """Pronova (D5): SETTLES VIA STRIPE CARD at (subtotal + fee) x (1 - 5%), yet the buyer
+    receives the FULL units and the property books the FULL subtotal — the 5% is a platform-
+    funded promo subsidy, recorded on the investment snapshot. Distinct method from 'card'."""
+    _configure_stripe(monkeypatch)
+    token = await _verified_user(client, db, "pronova@i.com")
+    pid = _seed_property(db, unit_price=100, total_units=100, total_value=10000)
+
+    res = await _invest(client, token, pid, 1000, "pronova")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    inv_id = body["investment_id"]
+    # subtotal + platform fee are FULL; only the CHARGE is discounted 5% (1025.00 -> 973.75).
+    assert body["amount"] == "1000.00"
+    assert body["platform_fee"] == "25.00"
+    assert body["total_charged"] == "973.75"
+    assert body["checkout_url"] == "https://pay.test/checkout"
+    # the subsidy is recorded on the investment snapshot (auditable)
+    snap = db("SELECT fee_settings_snapshot FROM investments WHERE id=:i", i=inv_id)[0][0]
+    assert snap["pronova_discount_pct"] == "5.0"
+    assert snap["pronova_discount_amount"] == "51.25"
+    # Stripe is asked to charge EXACTLY the discounted total
+    assert (
+        db("SELECT amount::text FROM payments WHERE related_investment_id=:i", i=inv_id)[0][0]
+        == "973.75"
+    )
+    # units reserved; money not booked until the webhook confirms
+    assert db("SELECT available_units FROM properties WHERE id=:i", i=pid)[0][0] == 90
+    assert db("SELECT funded_amount FROM properties WHERE id=:i", i=pid)[0][0] == 0
+
+    pay_id = _payment_id_for(db, inv_id)
+    # webhook confirms with the discounted capture (97375 cents)
+    r = await _post_stripe(client, _stripe_event(pay_id, cents=97375, event_id="evt_pronova"))
+    assert r.json()["result"] == "confirmed"
+    # property funds in FULL (subtotal 1000), full units issued, confirmed via 'pronova'
+    assert db("SELECT funded_amount FROM properties WHERE id=:i", i=pid)[0][0] == 1000
+    assert db("SELECT units FROM ownership_ledger WHERE property_id=:i", i=pid)[0][0] == 10
+    assert db("SELECT confirmed_via FROM investments WHERE id=:i", i=inv_id)[0][0] == "pronova"
+    _assert_unit_invariant(db, pid)
+
+
+@pytest.mark.asyncio
 async def test_failed_webhook_releases_reservation(client, db, monkeypatch):
     _configure_stripe(monkeypatch)
     token = await _verified_user(client, db, "fail@i.com")

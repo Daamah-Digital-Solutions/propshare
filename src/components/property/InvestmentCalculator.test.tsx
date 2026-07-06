@@ -13,7 +13,11 @@ import { ReinvestProvider } from "@/contexts/ReinvestContext";
 // Mock the API client — keep ApiError a real class so `instanceof` checks work.
 const createMock = vi.fn();
 vi.mock("@/lib/api", () => ({
-  investApi: { create: (...args: unknown[]) => createMock(...args) },
+  investApi: {
+    create: (...args: unknown[]) => createMock(...args),
+    pronovaSettings: () => Promise.resolve({ discount_pct: "5.0" }),
+    reinvestSettings: () => Promise.resolve({ discount_pct: "5.0" }),
+  },
   ApiError: class ApiError extends Error {
     code: string;
     constructor(code: string, message: string) {
@@ -80,9 +84,30 @@ describe("InvestmentCalculator invest click path", () => {
     expect(idempotencyKey.length).toBeGreaterThan(0);
   });
 
-  it("disables Pronova (NOT_YET_ENABLED) so it can't be chosen", () => {
+  it("invests via Pronova (selectable, settles as a card checkout) with method 'pronova'", async () => {
+    // Pronova returns a hosted checkout (settles via card); null here keeps jsdom from
+    // navigating — the point of the test is that method 'pronova' is wired through.
+    createMock.mockResolvedValue({
+      investment_id: "inv-2",
+      property_id: "prop-123",
+      status: "pending",
+      units: 10,
+      amount: "1000.00",
+      platform_fee: "25.00",
+      total_charged: "973.75",
+      management_fee_rate: "1.0",
+      checkout_url: null,
+    });
+
     renderCalc();
     const pronova = screen.getByRole("button", { name: /Pronova Token/i });
-    expect(pronova).toBeDisabled();
+    expect(pronova).not.toBeDisabled(); // now enabled (owner-launched)
+    fireEvent.click(pronova);
+    fireEvent.click(screen.getByRole("button", { name: /Invest \$1,000/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirm & Pay/i }));
+
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
+    const [payload] = createMock.mock.calls[0];
+    expect(payload).toEqual({ property_id: "prop-123", amount: 1000, method: "pronova" });
   });
 });

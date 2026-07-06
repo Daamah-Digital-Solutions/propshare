@@ -494,7 +494,9 @@ export const paymentApi = {
 };
 
 // --- Investments (Phase 5) ------------------------------------------------- //
-export type InvestMethod = "wallet" | "card" | "crypto";
+// "pronova" is a branded rail that settles via Stripe card with a server-applied discount
+// off the total; the SPA sends the method, the server computes the charge.
+export type InvestMethod = "wallet" | "card" | "crypto" | "pronova";
 
 export interface InvestCreateResponse {
   investment_id: string;
@@ -556,6 +558,11 @@ export const investApi = {
   /** The live, admin-configurable reinvest discount rate (server-authoritative). */
   reinvestSettings(): Promise<{ discount_pct: string }> {
     return apiRequest("/api/v1/investments/reinvest-settings");
+  },
+  /** The live, admin-configurable Pronova pay discount (% off the total payable). The server
+   * applies it to the charge at purchase; the UI shows this real rate. */
+  pronovaSettings(): Promise<{ discount_pct: string }> {
+    return apiRequest("/api/v1/investments/pronova-settings");
   },
   /** Reinvest returns from the wallet at the server-applied discount. SERVER computes
    * the discounted units/price — the client only sends an amount. */

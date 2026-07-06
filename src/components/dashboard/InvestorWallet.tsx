@@ -535,15 +535,11 @@ export const InvestorWallet = () => {
               <div className="flex items-start gap-3">
                 <AlertCircle className="h-5 w-5 text-accent flex-shrink-0" />
                 <div>
-                  <p className="text-sm font-medium text-foreground">
-                    Pronova Token <span className="text-muted-foreground">(coming soon)</span>
-                  </p>
+                  <p className="text-sm font-medium text-foreground">Pay with Pronova</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Paying with Pronova tokens is not yet enabled.
+                    Choose <span className="font-medium text-foreground">Pronova</span> at investment
+                    checkout for an automatic discount — settled securely by card.
                   </p>
-                  <Button variant="link" className="h-auto p-0 text-xs text-muted-foreground mt-2" disabled>
-                    Not yet available
-                  </Button>
                 </div>
               </div>
             </div>
