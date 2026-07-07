@@ -1,13 +1,13 @@
 """Investment certificate generation (Group 2 — storage/certificates).
 
-Generates a REAL, professionally branded one-page PDF certificate from the caller's CURRENT
-net holding in a property (read from the append-only ``ownership_ledger`` — never fabricated).
+Generates a REAL, elegantly branded one-page PDF certificate from the caller's CURRENT net
+holding in a property (read from the append-only ``ownership_ledger`` — never fabricated).
 
-The PDF is drawn with a tiny dependency-free writer (no reportlab) so the artifact is
-deterministic and testable: vector graphics (branded border, header band, gold rule, seal)
-plus text, all in an UNCOMPRESSED content stream so the real values appear literally in the
-bytes. Wording stays factual (units recorded in the CapiMax ledger) and does not over-claim
-legal/SPV status. ``build_all_zip`` bundles every held-property certificate into one .zip.
+Rendered with reportlab (classic certificate styling: ornate green/gold border with corner
+flourishes, serif typography, cream ground, a faint monogram watermark, and a gold-gradient
+seal with a ribbon). The content stream is left uncompressed so the real values appear
+literally in the bytes (verifiable in tests). ``build_all_zip`` bundles every held-property
+certificate into a single .zip.
 """
 
 from __future__ import annotations
@@ -15,9 +15,13 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import io
+import math
 import uuid
 import zipfile
 
+from reportlab.lib.colors import Color, HexColor
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.pdfgen import canvas
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,69 +29,175 @@ from app.core.errors import AppError
 from app.models import OwnershipLedger, Property
 from app.models.identity import User
 
-# Brand palette as PDF colour operands ("r g b").
-_GREEN = "0.098 0.525 0.325"
-_GOLD = "0.961 0.624 0.039"
-_INK = "0.133 0.165 0.149"
-_MUTED = "0.42 0.43 0.41"
-_WHITE = "1 1 1"
+_W, _H = 595.0, 842.0  # A4 points
+_CX = _W / 2
+
+_GREEN_D = HexColor("#0F6E4E")
+_GREEN = HexColor("#198653")
+_GOLD = HexColor("#B0852E")
+_GOLD_L = HexColor("#E4C979")
+_INK = HexColor("#23302A")
+_MUTED = HexColor("#6B726C")
+_CREAM = HexColor("#FCFBF5")
+_PANEL = HexColor("#F3F8F4")
 
 
-def _esc(s: str) -> str:
-    return str(s).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+def _spaced_centred(
+    c: canvas.Canvas, cx: float, y: float, font: str, size: float, text: str,
+    spacing: float, color: HexColor,
+) -> None:
+    """Centred text with letter-spacing (Canvas has no setCharSpace — use a text object)."""
+    w = stringWidth(text, font, size) + spacing * max(0, len(text) - 1)
+    t = c.beginText(cx - w / 2, y)
+    t.setFont(font, size)
+    t.setFillColor(color)
+    t.setCharSpace(spacing)
+    t.textLine(text)
+    c.drawText(t)
 
 
-def _n(v: float) -> str:
-    """Compact number formatting for PDF operands (no trailing zeros noise)."""
-    return f"{v:.2f}".rstrip("0").rstrip(".")
+def _wrap(text: str, font: str, size: float, max_width: float) -> list[str]:
+    """Greedy word-wrap so a line never exceeds ``max_width`` at the given font/size."""
+    lines: list[str] = []
+    cur = ""
+    for word in text.split():
+        trial = f"{cur} {word}".strip()
+        if stringWidth(trial, font, size) <= max_width or not cur:
+            cur = trial
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
 
 
-class _Canvas:
-    """Accumulates PDF content-stream operators for a single page (origin bottom-left)."""
+def _fit_centred(
+    c: canvas.Canvas, cx: float, y: float, font: str, base_size: float, text: str,
+    max_width: float, color: HexColor,
+) -> None:
+    """Draw centred text, shrinking the font just enough that a long value never overflows."""
+    size = base_size
+    while size > 8 and stringWidth(text, font, size) > max_width:
+        size -= 0.5
+    c.setFillColor(color)
+    c.setFont(font, size)
+    c.drawCentredString(cx, y, text)
 
-    def __init__(self) -> None:
-        self.ops: list[str] = []
 
-    def text(self, x: float, y: float, size: float, font: str, color: str, s: str) -> None:
-        self.ops += [
-            "BT",
-            f"/{font} {_n(size)} Tf",
-            f"{color} rg",
-            f"{_n(x)} {_n(y)} Td",
-            f"({_esc(s)}) Tj",
-            "ET",
-        ]
+def _clip(text: str, font: str, size: float, max_width: float) -> str:
+    """Truncate with an ellipsis so a value fits inside its column."""
+    if stringWidth(text, font, size) <= max_width:
+        return text
+    while text and stringWidth(text + "…", font, size) > max_width:
+        text = text[:-1]
+    return text + "…"
 
-    def fill_rect(self, x: float, y: float, w: float, h: float, color: str) -> None:
-        self.ops += [f"{color} rg", f"{_n(x)} {_n(y)} {_n(w)} {_n(h)} re", "f"]
 
-    def stroke_rect(self, x: float, y: float, w: float, h: float, color: str, lw: float) -> None:
-        self.ops += [f"{color} RG", f"{_n(lw)} w", f"{_n(x)} {_n(y)} {_n(w)} {_n(h)} re", "S"]
+def _corner(c: canvas.Canvas, x: float, y: float, sx: int, sy: int) -> None:
+    """A small gold bracket + diamond flourish tucked into a frame corner."""
+    c.saveState()
+    c.setStrokeColor(_GOLD)
+    c.setLineWidth(1.2)
+    c.line(x + sx * 10, y + sy * 10, x + sx * 34, y + sy * 10)
+    c.line(x + sx * 10, y + sy * 10, x + sx * 10, y + sy * 34)
+    c.setFillColor(_GOLD)
+    ex, ey, d = x + sx * 10, y + sy * 10, 3.2
+    p = c.beginPath()
+    p.moveTo(ex, ey + d)
+    p.lineTo(ex + d, ey)
+    p.lineTo(ex, ey - d)
+    p.lineTo(ex - d, ey)
+    p.close()
+    c.drawPath(p, stroke=0, fill=1)
+    c.restoreState()
 
-    def line(self, x1: float, y1: float, x2: float, y2: float, color: str, lw: float) -> None:
-        self.ops += [
-            f"{color} RG",
-            f"{_n(lw)} w",
-            f"{_n(x1)} {_n(y1)} m",
-            f"{_n(x2)} {_n(y2)} l",
-            "S",
-        ]
 
-    def circle(self, cx: float, cy: float, r: float, color: str, lw: float) -> None:
-        k = 0.5523 * r
-        self.ops += [
-            f"{color} RG",
-            f"{_n(lw)} w",
-            f"{_n(cx + r)} {_n(cy)} m",
-            f"{_n(cx + r)} {_n(cy + k)} {_n(cx + k)} {_n(cy + r)} {_n(cx)} {_n(cy + r)} c",
-            f"{_n(cx - k)} {_n(cy + r)} {_n(cx - r)} {_n(cy + k)} {_n(cx - r)} {_n(cy)} c",
-            f"{_n(cx - r)} {_n(cy - k)} {_n(cx - k)} {_n(cy - r)} {_n(cx)} {_n(cy - r)} c",
-            f"{_n(cx + k)} {_n(cy - r)} {_n(cx + r)} {_n(cy - k)} {_n(cx + r)} {_n(cy)} c",
-            "S",
-        ]
+def _divider(c: canvas.Canvas, cx: float, y: float, half: float) -> None:
+    c.saveState()
+    c.setStrokeColor(_GOLD)
+    c.setLineWidth(0.8)
+    c.line(cx - half, y, cx - 7, y)
+    c.line(cx + 7, y, cx + half, y)
+    c.setFillColor(_GOLD)
+    d = 3.4
+    p = c.beginPath()
+    p.moveTo(cx, y + d)
+    p.lineTo(cx + d, y)
+    p.lineTo(cx, y - d)
+    p.lineTo(cx - d, y)
+    p.close()
+    c.drawPath(p, stroke=0, fill=1)
+    c.restoreState()
 
-    def bytes(self) -> bytes:
-        return "\n".join(self.ops).encode("latin-1", "replace")
+
+def _emblem(c: canvas.Canvas, cx: float, cy: float, r: float) -> None:
+    c.saveState()
+    c.setFillColor(_GREEN)
+    c.circle(cx, cy, r, stroke=0, fill=1)
+    c.setStrokeColor(_GOLD_L)
+    c.setLineWidth(1.2)
+    c.circle(cx, cy, r - 3, stroke=1, fill=0)
+    c.setFillColor(_CREAM)
+    c.setFont("Times-Bold", 22)
+    c.drawCentredString(cx, cy - 8, "C")
+    c.restoreState()
+
+
+def _seal(c: canvas.Canvas, cx: float, cy: float, r: float) -> None:
+    """A gold-gradient wax-style seal with a rosette, monogram and ribbon tails."""
+    c.saveState()
+    # Ribbon tails first (so the disc overlaps them).
+    c.setFillColor(_GOLD)
+    for dx in (-13, 13):
+        p = c.beginPath()
+        p.moveTo(cx + dx - 9, cy - r + 8)
+        p.lineTo(cx + dx + 9, cy - r + 8)
+        p.lineTo(cx + dx + 13, cy - r - 34)
+        p.lineTo(cx + dx, cy - r - 23)
+        p.lineTo(cx + dx - 13, cy - r - 34)
+        p.close()
+        c.drawPath(p, stroke=0, fill=1)
+
+    # Gold radial-gradient face (clipped to the disc).
+    c.saveState()
+    disc = c.beginPath()
+    disc.circle(cx, cy, r)
+    c.clipPath(disc, stroke=0, fill=0)
+    c.radialGradient(cx, cy + r * 0.35, r * 1.5, (_GOLD_L, _GOLD), (0.0, 1.0))
+    c.restoreState()
+
+    # Rosette ticks around the rim.
+    c.setStrokeColor(_GOLD)
+    c.setLineWidth(0.5)
+    n = 64
+    for i in range(n):
+        a = 2 * math.pi * i / n
+        c.line(
+            cx + math.cos(a) * (r - 2), cy + math.sin(a) * (r - 2),
+            cx + math.cos(a) * (r - 9), cy + math.sin(a) * (r - 9),
+        )
+    c.setStrokeColor(_GREEN_D)
+    c.setLineWidth(1.6)
+    c.circle(cx, cy, r, stroke=1, fill=0)
+
+    # Inner cream medallion + rings + text.
+    c.setFillColor(_CREAM)
+    c.circle(cx, cy, r - 13, stroke=0, fill=1)
+    c.setStrokeColor(_GREEN_D)
+    c.setLineWidth(1.1)
+    c.circle(cx, cy, r - 13, stroke=1, fill=0)
+    c.setStrokeColor(_GOLD)
+    c.setLineWidth(0.5)
+    c.circle(cx, cy, r - 17, stroke=1, fill=0)
+    c.setFillColor(_GREEN_D)
+    c.setFont("Times-Bold", 26)
+    c.drawCentredString(cx, cy - 3, "C")
+    c.setFont("Helvetica-Bold", 5.5)
+    c.setFillColor(_GREEN)
+    c.drawCentredString(cx, cy + 17, "OWNERSHIP")
+    c.drawCentredString(cx, cy - 24, "CERTIFIED")
+    c.restoreState()
 
 
 def render_certificate_pdf(
@@ -103,103 +213,122 @@ def render_certificate_pdf(
     cert_ref: str,
     issued: str,
 ) -> bytes:
-    """Draw the branded CapiMax PropShare certificate. A4 (595x842), Helvetica + Bold."""
-    c = _Canvas()
-    # Frame: green outer border + thin gold inner border.
-    c.fill_rect(34, 743, 527, 65, _GREEN)  # header band
-    c.stroke_rect(26, 26, 543, 790, _GREEN, 2.5)  # outer border
-    c.stroke_rect(33, 33, 529, 776, _GOLD, 0.8)  # inner border
-    c.line(34, 740, 561, 740, _GOLD, 1.5)  # gold rule under the band
+    """Draw the branded CapiMax PropShare certificate (A4, classic styling)."""
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(_W, _H), pageCompression=0)
+    c.setTitle("CapiMax PropShare — Certificate of Ownership")
 
-    # Header (on the green band).
-    c.text(54, 772, 20, "F2", _WHITE, "CapiMax PropShare")
-    c.text(55, 754, 10.5, "F1", _WHITE, "Certificate of Fractional Ownership")
+    # Ground + faint monogram watermark.
+    c.setFillColor(_CREAM)
+    c.rect(0, 0, _W, _H, stroke=0, fill=1)
+    c.saveState()
+    c.setFillColor(Color(0.06, 0.43, 0.30, alpha=0.045))
+    c.setFont("Times-Bold", 380)
+    c.drawCentredString(_CX, 250, "C")
+    c.restoreState()
+
+    # Ornamental triple border + corner flourishes.
+    c.setStrokeColor(_GREEN_D)
+    c.setLineWidth(3.5)
+    c.roundRect(30, 30, _W - 60, _H - 60, 9, stroke=1, fill=0)
+    c.setStrokeColor(_GOLD)
+    c.setLineWidth(1.0)
+    c.rect(40, 40, _W - 80, _H - 80, stroke=1, fill=0)
+    c.setStrokeColor(_GREEN)
+    c.setLineWidth(0.6)
+    c.rect(44, 44, _W - 88, _H - 88, stroke=1, fill=0)
+    _corner(c, 44, _H - 44, 1, -1)
+    _corner(c, _W - 44, _H - 44, -1, -1)
+    _corner(c, 44, 44, 1, 1)
+    _corner(c, _W - 44, 44, -1, 1)
+
+    # Header: emblem, wordmark, divider.
+    _emblem(c, _CX, 760, 24)
+    _spaced_centred(c, _CX, 724, "Times-Bold", 15, "CAPIMAX PROPSHARE", 3.2, _GREEN_D)
+    _divider(c, _CX, 712, 150)
+
+    # Title + subtitle.
+    _spaced_centred(c, _CX, 668, "Times-Bold", 31, "Certificate of Ownership", 1.2, _GREEN_D)
+    c.setFillColor(_MUTED)
+    c.setFont("Times-Italic", 12)
+    c.drawCentredString(_CX, 648, "Fractional Real-Estate Ownership")
 
     # Attestation.
-    c.text(56, 706, 11, "F1", _INK, "This certifies that")
-    c.text(56, 685, 15, "F2", _GREEN, holder)
-    c.text(
-        56, 661, 11, "F1", _INK,
-        f"is the registered holder of {units} fractional ownership unit(s) in the",
+    c.setFillColor(_INK)
+    c.setFont("Times-Roman", 12)
+    c.drawCentredString(_CX, 612, "This is to certify that")
+    _fit_centred(c, _CX, 584, "Times-Bold", 22, holder, 400, _GREEN_D)
+    c.setStrokeColor(_GOLD_L)
+    c.setLineWidth(0.8)
+    c.line(_CX - 150, 576, _CX + 150, 576)
+    c.setFillColor(_INK)
+    c.setFont("Times-Roman", 12)
+    holds_line = f"is the registered holder of {units} fractional ownership units in"
+    c.drawCentredString(_CX, 552, holds_line)
+    _fit_centred(c, _CX, 530, "Times-Bold", 14, property_title, 430, _GREEN)
+    c.setFillColor(_INK)
+    c.setFont("Times-Roman", 12)
+    c.drawCentredString(_CX, 510, "as recorded in the CapiMax PropShare ownership ledger.")
+
+    # Fact panel (2 columns x 4 rows).
+    px, py, pw, ph = 82, 292, _W - 164, 170
+    c.setFillColor(_PANEL)
+    c.setStrokeColor(_GOLD)
+    c.setLineWidth(0.8)
+    c.roundRect(px, py, pw, ph, 6, stroke=1, fill=1)
+    fields = [
+        ("LOCATION", location),
+        ("RECORDED VALUE", value),
+        ("UNITS HELD", str(units)),
+        ("OWNERSHIP STAKE", ownership),
+        ("ISSUING SPV", spv),
+        ("JURISDICTION", jurisdiction),
+        ("CERTIFICATE REFERENCE", cert_ref),
+        ("ISSUED", issued),
+    ]
+    for i, (label, val) in enumerate(fields):
+        col, row = i % 2, i // 2
+        x = px + 30 + col * (pw / 2 - 12)
+        y = py + ph - 30 - row * 38
+        c.setFillColor(_MUTED)
+        c.setFont("Helvetica", 7.5)
+        c.drawString(x, y, label)
+        c.setFillColor(_INK)
+        c.setFont("Times-Roman", 12.5)
+        c.drawString(x, y - 16, _clip(str(val), "Times-Roman", 12.5, pw / 2 - 44))
+
+    # Seal + signature.
+    _seal(c, 452, 214, 52)
+    c.setStrokeColor(_INK)
+    c.setLineWidth(0.8)
+    c.line(92, 192, 250, 192)
+    c.setFillColor(_GREEN_D)
+    c.setFont("Times-Italic", 12)
+    c.drawString(98, 198, "CapiMax PropShare")
+    c.setFillColor(_MUTED)
+    c.setFont("Helvetica", 8)
+    c.drawString(92, 178, "Authorized on behalf of the platform")
+
+    # Footer — honest legal framing, word-wrapped so it never spills past the frame.
+    c.setFillColor(_MUTED)
+    c.setFont("Times-Roman", 8.5)
+    footer_text = (
+        "This certificate reflects the fractional units recorded in the CapiMax PropShare "
+        "ownership ledger as of the issue date. It is generated from live data and is not a "
+        "transferable security or a substitute for the offering documents and SPV agreements "
+        "governing this property."
     )
-    c.text(56, 645, 11, "F1", _INK,
-           "property below, as recorded in the CapiMax PropShare ownership ledger.")
-
-    # Fact table (label / value), each row with a faint separator.
-    rows = [
-        ("Property", property_title),
-        ("Location", location),
-        ("Units held", str(units)),
-        ("Ownership stake", ownership),
-        ("Recorded value", value),
-        ("Issuing SPV", spv),
-        ("Jurisdiction", jurisdiction),
-        ("Certificate reference", cert_ref),
-        ("Issued", issued),
-    ]
-    y = 604
-    for label, val in rows:
-        c.text(70, y, 10, "F2", _MUTED, label.upper())
-        c.text(240, y, 11, "F1", _INK, val)
-        c.line(70, y - 9, 525, y - 9, "0.9 0.9 0.88", 0.4)
-        y -= 29
-
-    # Seal (concentric circles + monogram).
-    c.circle(470, 250, 46, _GREEN, 2)
-    c.circle(470, 250, 38, _GOLD, 0.8)
-    c.text(451, 254, 15, "F2", _GREEN, "CMX")
-    c.text(440, 236, 7, "F1", _MUTED, "OWNERSHIP")
-
-    # Signature block.
-    c.line(70, 205, 250, 205, _INK, 0.8)
-    c.text(70, 212, 10, "F2", _INK, "CapiMax PropShare")
-    c.text(70, 192, 8.5, "F1", _MUTED, "Authorized on behalf of the platform")
-
-    # Footer — honest legal framing (no over-claim).
-    footer = [
-        "This certificate reflects fractional units recorded in the CapiMax PropShare ownership"
-        " ledger as of",
-        "the issue date. It is generated from live data and is not a transferable security or a"
-        " substitute for the",
-        "offering documents and SPV agreements governing this property.",
-    ]
-    fy = 128
-    for ln in footer:
-        c.text(56, fy, 8.5, "F1", _MUTED, ln)
+    fy = 120
+    for ln in _wrap(footer_text, "Times-Roman", 8.5, 415):
+        c.drawCentredString(_CX, fy, ln)
         fy -= 12
-    c.text(56, 62, 8, "F1", _MUTED, f"{cert_ref}   -   capimaxpropshare.com")
+    c.setFillColor(_GOLD)
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(_CX, 64, f"{cert_ref}   •   capimaxpropshare.com")
 
-    return _pdf_bytes(c.bytes())
-
-
-def _pdf_bytes(content: bytes) -> bytes:
-    """Assemble a valid single-page PDF with Helvetica (F1) + Helvetica-Bold (F2)."""
-    objs: list[bytes] = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-        b"/Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
-        b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
-    ]
-    out = b"%PDF-1.4\n"
-    offsets: list[int] = []
-    for i, body in enumerate(objs, start=1):
-        offsets.append(len(out))
-        out += str(i).encode() + b" 0 obj\n" + body + b"\nendobj\n"
-    xref_pos = len(out)
-    out += b"xref\n0 " + str(len(objs) + 1).encode() + b"\n0000000000 65535 f \n"
-    for off in offsets:
-        out += f"{off:010d} 00000 n \n".encode()
-    out += (
-        b"trailer\n<< /Size "
-        + str(len(objs) + 1).encode()
-        + b" /Root 1 0 R >>\nstartxref\n"
-        + str(xref_pos).encode()
-        + b"\n%%EOF"
-    )
-    return out
+    c.showPage()
+    c.save()
+    return buf.getvalue()
 
 
 async def _net_units(session: AsyncSession, user_id: uuid.UUID, property_id: uuid.UUID) -> int:

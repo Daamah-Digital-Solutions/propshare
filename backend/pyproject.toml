@@ -28,6 +28,8 @@ dependencies = [
     "wtforms>=3.1,<3.2",
     # Phase 13 — rate limiting (IP-keyed; in-memory store, Redis for multi-worker).
     "slowapi>=0.1.9",
+    # Certificates — branded PDF generation (pure-pip; no system deps).
+    "reportlab>=4.2",
 ]
 
 [project.optional-dependencies]
