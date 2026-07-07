@@ -111,17 +111,20 @@ async def my_portfolio(principal: PrincipalDep, session: SessionDep):
 
 
 @router.get("/reinvest-settings", response_model=ReinvestSettingsOut)
-async def reinvest_settings(principal: PrincipalDep, session: SessionDep):
+async def reinvest_settings(session: SessionDep):
     """The live, admin-configurable reinvest discount rate (so the UI shows the real,
-    server-honored discount — never a client literal)."""
+    server-honored discount — never a client literal). PUBLIC config: no auth required so the
+    rate always loads even before the SPA has minted its access token."""
     pct = await settings_service.get_reinvest_discount_pct(session)
     return ReinvestSettingsOut(discount_pct=str(pct))
 
 
 @router.get("/pronova-settings", response_model=PronovaSettingsOut)
-async def pronova_settings(principal: PrincipalDep, session: SessionDep):
+async def pronova_settings(session: SessionDep):
     """The live, admin-configurable Pronova pay discount (% off the total payable), so the UI
-    shows the real, server-honored rate — the server applies it to the charge at purchase."""
+    shows the real, server-honored rate — the server applies it to the charge at purchase.
+    PUBLIC config: no auth required (was 401-ing when the query fired before the token was
+    attached, so the discount silently failed to display even though the charge was discounted)."""
     pct = await settings_service.get_pronova_discount_pct(session)
     return PronovaSettingsOut(discount_pct=str(pct))
 
