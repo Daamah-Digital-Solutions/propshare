@@ -18,7 +18,9 @@ export const InvestmentCertificates = () => {
   });
   const [downloading, setDownloading] = useState<string | null>(null);
 
-  const rows = (holdings ?? []).filter((h: Holding) => h.units > 0);
+  // holdingsApi.mine() returns { items, total } — read .items (calling .filter on the
+  // object itself threw "holdings.filter is not a function" and blanked the whole tab).
+  const rows = (holdings?.items ?? []).filter((h: Holding) => h.units > 0);
 
   const download = async (h: Holding) => {
     setDownloading(h.property_id);
