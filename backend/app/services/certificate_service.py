@@ -148,14 +148,16 @@ def _seal(c: canvas.Canvas, cx: float, cy: float, r: float) -> None:
     """A gold-gradient wax-style seal with a rosette, monogram and ribbon tails."""
     c.saveState()
     # Ribbon tails first (so the disc overlaps them).
+    top, bot = cy - r + 6, cy - r - 24
     c.setFillColor(_GOLD)
-    for dx in (-13, 13):
+    for sgn in (-1, 1):
+        bx, tx = cx + sgn * 11, cx + sgn * 22
         p = c.beginPath()
-        p.moveTo(cx + dx - 9, cy - r + 8)
-        p.lineTo(cx + dx + 9, cy - r + 8)
-        p.lineTo(cx + dx + 13, cy - r - 34)
-        p.lineTo(cx + dx, cy - r - 23)
-        p.lineTo(cx + dx - 13, cy - r - 34)
+        p.moveTo(bx - 8, top)
+        p.lineTo(bx + 8, top)
+        p.lineTo(tx + 8, bot)
+        p.lineTo(tx, bot + 8)
+        p.lineTo(tx - 8, bot)
         p.close()
         c.drawPath(p, stroke=0, fill=1)
 
@@ -297,17 +299,17 @@ def render_certificate_pdf(
         c.setFont("Times-Roman", 12.5)
         c.drawString(x, y - 16, _clip(str(val), "Times-Roman", 12.5, pw / 2 - 44))
 
-    # Seal + signature.
-    _seal(c, 452, 214, 52)
+    # Seal (bottom-right) + signature (bottom-left) share a band well above the footer.
+    _seal(c, 458, 232, 48)
     c.setStrokeColor(_INK)
     c.setLineWidth(0.8)
-    c.line(92, 192, 250, 192)
+    c.line(92, 210, 250, 210)
     c.setFillColor(_GREEN_D)
     c.setFont("Times-Italic", 12)
-    c.drawString(98, 198, "CapiMax PropShare")
+    c.drawString(98, 216, "CapiMax PropShare")
     c.setFillColor(_MUTED)
     c.setFont("Helvetica", 8)
-    c.drawString(92, 178, "Authorized on behalf of the platform")
+    c.drawString(92, 196, "Authorized on behalf of the platform")
 
     # Footer — honest legal framing, word-wrapped so it never spills past the frame.
     c.setFillColor(_MUTED)
@@ -318,13 +320,15 @@ def render_certificate_pdf(
         "transferable security or a substitute for the offering documents and SPV agreements "
         "governing this property."
     )
-    fy = 120
-    for ln in _wrap(footer_text, "Times-Roman", 8.5, 415):
+    # NB: viewers render base-14 Times with a WIDER metric-compatible substitute (~1.4x) than
+    # stringWidth() assumes, so keep the wrap width well under the ~500pt safe area.
+    fy = 128
+    for ln in _wrap(footer_text, "Times-Roman", 8.5, 290):
         c.drawCentredString(_CX, fy, ln)
-        fy -= 12
+        fy -= 12.5
     c.setFillColor(_GOLD)
     c.setFont("Helvetica", 8)
-    c.drawCentredString(_CX, 64, f"{cert_ref}   •   capimaxpropshare.com")
+    c.drawCentredString(_CX, 74, f"{cert_ref}   •   capimaxpropshare.com")
 
     c.showPage()
     c.save()
