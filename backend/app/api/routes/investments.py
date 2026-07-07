@@ -155,6 +155,18 @@ async def my_returns(principal: PrincipalDep, session: SessionDep):
     return MyReturnsOut(**await distribution_service.my_returns(session, principal.user_id))
 
 
+@router.get("/certificates.zip")
+async def my_certificates_zip(principal: PrincipalDep, session: SessionDep):
+    """A single .zip of the caller's certificates — one PDF per property they currently hold
+    (live from the ownership ledger; 404 if they hold none)."""
+    filename, data = await certificate_service.build_all_zip(session, user_id=principal.user_id)
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/certificate/{property_id}")
 async def my_certificate(property_id: uuid.UUID, principal: PrincipalDep, session: SessionDep):
     """A PDF certificate of the caller's CURRENT net holding in a property (live from the

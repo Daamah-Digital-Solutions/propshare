@@ -169,7 +169,8 @@ async def test_certificate_pdf_from_real_holding(client, db):
     assert r.headers["content-type"] == "application/pdf"
     assert r.content.startswith(b"%PDF")
     assert b"Prop" in r.content  # real property title in the document
-    assert b"Units held: 12" in r.content  # real units from the ledger
+    assert b"12 fractional ownership" in r.content  # real units from the ledger (attestation)
+    assert b"CapiMax PropShare" in r.content  # branded header
 
 
 async def test_certificate_404_without_holding(client, db):
@@ -182,6 +183,30 @@ async def test_certificate_404_without_holding(client, db):
 async def test_certificate_requires_auth(client, db):
     pid = _seed_property(db, None)
     assert (await client.get(f"/api/v1/investments/certificate/{pid}")).status_code == 401
+
+
+async def test_certificates_zip_bundles_all_holdings(client, db):
+    import io
+    import zipfile
+
+    tok, uid = await _user(client, db, "cert-zip@x.com")
+    p1 = _seed_property(db, None, slug="zip-a")
+    p2 = _seed_property(db, None, slug="zip-b")
+    _ledger(db, uid, p1, 5)
+    _ledger(db, uid, p2, 7)
+    r = await client.get("/api/v1/investments/certificates.zip", headers=_h(tok))
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    names = zf.namelist()
+    assert len(names) == 2 and all(n.endswith(".pdf") for n in names)
+    assert zf.read(names[0]).startswith(b"%PDF")
+
+
+async def test_certificates_zip_404_without_holdings(client, db):
+    tok, _uid = await _user(client, db, "cert-zip-none@x.com")
+    r = await client.get("/api/v1/investments/certificates.zip", headers=_h(tok))
+    assert r.status_code == 404 and r.json()["error"]["code"] == "NO_HOLDING"
 
 
 # --- property image + avatar uploads (storage seam, no more 503) ------------ #
