@@ -43,13 +43,15 @@ _RED = HexColor("#B23A2E")  # overdue
 _BOTTOM = 108.0  # rows stop here; a further row spills to a new page
 _ROW_H = 16.0
 
-# Table column geometry (A4, inner frame ~56..539).
-_C_PAY = 64.0  # "Payment" label, left-aligned
-_C_DUE = 182.0  # due date, left-aligned
-_C_BASE = 352.0  # base amount, right-aligned
-_C_FEE = 418.0  # fee, right-aligned
-_C_TOTAL = 486.0  # total, right-aligned
-_C_STATUS = 535.0  # status, right-aligned
+# Table column geometry (A4, inner frame ~56..539). BASE/FEE/TOTAL are right-aligned money
+# columns; STATUS is right-aligned at the far edge with a wide gap so "SCHEDULED" never collides
+# with the total.
+_C_PAY = 62.0  # "Payment" label, left-aligned
+_C_DUE = 176.0  # due date, left-aligned
+_C_BASE = 320.0  # base amount, right-aligned
+_C_FEE = 382.0  # fee, right-aligned
+_C_TOTAL = 450.0  # total, right-aligned
+_C_STATUS = 536.0  # status, right-aligned
 
 
 def _page_frame(c: canvas.Canvas) -> None:
