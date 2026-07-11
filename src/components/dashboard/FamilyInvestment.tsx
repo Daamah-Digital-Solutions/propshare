@@ -28,6 +28,18 @@ import {
 } from "lucide-react";
 import { ApiError, familyApi, holdingsApi, type FamilyMember } from "@/lib/api";
 import { FamilyBeneficiaryGifting } from "./FamilyBeneficiaryGifting";
+import { FamilyMemberDetail } from "./FamilyMemberDetail";
+
+const EMPTY_MEMBER = {
+  name: "",
+  email: "",
+  relationship: "",
+  date_of_birth: "",
+  phone: "",
+  national_id: "",
+  nationality: "",
+  address: "",
+};
 
 const relationshipIcon = (relationship: string) => {
   if (/owner|self/i.test(relationship)) return <Crown className="h-4 w-4 text-amber-500" />;
@@ -45,7 +57,8 @@ export const FamilyInvestment = () => {
   const [transferOpen, setTransferOpen] = useState(false);
   const [allocOpen, setAllocOpen] = useState(false);
   const [reinvestOpen, setReinvestOpen] = useState(false);
-  const [newMember, setNewMember] = useState({ name: "", email: "", relationship: "" });
+  const [newMember, setNewMember] = useState(EMPTY_MEMBER);
+  const [detailMember, setDetailMember] = useState<FamilyMember | null>(null);
   const [transfer, setTransfer] = useState({ from: "", to: "", property: "", units: "" });
   const [alloc, setAlloc] = useState({ memberId: "", amount: "" });
   const [reinvest, setReinvest] = useState({ property: "", amount: "" });
@@ -80,10 +93,15 @@ export const FamilyInvestment = () => {
       name: newMember.name,
       email: newMember.email || undefined,
       relationship: newMember.relationship,
+      date_of_birth: newMember.date_of_birth || null,
+      phone: newMember.phone || null,
+      national_id: newMember.national_id || null,
+      nationality: newMember.nationality || null,
+      address: newMember.address || null,
     }),
     onSuccess: (m) => {
       toast({ title: "Family member added", description: m.is_verified ? "Linked to their verified account." : "Invited — allocations stay pending until they verify." });
-      setNewMember({ name: "", email: "", relationship: "" });
+      setNewMember(EMPTY_MEMBER);
       setAddOpen(false);
       invalidate();
     },
@@ -207,17 +225,27 @@ export const FamilyInvestment = () => {
             <h3 className="text-lg font-semibold">Family Members</h3>
             <Dialog open={addOpen} onOpenChange={setAddOpen}>
               <DialogTrigger asChild><Button size="sm"><UserPlus className="h-4 w-4 mr-2" />Add Member</Button></DialogTrigger>
-              <DialogContent>
+              <DialogContent className="max-h-[90vh] overflow-y-auto">
                 <DialogHeader><DialogTitle>Add Family Member</DialogTitle><DialogDescription>If their email matches a verified account they link immediately; otherwise they're invited and allocations stay pending.</DialogDescription></DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2"><Label>Full Name</Label><Input value={newMember.name} onChange={(e) => setNewMember({ ...newMember, name: e.target.value })} placeholder="Enter full name" /></div>
-                  <div className="space-y-2"><Label>Email Address</Label><Input type="email" value={newMember.email} onChange={(e) => setNewMember({ ...newMember, email: e.target.value })} placeholder="Enter email" /></div>
-                  <div className="space-y-2"><Label>Relationship</Label>
-                    <Select value={newMember.relationship} onValueChange={(v) => setNewMember({ ...newMember, relationship: v })}>
-                      <SelectTrigger><SelectValue placeholder="Select relationship" /></SelectTrigger>
-                      <SelectContent>{["Spouse", "Son", "Daughter", "Parent", "Sibling", "Other"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2"><Label>Relationship</Label>
+                      <Select value={newMember.relationship} onValueChange={(v) => setNewMember({ ...newMember, relationship: v })}>
+                        <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                        <SelectContent>{["Spouse", "Son", "Daughter", "Parent", "Sibling", "Other"].map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2"><Label>Date of Birth</Label><Input type="date" value={newMember.date_of_birth} onChange={(e) => setNewMember({ ...newMember, date_of_birth: e.target.value })} /></div>
                   </div>
+                  <div className="space-y-2"><Label>Email Address</Label><Input type="email" value={newMember.email} onChange={(e) => setNewMember({ ...newMember, email: e.target.value })} placeholder="Enter email (links to their account)" /></div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2"><Label>Phone</Label><Input value={newMember.phone} onChange={(e) => setNewMember({ ...newMember, phone: e.target.value })} placeholder="Phone number" /></div>
+                    <div className="space-y-2"><Label>Nationality</Label><Input value={newMember.nationality} onChange={(e) => setNewMember({ ...newMember, nationality: e.target.value })} placeholder="Nationality" /></div>
+                  </div>
+                  <div className="space-y-2"><Label>National ID / Passport</Label><Input value={newMember.national_id} onChange={(e) => setNewMember({ ...newMember, national_id: e.target.value })} placeholder="ID or passport number" /></div>
+                  <div className="space-y-2"><Label>Address</Label><Input value={newMember.address} onChange={(e) => setNewMember({ ...newMember, address: e.target.value })} placeholder="Residential address" /></div>
+                  <p className="text-xs text-muted-foreground">You can add the member's bank account(s) after creating them — open the member to manage details.</p>
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
@@ -229,7 +257,7 @@ export const FamilyInvestment = () => {
 
           <div className="grid gap-4">
             {members.map((m) => (
-              <Card key={m.member_id} className="hover:shadow-md transition-shadow">
+              <Card key={m.member_id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => setDetailMember(m)}>
                 <CardContent className="py-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-center gap-4">
@@ -413,6 +441,13 @@ export const FamilyInvestment = () => {
           <DialogFooter><Button variant="outline" onClick={() => setReinvestOpen(false)}>Cancel</Button><Button onClick={() => doReinvest.mutate()} disabled={!reinvest.property || !reinvest.amount || doReinvest.isPending}>Reinvest</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <FamilyMemberDetail
+        member={detailMember}
+        open={!!detailMember}
+        onOpenChange={(o) => { if (!o) setDetailMember(null); }}
+        onChanged={invalidate}
+      />
     </div>
   );
 };

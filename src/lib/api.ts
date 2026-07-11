@@ -1302,6 +1302,16 @@ export const liquidityApi = {
 };
 
 // --- Family groups & gifting (Phase 10) ------------------------------------ //
+export interface MemberBankAccount {
+  id: string;
+  label: string | null;
+  bank_name: string;
+  account_holder: string | null;
+  iban: string | null;
+  account_number: string | null;
+  swift_bic: string | null;
+}
+
 export interface FamilyMember {
   member_id: string;
   name: string;
@@ -1312,6 +1322,24 @@ export interface FamilyMember {
   pending_units: number;
   allocated_returns: string;
   real_units: number;
+  date_of_birth: string | null;
+  phone: string | null;
+  national_id: string | null;
+  nationality: string | null;
+  address: string | null;
+  linked_date: string | null;
+  bank_accounts: MemberBankAccount[];
+}
+
+export interface MemberInput {
+  name: string;
+  email?: string;
+  relationship: string;
+  date_of_birth?: string | null;
+  phone?: string | null;
+  national_id?: string | null;
+  nationality?: string | null;
+  address?: string | null;
 }
 
 export interface FamilyGroup {
@@ -1344,8 +1372,39 @@ export const familyApi = {
   createGroup(name: string): Promise<FamilyGroup> {
     return apiRequest<FamilyGroup>("/api/v1/family/groups", { method: "POST", body: { name } });
   },
-  addMember(input: { name: string; email?: string; relationship: string }): Promise<FamilyMember> {
+  addMember(input: MemberInput): Promise<FamilyMember> {
     return apiRequest<FamilyMember>("/api/v1/family/members", { method: "POST", body: input });
+  },
+  /** Edit a member's personal data (owner-scoped). Only provided fields change. */
+  updateMember(memberId: string, input: Partial<MemberInput>): Promise<FamilyMember> {
+    return apiRequest<FamilyMember>(`/api/v1/family/members/${memberId}`, {
+      method: "PATCH",
+      body: input,
+    });
+  },
+  listMemberBankAccounts(memberId: string): Promise<MemberBankAccount[]> {
+    return apiRequest<MemberBankAccount[]>(`/api/v1/family/members/${memberId}/bank-accounts`);
+  },
+  addMemberBankAccount(
+    memberId: string,
+    input: {
+      bank_name: string;
+      account_holder?: string;
+      iban?: string;
+      account_number?: string;
+      swift_bic?: string;
+      label?: string;
+    },
+  ): Promise<MemberBankAccount> {
+    return apiRequest<MemberBankAccount>(`/api/v1/family/members/${memberId}/bank-accounts`, {
+      method: "POST",
+      body: input,
+    });
+  },
+  deleteMemberBankAccount(memberId: string, accountId: string): Promise<void> {
+    return apiRequest<void>(`/api/v1/family/members/${memberId}/bank-accounts/${accountId}`, {
+      method: "DELETE",
+    });
   },
   /** Allocate/transfer units member→member (real move when both are users; else pending). */
   transfer(
