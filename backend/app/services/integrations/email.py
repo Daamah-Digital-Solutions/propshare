@@ -31,12 +31,13 @@ logger = logging.getLogger("capimax.email")
 # strip those). Every email (verification, password reset, and all notification
 # emails) is wrapped in this shell so the whole comms surface looks cohesive.
 # --------------------------------------------------------------------------- #
-_BRAND = "#198653"  # primary green (matches the app --primary)
+_BRAND = "#198653"  # primary green (matches the app --primary + the logo mark)
+_BRAND_DK = "#0f5b39"  # deeper green (button depth)
 _GOLD = "#f59f0a"  # accent gold (--accent)
-_INK = "#222a26"  # body text (--foreground)
+_INK = "#17211d"  # body/heading text — deep near-black, echoes the logo wordmark
 _MUTED = "#8a8f8b"  # muted / footer text
-_BORDER = "#eae8e3"
-_BG = "#f4f5f3"  # page background (soft cream)
+_BORDER = "#e8e6e1"
+_BG = "#eef1ee"  # page background (soft) so the white card lifts off it
 _FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 _URL_RE = re.compile(r"(https?://[^\s<>\"]+)")
 
@@ -78,15 +79,18 @@ def render_email_html(
     site = get_settings().app_base_url.rstrip("/")
     year = dt.datetime.now(dt.UTC).year
     esc_title = htmllib.escape(title)
+    logo = f"{site}/capimax-logo-email.png"  # hosted PNG (email clients can't render SVG)
 
     cta_html = ""
     if cta_label and cta_url:
         cta_html = f"""
-              <table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 4px;">
-                <tr><td align="center" style="border-radius:10px;background:{_BRAND};">
-                  <a href="{cta_url}" style="display:inline-block;padding:14px 30px;color:#ffffff;
-                     text-decoration:none;font-weight:600;font-size:15px;font-family:{_FONT};
-                     border-radius:10px;">{htmllib.escape(cta_label)}</a>
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0"
+                     style="margin:26px 0 4px;">
+                <tr><td align="center" style="border-radius:10px;background:{_BRAND};
+                     border-bottom:2px solid {_BRAND_DK};">
+                  <a href="{cta_url}" style="display:inline-block;padding:15px 34px;color:#ffffff;
+                     text-decoration:none;font-weight:600;font-size:15px;letter-spacing:.2px;
+                     font-family:{_FONT};border-radius:10px;">{htmllib.escape(cta_label)}</a>
                 </td></tr>
               </table>
               <p style="margin:16px 0 0;color:{_MUTED};font-size:13px;line-height:1.6;">
@@ -98,7 +102,7 @@ def render_email_html(
     footnote_html = ""
     if footnote:
         footnote_html = (
-            f'<p style="margin:24px 0 0;padding-top:20px;border-top:1px solid {_BORDER};'
+            f'<p style="margin:26px 0 0;padding-top:20px;border-top:1px solid {_BORDER};'
             f'color:{_MUTED};font-size:13px;line-height:1.6;">'
             f"{_linkify(htmllib.escape(footnote))}</p>"
         )
@@ -112,44 +116,52 @@ def render_email_html(
 
     return f"""\
 <div style="background:{_BG};margin:0;padding:0;">{preheader_html}
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-         style="background:{_BG};padding:28px 12px;font-family:{_FONT};">
+  <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0"
+         style="background:{_BG};padding:32px 12px;font-family:{_FONT};">
     <tr><td align="center">
-      <table role="presentation" width="600" cellpadding="0" cellspacing="0"
+      <table role="presentation" width="600" border="0" cellpadding="0" cellspacing="0"
              style="max-width:600px;width:100%;">
-        <tr><td style="padding:4px 6px 20px;">
-          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-            <td style="vertical-align:middle;padding-right:12px;">
-              <div style="width:42px;height:42px;background:{_BRAND};border-radius:11px;
-                   color:#ffffff;font-size:20px;font-weight:700;text-align:center;
-                   line-height:42px;font-family:{_FONT};">C</div>
-            </td>
-            <td style="vertical-align:middle;">
-              <span style="font-size:18px;font-weight:700;color:{_INK};">Capimax</span>
-              <span style="font-size:18px;font-weight:700;color:{_BRAND};"> PropShare</span>
-            </td>
-          </tr></table>
+        <!-- Card -->
+        <tr><td style="background:#ffffff;border:1px solid {_BORDER};border-radius:16px;
+               overflow:hidden;box-shadow:0 6px 22px rgba(20,40,30,0.06);">
+          <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0">
+            <!-- Brand strip -->
+            <tr><td style="height:5px;line-height:5px;font-size:0;
+                   background:{_BRAND};">&nbsp;</td></tr>
+            <!-- Logo header -->
+            <tr><td align="center" style="background:#ffffff;padding:32px 40px 24px;
+                   border-bottom:1px solid {_BORDER};">
+              <img src="{logo}" width="220" height="62" alt="CapiMax PropShare"
+                   style="display:block;width:220px;max-width:62%;height:auto;border:0;
+                   outline:none;text-decoration:none;margin:0 auto;">
+            </td></tr>
+            <!-- Body -->
+            <tr><td style="background:#ffffff;padding:34px 40px 40px;">
+              <h1 style="margin:0 0 12px;color:{_INK};font-size:22px;font-weight:700;
+                  line-height:1.3;">{esc_title}</h1>
+              <div style="height:3px;width:46px;line-height:3px;font-size:0;background:{_GOLD};
+                   border-radius:2px;margin:0 0 22px;">&nbsp;</div>
+              {_paragraphs_html(paragraphs)}
+              {cta_html}
+              {footnote_html}
+            </td></tr>
+          </table>
         </td></tr>
-        <tr><td style="background:#ffffff;border:1px solid {_BORDER};border-radius:14px;
-               border-top:3px solid {_GOLD};padding:36px 40px;">
-          <h1 style="margin:0 0 20px;color:{_INK};font-size:22px;font-weight:700;
-              line-height:1.3;">{esc_title}</h1>
-          {_paragraphs_html(paragraphs)}
-          {cta_html}
-          {footnote_html}
-        </td></tr>
-        <tr><td style="padding:24px 20px 8px;text-align:center;">
-          <p style="margin:0 0 8px;color:{_MUTED};font-size:12px;line-height:1.6;">
+        <!-- Footer -->
+        <tr><td style="padding:24px 20px 6px;text-align:center;">
+          <p style="margin:0 0 10px;color:{_MUTED};font-size:12px;line-height:1.7;">
             <a href="{site}"
                style="color:{_MUTED};text-decoration:underline;">Visit CapiMax PropShare</a>
             &nbsp;&middot;&nbsp;
             <a href="{site}/support" style="color:{_MUTED};text-decoration:underline;">Support</a>
             &nbsp;&middot;&nbsp;
             <a href="{site}/privacy" style="color:{_MUTED};text-decoration:underline;">Privacy</a>
+            &nbsp;&middot;&nbsp;
+            <a href="{site}/terms" style="color:{_MUTED};text-decoration:underline;">Terms</a>
           </p>
-          <p style="margin:0;color:{_MUTED};font-size:12px;line-height:1.6;">
+          <p style="margin:0;color:{_MUTED};font-size:12px;line-height:1.7;">
             This is an automated message from CapiMax PropShare — please do not reply.<br>
-            &copy; {year} CapiMax PropShare. Fractional real-estate ownership.
+            &copy; {year} CapiMax PropShare · Fractional real-estate ownership across the GCC.
           </p>
         </td></tr>
       </table>
