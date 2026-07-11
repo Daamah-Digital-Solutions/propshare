@@ -1,9 +1,10 @@
 /**
- * Group 6: the dashboard installment schedule is wired to the real API. The prior "coming
- * soon" placeholder is gone — it renders real plans + payment statuses from installmentsApi
- * (no fabricated schedule), and an honest empty state when there are none.
+ * Group 6 / Task 6: the dashboard installment schedule is wired to the real API and presented
+ * PER PROPERTY. It renders real plans + payment statuses from installmentsApi (no fabricated
+ * schedule), shows which property each plan is for, reveals the full payment table behind a
+ * "View schedule" toggle, and shows an honest empty state when there are none.
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { InstallmentSchedule } from "./InstallmentSchedule";
@@ -19,6 +20,7 @@ vi.mock("@/lib/api", async () => {
       list: (...a: unknown[]) => listMock(...a),
       createPlan: vi.fn(),
       pay: (...a: unknown[]) => payMock(...a),
+      downloadSchedule: vi.fn(),
     },
   };
 });
@@ -41,11 +43,17 @@ describe("InstallmentSchedule (real API)", () => {
     await waitFor(() => expect(listMock).toHaveBeenCalled());
   });
 
-  it("renders a real plan with its payment schedule", async () => {
+  it("renders a real plan per-property, revealing the schedule on View", async () => {
     listMock.mockResolvedValue([
       {
         id: "pl1",
         property_id: "p1",
+        property_title: "Downtown Tower",
+        property_slug: "downtown-tower",
+        property_location: "Dubai, UAE",
+        property_city: "Dubai",
+        property_image: null,
+        property_spv: "Downtown Tower SPV",
         units_total: 12,
         unit_price: "100.00",
         down_payment_pct: 25,
@@ -84,9 +92,17 @@ describe("InstallmentSchedule (real API)", () => {
       },
     ]);
     wrap(<InstallmentSchedule />);
-    // real plan summary + a payable installment (Pay now) render from the API
-    expect(await screen.findByText(/Vesting \(3\/12 units\)/)).toBeInTheDocument();
-    expect(screen.getByText("Down payment")).toBeInTheDocument();
+
+    // The property under installment is shown, with a live summary (Task 6).
+    expect(await screen.findByText("Downtown Tower")).toBeInTheDocument();
+    expect(screen.getByText("Dubai, UAE")).toBeInTheDocument();
+    expect(screen.getByText("Contract value")).toBeInTheDocument();
+
+    // The full schedule is behind a "View schedule" toggle — hidden until requested.
+    expect(screen.queryByText("Down payment")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /View schedule/i }));
+
+    expect(await screen.findByText("Down payment")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Pay now/i })).toBeInTheDocument();
     await waitFor(() => expect(listMock).toHaveBeenCalled());
   });

@@ -400,6 +400,31 @@ async def test_run_due_requires_admin_or_cron(client, db, monkeypatch):
     ).status_code == 200
 
 
+# --- Task 6: plan carries its property + a branded schedule PDF downloads ---- #
+async def test_plan_carries_property_and_schedule_pdf(client, db):
+    tok, uid = await _user(client, db, "in-pdf@x.com")
+    _kyc_verify(db, uid)
+    _set_balance(db, uid, 100000)
+    pid = _seed_property(db)
+    plan = (await _create(client, tok, pid, amount=1200, duration=12)).json()
+    # the plan says WHICH property it's for (shown per-property in the UI)
+    assert plan["property_title"] == "Tower"
+    assert plan["property_location"] == "Dubai"
+    # a branded schedule PDF downloads — real bytes, real values, official filename
+    r = await client.get(f"/api/v1/installments/{plan['id']}/schedule.pdf", headers=_h(tok))
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/pdf"
+    assert "installment-schedule" in r.headers.get("content-disposition", "")
+    assert r.content[:5] == b"%PDF-"
+    assert b"Tower" in r.content  # the property appears literally inside the document
+    # owner-scoped: a different user cannot fetch someone else's schedule
+    b_tok, _b = await _user(client, db, "in-pdf-b@x.com")
+    forbidden = await client.get(
+        f"/api/v1/installments/{plan['id']}/schedule.pdf", headers=_h(b_tok)
+    )
+    assert forbidden.status_code == 404
+
+
 # --- the installment fee reaches the property detail (server-driven) -------- #
 async def test_property_detail_exposes_installment_fee(client, db):
     _tok, _uid = await _user(client, db, "in-detail@x.com")

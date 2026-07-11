@@ -30,6 +30,13 @@ class InstallmentPaymentOut(BaseModel):
 class InstallmentPlanOut(BaseModel):
     id: uuid.UUID
     property_id: uuid.UUID
+    # Which property this plan is for — so the schedule can be shown per-property (Task 6).
+    property_title: str
+    property_slug: str | None = None
+    property_location: str | None = None
+    property_city: str | None = None
+    property_image: str | None = None
+    property_spv: str | None = None
     units_total: int
     unit_price: str
     down_payment_pct: int

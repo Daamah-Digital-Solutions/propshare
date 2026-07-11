@@ -37,8 +37,14 @@ from app.core.audit import write_audit
 from app.core.errors import AppError
 from app.models import InstallmentPayment, InstallmentPlan, Property
 from app.models.base import PropertyStatus, TransactionType
+from app.models.identity import User
 from app.models.investments import OwnershipLedger
-from app.services import notification_service, settings_service, wallet_service
+from app.services import (
+    installment_pdf,
+    notification_service,
+    settings_service,
+    wallet_service,
+)
 from app.services.distribution_service import hamilton
 from app.services.investment_service import _recompute_progress
 
@@ -92,10 +98,22 @@ def serialize_payment(p: InstallmentPayment) -> dict:
     }
 
 
-def serialize_plan(plan: InstallmentPlan, payments: list[InstallmentPayment]) -> dict:
+def serialize_plan(
+    plan: InstallmentPlan,
+    payments: list[InstallmentPayment],
+    prop: Property | None = None,
+) -> dict:
+    images = list(prop.images) if prop and prop.images else []
     return {
         "id": plan.id,
         "property_id": plan.property_id,
+        # Which property this plan is for (Task 6 — the schedule is shown per-property).
+        "property_title": (prop.title if prop else None) or "Property",
+        "property_slug": prop.slug if prop else None,
+        "property_location": prop.location if prop else None,
+        "property_city": prop.city if prop else None,
+        "property_image": images[0] if images else None,
+        "property_spv": (prop.spv_name if prop else None),
         "units_total": plan.units_total,
         "unit_price": str(plan.unit_price),
         "down_payment_pct": plan.down_payment_pct,
@@ -118,6 +136,14 @@ async def _payments_for(session: AsyncSession, plan_id: uuid.UUID) -> list[Insta
     return list(res.scalars().all())
 
 
+async def _plan_dict(session: AsyncSession, plan: InstallmentPlan) -> dict:
+    """Serialize a plan with its payments AND its property (title/location/image/SPV), so the
+    client can present the schedule under the property it belongs to."""
+    payments = await _payments_for(session, plan.id)
+    prop = await session.get(Property, plan.property_id)
+    return serialize_plan(plan, payments, prop)
+
+
 # --- create a plan (reserve allocation + build schedule + pay down payment) --- #
 async def create_plan(
     session: AsyncSession,
@@ -135,7 +161,7 @@ async def create_plan(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return serialize_plan(existing, await _payments_for(session, existing.id))
+        return await _plan_dict(session, existing)
 
     if duration_months not in _DOWN_PCT:
         raise AppError(
@@ -264,7 +290,7 @@ async def create_plan(
         session, plan=plan, prop=prop, payment=down_payment, idempotency_key=f"{idempotency_key}:0"
     )
 
-    return serialize_plan(plan, await _payments_for(session, plan.id))
+    return await _plan_dict(session, plan)
 
 
 # --- charge one payment (down payment or installment) ----------------------- #
@@ -398,7 +424,7 @@ async def pay_installment(
     if plan.investor_id != investor_id:
         raise AppError("NOT_FOUND", "Installment not found", status_code=404)
     if payment.status == "paid":
-        return serialize_plan(plan, await _payments_for(session, plan.id))
+        return await _plan_dict(session, plan)
     if plan.status != "active":
         raise AppError("INVALID_STATE", "This plan is not active.", status_code=409)
 
@@ -410,7 +436,7 @@ async def pay_installment(
     await _charge_payment(
         session, plan=plan, prop=prop, payment=payment, idempotency_key=idempotency_key
     )
-    return serialize_plan(plan, await _payments_for(session, plan.id))
+    return await _plan_dict(session, plan)
 
 
 # --- reads ------------------------------------------------------------------ #
@@ -428,8 +454,89 @@ async def list_plans(session: AsyncSession, investor_id: uuid.UUID) -> list[dict
     )
     out = []
     for plan in plans:
-        out.append(serialize_plan(plan, await _payments_for(session, plan.id)))
+        out.append(await _plan_dict(session, plan))
     return out
+
+
+# --- branded schedule PDF (Task 6) ------------------------------------------ #
+def _payment_label(p: InstallmentPayment) -> str:
+    if p.kind == "downpayment":
+        return "Down payment"
+    if p.kind == "final":
+        return f"Final (Month {p.seq})"
+    return f"Month {p.seq}"
+
+
+async def build_schedule_pdf(
+    session: AsyncSession, *, investor_id: uuid.UUID, plan_id: uuid.UUID
+) -> tuple[str, bytes]:
+    """Return (filename, pdf_bytes) — the caller's own installment plan as a branded PDF
+    (official design + logo). All figures are server-authoritative, summed from the real
+    schedule rows; 404 if the plan isn't the caller's."""
+    plan = await session.get(InstallmentPlan, plan_id)
+    if plan is None or plan.investor_id != investor_id:
+        raise AppError("NOT_FOUND", "Installment plan not found.", status_code=404)
+    payments = await _payments_for(session, plan.id)
+    prop = await session.get(Property, plan.property_id)
+    if prop is None:
+        raise AppError("PROPERTY_NOT_FOUND", "Property not found.", status_code=404)
+    user = await session.get(User, investor_id)
+    holder = (user.full_name if user and user.full_name else (user.email if user else "")) or "-"
+
+    contract = sum((p.base_amount for p in payments), decimal.Decimal("0"))
+    fees = sum((p.fee_amount for p in payments), decimal.Decimal("0"))
+    grand = contract + fees
+    paid = sum(
+        (p.total_amount for p in payments if p.status == "paid"), decimal.Decimal("0")
+    )
+    remaining = grand - paid
+    unpaid = sorted(
+        (p for p in payments if p.status != "paid"), key=lambda x: x.due_date
+    )
+    if unpaid:
+        next_due = unpaid[0].due_date.strftime("%b %d, %Y")
+    else:
+        next_due = "Completed" if plan.status == "completed" else "-"
+
+    def money(d: decimal.Decimal) -> str:
+        return f"${d:,.2f}"
+
+    rows = [
+        {
+            "label": _payment_label(p),
+            "due": p.due_date.strftime("%b %d, %Y"),
+            "base": money(p.base_amount),
+            "fee": money(p.fee_amount),
+            "total": money(p.total_amount),
+            "status": p.status.capitalize(),
+        }
+        for p in sorted(payments, key=lambda x: x.seq)
+    ]
+
+    pdf = installment_pdf.render_schedule_pdf(
+        holder=holder,
+        property_title=prop.title,
+        location=prop.location or "-",
+        spv=prop.spv_name or f"{prop.title} SPV",
+        status=plan.status,
+        units_total=plan.units_total,
+        vested_units=plan.vested_units,
+        unit_price=money(plan.unit_price),
+        down_payment_pct=plan.down_payment_pct,
+        duration_months=plan.duration_months,
+        fee_rate=str(plan.fee_rate),
+        contract_value=money(contract),
+        total_fees=money(fees),
+        grand_total=money(grand),
+        total_paid=money(paid),
+        remaining_balance=money(remaining),
+        next_due=next_due,
+        plan_ref=("CMX-INS-" + str(plan.id)[:8]).upper(),
+        issued=_utcnow().strftime("%b %d, %Y"),
+        rows=rows,
+    )
+    slug = prop.slug or str(prop.id)
+    return f"installment-schedule-{slug}.pdf", pdf
 
 
 # --- due-payment cron (admin OR X-Cron-Secret) ------------------------------ #

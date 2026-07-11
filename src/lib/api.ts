@@ -876,6 +876,13 @@ export interface InstallmentPayment {
 export interface InstallmentPlan {
   id: string;
   property_id: string;
+  // Which property this plan is for (Task 6 — schedule shown per-property).
+  property_title: string;
+  property_slug: string | null;
+  property_location: string | null;
+  property_city: string | null;
+  property_image: string | null;
+  property_spv: string | null;
   units_total: number;
   unit_price: string;
   down_payment_pct: number;
@@ -912,6 +919,10 @@ export const installmentsApi = {
       method: "POST",
       headers: { "Idempotency-Key": crypto.randomUUID() },
     });
+  },
+  /** Download this plan as a branded PDF (official design + logo, full schedule + details). */
+  downloadSchedule(planId: string): Promise<Blob> {
+    return fetchBlob(`/api/v1/installments/${planId}/schedule.pdf`);
   },
 };
 

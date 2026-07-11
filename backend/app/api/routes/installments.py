@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 
 from app.api.deps import KycVerifiedDep, PrincipalDep, SessionDep
 from app.core.errors import AppError
@@ -60,4 +60,18 @@ async def pay_installment(
         investor_id=principal.user_id,
         payment_id=payment_id,
         idempotency_key=_idem(request),
+    )
+
+
+@router.get("/{plan_id}/schedule.pdf")
+async def schedule_pdf(plan_id: uuid.UUID, session: SessionDep, principal: PrincipalDep):
+    """Download the caller's installment plan as a branded PDF (official design + logo, full
+    schedule + details). Generated on demand from live data; 404 if not the caller's plan."""
+    filename, pdf = await installment_service.build_schedule_pdf(
+        session, investor_id=principal.user_id, plan_id=plan_id
+    )
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
     )
