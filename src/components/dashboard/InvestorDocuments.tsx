@@ -21,7 +21,7 @@ import {
   holdingsApi,
   type PropertyDocument,
 } from "@/lib/api";
-import { docCategoryLabel, docCategoryOrder } from "@/lib/documentCategories";
+import { DOC_CATEGORIES } from "@/lib/documentCategories";
 
 function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -48,13 +48,25 @@ interface PropertyDocs {
   docs: PropertyDocument[];
 }
 
-const groupByCategory = (docs: PropertyDocument[]): [string, PropertyDocument[]][] => {
-  const byLabel = new Map<string, PropertyDocument[]>();
+/** Every standard category (in canonical order), each with its documents — EMPTY categories
+ *  included, so the full structure is always visible even before anything is uploaded. A doc
+ *  whose stored type isn't a known category falls into "Other". */
+const groupAllCategories = (
+  docs: PropertyDocument[],
+): { value: string; label: string; docs: PropertyDocument[] }[] => {
+  const known = new Set(DOC_CATEGORIES.map((c) => c.value));
+  const byValue = new Map<string, PropertyDocument[]>();
   for (const d of docs) {
-    const label = docCategoryLabel(d.type);
-    (byLabel.get(label) ?? byLabel.set(label, []).get(label)!).push(d);
+    const v = (d.type ?? "").toLowerCase();
+    const key = known.has(v) ? v : "other";
+    if (!byValue.has(key)) byValue.set(key, []);
+    byValue.get(key)!.push(d);
   }
-  return [...byLabel.entries()].sort((a, b) => docCategoryOrder(a[0]) - docCategoryOrder(b[0]));
+  return DOC_CATEGORIES.map((c) => ({
+    value: c.value,
+    label: c.label,
+    docs: byValue.get(c.value) ?? [],
+  }));
 };
 
 export const InvestorDocuments = () => {
@@ -152,7 +164,7 @@ export const InvestorDocuments = () => {
       ) : (
         <div className="space-y-5">
           {(docsByProperty ?? []).map((p) => {
-            const groups = groupByCategory(p.docs);
+            const groups = groupAllCategories(p.docs);
             return (
               <Card key={p.propertyId} className="bg-card border-border">
                 <CardHeader className="border-b border-border/60">
@@ -188,19 +200,28 @@ export const InvestorDocuments = () => {
                   </div>
                 </CardHeader>
                 <CardContent className="pt-4">
-                  {p.docs.length === 0 ? (
-                    <p className="text-sm text-muted-foreground py-4 text-center">
-                      No documents have been published for this property yet.
-                    </p>
-                  ) : (
-                    <div className="space-y-5">
-                      {groups.map(([label, docs]) => (
-                        <div key={label}>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
-                            <ShieldCheck className="h-3.5 w-3.5 text-primary" /> {label}
+                  <div className="space-y-4">
+                    {groups.map((cat) => (
+                      <div key={cat.value}>
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <ShieldCheck className="h-3.5 w-3.5 text-primary flex-shrink-0" />
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            {cat.label}
                           </p>
+                          <Badge
+                            variant={cat.docs.length ? "secondary" : "outline"}
+                            className="text-[10px] px-1.5 py-0 h-4 leading-none"
+                          >
+                            {cat.docs.length}
+                          </Badge>
+                        </div>
+                        {cat.docs.length === 0 ? (
+                          <p className="text-xs text-muted-foreground/60 pl-5">
+                            No documents in this category yet.
+                          </p>
+                        ) : (
                           <div className="space-y-2">
-                            {docs.map((d) => (
+                            {cat.docs.map((d) => (
                               <div
                                 key={d.id}
                                 className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"
@@ -227,10 +248,10 @@ export const InvestorDocuments = () => {
                               </div>
                             ))}
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </CardContent>
               </Card>
             );
