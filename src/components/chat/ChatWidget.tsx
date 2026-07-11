@@ -254,7 +254,9 @@ export function ChatWidget() {
           type="button"
           aria-label="Open CapiMax assistant"
           onClick={() => setOpen(true)}
-          className="fixed bottom-5 right-5 z-[60] flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105 active:scale-95"
+          // Sits above the mobile bottom tab bar (h-16 + safe area, shown below `lg`); drops to
+          // the normal corner offset at `lg`+ where that nav is hidden.
+          className="fixed bottom-[calc(5rem_+_env(safe-area-inset-bottom))] right-4 z-[60] flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform hover:scale-105 active:scale-95 lg:bottom-5 lg:right-5"
         >
           <MessageCircle className="h-6 w-6" />
           <span className="absolute -right-0.5 -top-0.5 flex h-3 w-3">
@@ -269,8 +271,9 @@ export function ChatWidget() {
         <div
           role="dialog"
           aria-label="CapiMax assistant"
-          className="fixed bottom-4 right-4 z-[60] flex w-[calc(100vw-2rem)] max-w-[380px] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl"
-          style={{ height: "min(70vh, 560px)" }}
+          // Panel clears the mobile tab bar too (below `lg`), and tucks into the corner at `lg`+.
+          className="fixed bottom-[calc(5rem_+_env(safe-area-inset-bottom))] right-4 z-[60] flex w-[calc(100vw-2rem)] max-w-[380px] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl lg:bottom-4"
+          style={{ height: "min(65vh, 560px)" }}
         >
           {/* Header */}
           <div className="flex items-center gap-3 bg-primary px-4 py-3 text-primary-foreground">
