@@ -54,10 +54,11 @@ const PropertyCard = ({ property, viewMode }: { property: Property; viewMode: "g
       : property.ownershipModel === "shared-development"
       ? "shared"
       : null;
+  // Every property card opens the full property detail page (the original 5-tab design:
+  // Overview / Financials / SPV Structure / Documents / Timeline). Demo/Sample properties used
+  // to detour to a simpler page — they now use the same page as real listings (Task 8).
   const detailsHref = advancedSlug
     ? `/advanced-property/${advancedSlug}`
-    : property.isSample && property.slug
-    ? `/property-sample/${property.slug}`
     : `/property/${property.id}`;
 
   const getTypeBadge = () => {
