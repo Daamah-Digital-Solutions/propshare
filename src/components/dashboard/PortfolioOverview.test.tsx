@@ -62,10 +62,11 @@ describe("PortfolioOverview (live)", () => {
 });
 
 describe("Phase 13 honest-disabled surfaces", () => {
-  it("ProShareCards is not available yet (D9)", () => {
+  it("ProShareCards is a clearly-labelled design preview (issuance disabled, not live)", () => {
     render(<ProShareCards />);
-    expect(screen.getByText(/not yet available/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Request Card/i })).toBeDisabled();
+    // Honestly framed as a preview with sample data — not misrepresented as a live feature.
+    expect(screen.getByText(/Design preview/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Issue New Card/i })).toBeDisabled();
   });
 
   it("InstallmentSchedule is REAL now — honest empty state when there are no plans", async () => {
