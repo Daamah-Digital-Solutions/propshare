@@ -1,18 +1,38 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Building2,
   Download,
+  FileArchive,
   FileText,
   FolderOpen,
   Loader2,
   MapPin,
   ShieldCheck,
 } from "lucide-react";
-import { apiUrl, documentsApi, holdingsApi, type PropertyDocument } from "@/lib/api";
+import {
+  apiUrl,
+  certificateApi,
+  documentsApi,
+  holdingsApi,
+  type PropertyDocument,
+} from "@/lib/api";
 import { docCategoryLabel, docCategoryOrder } from "@/lib/documentCategories";
+
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 /**
  * Documents Center (Task 4) — every document of the properties the investor holds, organised
@@ -72,6 +92,18 @@ export const InvestorDocuments = () => {
   });
 
   const totalDocs = (docsByProperty ?? []).reduce((s, p) => s + p.docs.length, 0);
+
+  const [busy, setBusy] = useState<string | null>(null);
+  const downloadBundle = async (propertyId: string, title: string) => {
+    setBusy(propertyId);
+    try {
+      saveBlob(await certificateApi.downloadPropertyBundle(propertyId), `${title}-documents.zip`);
+    } catch {
+      toast.error("Could not build the document archive — please try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -134,9 +166,25 @@ export const InvestorDocuments = () => {
                         <MapPin className="h-3 w-3" /> {p.location ?? "—"}
                       </p>
                     </div>
-                    <Badge variant="outline" className="ml-auto">
-                      {p.docs.length} file{p.docs.length === 1 ? "" : "s"}
-                    </Badge>
+                    <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                      <Badge variant="outline">
+                        {p.docs.length} file{p.docs.length === 1 ? "" : "s"}
+                      </Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={busy === p.propertyId}
+                        onClick={() => downloadBundle(p.propertyId, p.title)}
+                      >
+                        {busy === p.propertyId ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <FileArchive className="h-4 w-4" />
+                        )}
+                        <span className="hidden sm:inline">Download all</span>
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="pt-4">

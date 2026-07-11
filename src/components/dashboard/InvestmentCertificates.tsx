@@ -124,6 +124,19 @@ export const InvestmentCertificates = () => {
       setBusy(null);
     }
   };
+  const bundle = async (h: Holding) => {
+    setBusy("bundle-" + h.property_id);
+    try {
+      saveBlob(
+        await certificateApi.downloadPropertyBundle(h.property_id),
+        `${h.title ?? h.property_id}-documents.zip`,
+      );
+    } catch {
+      toast.error("Could not build the document archive. Please try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const summary = [
     { label: "Investment Certificates", value: rows.length },
@@ -268,6 +281,20 @@ export const InvestmentCertificates = () => {
                             <Download className="h-4 w-4 mr-1" />
                           )}
                           Download
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => bundle(h)}
+                          disabled={busy === "bundle-" + h.property_id}
+                          title="Download the certificate + all property documents (.zip)"
+                        >
+                          {busy === "bundle-" + h.property_id ? (
+                            <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                          ) : (
+                            <FileArchive className="h-4 w-4 mr-1" />
+                          )}
+                          All docs
                         </Button>
                       </div>
                     </div>

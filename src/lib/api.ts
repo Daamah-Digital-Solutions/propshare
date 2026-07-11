@@ -729,6 +729,11 @@ export const certificateApi = {
   downloadAllZip(): Promise<Blob> {
     return fetchBlob(`/api/v1/investments/certificates.zip`);
   },
+  /** One .zip of EVERYTHING for a single property: the caller's certificate + all the
+   *  property's documents (SPV, agreements, reports, insurance, …). */
+  downloadPropertyBundle(propertyId: string): Promise<Blob> {
+    return fetchBlob(`/api/v1/investments/property/${propertyId}/documents.zip`);
+  },
 };
 
 // --- Saved payment methods (Group 3: PCI-safe tokenization) ---------------- //
