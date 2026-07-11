@@ -160,6 +160,18 @@ def _assert_pending_invariant(db, uid):
     assert pending == inflight, f"pending {pending} != in-flight {inflight}"
 
 
+@pytest.fixture(autouse=True)
+def _automated_payout_mode(_clean, db):
+    """This module exercises the AUTOMATED (Stripe/NOWPayments) payout path. Manual mode is the
+    live default (Task 3), so turn it OFF here so requests flow through the provider executor;
+    the manual admin-settled path is covered by test_manual_payout_db.py. Depends on ``_clean``
+    so the row is written AFTER the per-test truncation (else it would be wiped)."""
+    db(
+        "INSERT INTO platform_settings (key, value) VALUES ('manual_payouts_enabled','false') "
+        "ON CONFLICT (key) DO UPDATE SET value='false'"
+    )
+
+
 # --- gating / validation ---------------------------------------------------- #
 @pytest.mark.asyncio
 async def test_withdraw_requires_kyc(client, db, monkeypatch):

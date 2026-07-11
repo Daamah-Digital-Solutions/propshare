@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 class WithdrawalCreateIn(BaseModel):
     amount: float = Field(gt=0, le=1_000_000_000)
     method: str = Field(pattern="^(bank|crypto)$")
-    address: str | None = None  # required for crypto; bank uses the Connect account
+    address: str | None = None  # crypto inline-address fallback (Stripe/legacy path)
+    payout_method_id: uuid.UUID | None = None  # a saved bank account / crypto wallet (manual)
 
 
 class WithdrawalCreateOut(BaseModel):

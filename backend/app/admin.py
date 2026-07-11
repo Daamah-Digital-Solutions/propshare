@@ -16,6 +16,7 @@ import uuid
 
 from sqladmin import Admin, ModelView, action
 from sqladmin.authentication import AuthenticationBackend
+from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
@@ -48,7 +49,9 @@ from app.models import (
     LpPosition,
     NotificationPreference,
     OwnershipLedger,
+    Payment,
     PaymentCustomer,
+    PlatformBankAccount,
     PlatformSetting,
     Property,
     PropertyMilestone,
@@ -57,6 +60,8 @@ from app.models import (
     SecondaryListing,
     SecondaryTrade,
     Transaction,
+    UserBankAccount,
+    UserCryptoWallet,
     UserRole,
     Wallet,
     Withdrawal,
@@ -66,6 +71,7 @@ from app.services import (
     auth_service,
     distribution_service,
     kyc_service,
+    manual_deposit_service,
     property_service,
     withdrawal_service,
 )
@@ -509,11 +515,12 @@ class WithdrawalAdmin(ModelView, model=Withdrawal):
         Withdrawal.method,
         Withdrawal.status,
         Withdrawal.provider,
+        Withdrawal.destination,
         Withdrawal.failure_reason,
         Withdrawal.created_at,
         Withdrawal.completed_at,
     ]
-    column_labels = {Withdrawal.user: "User"}
+    column_labels = {Withdrawal.user: "User", Withdrawal.destination: "Pay to"}
     column_searchable_list = [User.email]
     column_sortable_list = [Withdrawal.created_at, Withdrawal.status, Withdrawal.amount]
     column_default_sort = [(Withdrawal.created_at, True)]
@@ -541,13 +548,38 @@ class WithdrawalAdmin(ModelView, model=Withdrawal):
 
     @action(
         name="approve_withdrawal",
-        label="Approve (→ pay out)",
-        confirmation_message="Approve the selected withdrawal(s) for payout?",
+        label="Approve (automated payout path)",
+        confirmation_message="Approve the selected withdrawal(s) for the automated payout path?",
         add_in_detail=True,
         add_in_list=True,
     )
     async def approve_withdrawal(self, request: Request) -> RedirectResponse:
         return await self._decide(request, True)
+
+    @action(
+        name="mark_paid_withdrawal",
+        label="Mark paid (manual payout)",
+        confirmation_message=(
+            "Confirm you have sent this payout by hand? This clears the hold and completes "
+            "the withdrawal (the funds have already left the wallet at request time)."
+        ),
+        add_in_detail=True,
+        add_in_list=True,
+    )
+    async def mark_paid_withdrawal(self, request: Request) -> RedirectResponse:
+        """Manual settlement: the admin sent the money by hand (bank transfer / on-chain send)."""
+        pks = [p for p in request.query_params.get("pks", "").split(",") if p]
+        actor = request.session.get("admin_id")
+        actor_uuid = uuid.UUID(actor) if actor else None
+        async with session_scope() as session:
+            for pk in pks:
+                try:
+                    await withdrawal_service.admin_mark_paid(
+                        session, withdrawal_id=uuid.UUID(pk), actor_id=actor_uuid
+                    )
+                except AppError:
+                    continue  # not in a payable state — skip, don't fail the batch
+        return _back(request)
 
     @action(
         name="reject_withdrawal",
@@ -558,6 +590,142 @@ class WithdrawalAdmin(ModelView, model=Withdrawal):
     )
     async def reject_withdrawal(self, request: Request) -> RedirectResponse:
         return await self._decide(request, False)
+
+
+class PlatformBankAccountAdmin(ModelView, model=PlatformBankAccount):
+    name = "Platform Bank Account"
+    icon = "fa-solid fa-building-columns"
+    # The RECEIVING accounts users transfer to for bank-transfer deposits. The owner
+    # adds / edits / removes these freely; the ACTIVE ones are shown to depositing users.
+    column_list = [
+        PlatformBankAccount.bank_name,
+        PlatformBankAccount.account_holder,
+        PlatformBankAccount.iban,
+        PlatformBankAccount.account_number,
+        PlatformBankAccount.currency,
+        PlatformBankAccount.is_active,
+        PlatformBankAccount.sort_order,
+    ]
+    column_searchable_list = [PlatformBankAccount.bank_name, PlatformBankAccount.account_holder]
+    column_default_sort = [(PlatformBankAccount.sort_order, False)]
+    form_columns = [
+        PlatformBankAccount.bank_name,
+        PlatformBankAccount.account_holder,
+        PlatformBankAccount.iban,
+        PlatformBankAccount.account_number,
+        PlatformBankAccount.swift_bic,
+        PlatformBankAccount.currency,
+        PlatformBankAccount.country,
+        PlatformBankAccount.instructions,
+        PlatformBankAccount.is_active,
+        PlatformBankAccount.sort_order,
+    ]
+    can_create = True
+    can_edit = True
+    can_delete = True
+
+
+class BankDepositClaimAdmin(ModelView, model=Payment):
+    name = "Bank Deposit Claim"
+    icon = "fa-solid fa-money-check-dollar"
+    # Manual bank-transfer deposit CLAIMS (provider='manual_bank'). Confirm → the wallet is
+    # credited via the audited service layer (never by hand). Card/crypto deposits are
+    # auto-credited by webhook and are intentionally not shown here.
+    column_list = [
+        Payment.user_id,
+        Payment.amount,
+        Payment.status,
+        Payment.raw_payload,
+        Payment.created_at,
+    ]
+    column_labels = {Payment.raw_payload: "Reference / account", Payment.user_id: "User"}
+    column_sortable_list = [Payment.created_at, Payment.status, Payment.amount]
+    column_default_sort = [(Payment.created_at, True)]
+    can_create = False
+    can_edit = False  # money — credited only through the audited service layer
+    can_delete = False
+
+    def list_query(self, request: Request):
+        return select(Payment).where(Payment.provider == "manual_bank")
+
+    @action(
+        name="confirm_deposit",
+        label="Confirm (→ credit wallet)",
+        confirmation_message=(
+            "Confirm the bank transfer arrived? This credits the user's wallet. Only a pending "
+            "claim is affected."
+        ),
+        add_in_detail=True,
+        add_in_list=True,
+    )
+    async def confirm_deposit(self, request: Request) -> RedirectResponse:
+        pks = [p for p in request.query_params.get("pks", "").split(",") if p]
+        actor = request.session.get("admin_id")
+        actor_uuid = uuid.UUID(actor) if actor else None
+        async with session_scope() as session:
+            for pk in pks:
+                try:
+                    await manual_deposit_service.admin_confirm(
+                        session, payment_id=uuid.UUID(pk), actor_id=actor_uuid
+                    )
+                except AppError:
+                    continue  # not a pending bank claim — skip, don't fail the batch
+        return _back(request)
+
+    @action(
+        name="reject_deposit",
+        label="Reject claim",
+        confirmation_message="Reject the selected bank-transfer claim(s)?",
+        add_in_detail=True,
+        add_in_list=True,
+    )
+    async def reject_deposit(self, request: Request) -> RedirectResponse:
+        pks = [p for p in request.query_params.get("pks", "").split(",") if p]
+        actor = request.session.get("admin_id")
+        actor_uuid = uuid.UUID(actor) if actor else None
+        async with session_scope() as session:
+            for pk in pks:
+                try:
+                    await manual_deposit_service.admin_reject(
+                        session,
+                        payment_id=uuid.UUID(pk),
+                        actor_id=actor_uuid,
+                        reason="Rejected by admin",
+                    )
+                except AppError:
+                    continue
+        return _back(request)
+
+
+class UserBankAccountAdmin(ModelView, model=UserBankAccount):
+    name = "User Bank Account"
+    icon = "fa-solid fa-piggy-bank"
+    column_list = [
+        UserBankAccount.user_id,
+        UserBankAccount.account_holder,
+        UserBankAccount.bank_name,
+        UserBankAccount.iban,
+        UserBankAccount.is_default,
+        UserBankAccount.created_at,
+    ]
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
+class UserCryptoWalletAdmin(ModelView, model=UserCryptoWallet):
+    name = "User Crypto Wallet"
+    icon = "fa-solid fa-wallet"
+    column_list = [
+        UserCryptoWallet.user_id,
+        UserCryptoWallet.network,
+        UserCryptoWallet.address,
+        UserCryptoWallet.is_default,
+        UserCryptoWallet.created_at,
+    ]
+    can_create = False
+    can_edit = False
+    can_delete = False
 
 
 class SecondaryListingAdmin(ModelView, model=SecondaryListing):
@@ -1022,6 +1190,10 @@ def setup_admin(app) -> Admin:
         DistributionAdmin,
         DistributionItemAdmin,
         WithdrawalAdmin,
+        PlatformBankAccountAdmin,
+        BankDepositClaimAdmin,
+        UserBankAccountAdmin,
+        UserCryptoWalletAdmin,
         ConnectAccountAdmin,
         SecondaryListingAdmin,
         SecondaryTradeAdmin,

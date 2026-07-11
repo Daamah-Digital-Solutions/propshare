@@ -34,6 +34,7 @@ from app.api.routes import (
     owner_stats,
     payment_methods,
     payments,
+    payout_methods,
     profiles,
     properties,
     secondary,
@@ -135,6 +136,7 @@ def create_app() -> FastAPI:
     app.include_router(developer_updates.router)
     app.include_router(documents.router)
     app.include_router(payment_methods.router)
+    app.include_router(payout_methods.router)
     app.include_router(estate.router)
     app.include_router(gifts.router)
     app.include_router(installments.router)

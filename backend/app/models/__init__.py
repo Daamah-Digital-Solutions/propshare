@@ -508,6 +508,11 @@ from app.models.milestones import PropertyMilestone  # noqa: E402
 from app.models.notifications import EmailOutbox, NotificationPreference  # noqa: E402
 from app.models.payment_methods import PaymentCustomer, SavedPaymentMethod  # noqa: E402
 from app.models.payments import Payment, PaymentEvent  # noqa: E402
+from app.models.payout_methods import (  # noqa: E402
+    PlatformBankAccount,
+    UserBankAccount,
+    UserCryptoWallet,
+)
 from app.models.secondary import SecondaryTrade  # noqa: E402
 from app.models.withdrawals import ConnectAccount, PayoutEvent, Withdrawal  # noqa: E402
 
@@ -570,6 +575,10 @@ __all__ = [
     # saved payment methods (Group 3)
     "PaymentCustomer",
     "SavedPaymentMethod",
+    # manual payout / deposit destinations (Task 3)
+    "UserBankAccount",
+    "UserCryptoWallet",
+    "PlatformBankAccount",
     # estate / inheritance (Group 4)
     "EstateBeneficiary",
     "EstateEvent",

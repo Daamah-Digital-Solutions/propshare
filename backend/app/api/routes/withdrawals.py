@@ -51,6 +51,7 @@ async def create_withdrawal(
         address=body.address,
         idempotency_key=idempotency_key,
         user_email=str(email or ""),
+        payout_method_id=body.payout_method_id,
     )
     return WithdrawalCreateOut(**result)
 

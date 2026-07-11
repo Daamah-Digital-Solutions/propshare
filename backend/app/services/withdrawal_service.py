@@ -27,7 +27,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import write_audit
 from app.core.errors import AppError
 from app.models import ConnectAccount, PayoutEvent, Withdrawal
-from app.services import connect_service, notification_service, settings_service, wallet_service
+from app.models.identity import User
+from app.services import (
+    connect_service,
+    notification_service,
+    payout_methods_service,
+    settings_service,
+    wallet_service,
+)
 from app.services.integrations.payments import nowpayments_gateway, stripe_gateway
 
 _CENTS = decimal.Decimal("0.01")
@@ -45,6 +52,13 @@ def _provider_configured(method: str) -> bool:
         if method == "bank"
         else nowpayments_gateway.payout_configured()
     )
+
+
+async def _manual_enabled(session: AsyncSession) -> bool:
+    """Manual mode (owner default): withdrawals are settled by hand by an admin — no Stripe
+    Connect / NOWPayments payout. Held on request, then admin mark-paid / reject."""
+    raw = await settings_service.get_setting(session, "manual_payouts_enabled")
+    return (raw or "true").strip().lower() in ("true", "1", "yes", "on")
 
 
 async def _auto_limit(session: AsyncSession) -> decimal.Decimal:
@@ -65,10 +79,10 @@ async def request_withdrawal(
     address: str | None,
     idempotency_key: str,
     user_email: str,
+    payout_method_id: uuid.UUID | None = None,
 ) -> dict:
     if method not in _PROVIDER_FOR_METHOD:
         raise AppError("INVALID_METHOD", "method must be 'bank' or 'crypto'.", status_code=422)
-    provider = _PROVIDER_FOR_METHOD[method]
 
     # Idempotency-Key replay -> return the existing withdrawal (no second hold).
     existing = (
@@ -79,7 +93,10 @@ async def request_withdrawal(
     if existing is not None:
         return _result(existing)
 
-    if not _provider_configured(method):
+    manual = await _manual_enabled(session)
+    provider = "manual" if manual else _PROVIDER_FOR_METHOD[method]
+
+    if not manual and not _provider_configured(method):
         raise AppError(
             "PAYOUTS_NOT_CONFIGURED", f"{provider} payouts are not configured yet.", status_code=503
         )
@@ -88,10 +105,16 @@ async def request_withdrawal(
     if amount_dec <= 0:
         raise AppError("INVALID_AMOUNT", "Withdrawal amount must be positive.", status_code=422)
 
-    destination = await _resolve_destination(session, user_id, method, address)
-
-    limit = await _auto_limit(session)
-    status = "approved" if amount_dec <= limit else "pending_review"
+    if manual:
+        # Snapshot the chosen saved destination; ALL manual payouts wait for the admin.
+        destination = await _resolve_manual_destination(
+            session, user_id, method, payout_method_id, address
+        )
+        status = "pending_review"
+    else:
+        destination = await _resolve_destination(session, user_id, method, address)
+        limit = await _auto_limit(session)
+        status = "approved" if amount_dec <= limit else "pending_review"
 
     wd = Withdrawal(
         user_id=user_id,
@@ -116,16 +139,18 @@ async def request_withdrawal(
         entity_type="withdrawal",
         entity_id=str(wd.id),
         actor_id=user_id,
-        after={"amount": str(amount_dec), "method": method, "status": status},
+        after={"amount": str(amount_dec), "method": method, "status": status, "provider": provider},
     )
     if status == "pending_review":
         await notification_service.notify(
             session,
             user_id=user_id,
             type="withdrawal",
-            title="Withdrawal under review",
+            title="Withdrawal requested" if manual else "Withdrawal under review",
             message=(
-                f"Your ${amount_dec} withdrawal is over the auto-approve limit "
+                f"Your ${amount_dec} withdrawal request has been received and is being processed."
+                if manual
+                else f"Your ${amount_dec} withdrawal is over the auto-approve limit "
                 "and is being reviewed."
             ),
         )
@@ -148,6 +173,63 @@ async def _resolve_destination(
             status_code=409,
         )
     return {"connect_account_id": acct.stripe_account_id}  # tokenized: account id only
+
+
+async def _resolve_manual_destination(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    method: str,
+    payout_method_id: uuid.UUID | None,
+    address: str | None,
+) -> dict:
+    """Snapshot the chosen saved destination onto the withdrawal so an admin can pay it out
+    by hand: bank -> a saved UserBankAccount; crypto -> a saved UserCryptoWallet (or, as a
+    fallback, an inline address). Raise NO_PAYOUT_METHOD if the user has nothing saved."""
+    if method == "bank":
+        if payout_method_id is not None:
+            acct = await payout_methods_service.get_bank_account(
+                session, user_id, payout_method_id
+            )
+        else:
+            accts = await payout_methods_service.list_bank_accounts(session, user_id)
+            acct = next((a for a in accts if a.is_default), accts[0] if accts else None)
+        if acct is None:
+            raise AppError(
+                "NO_PAYOUT_METHOD",
+                "Add a bank account before withdrawing to bank.",
+                status_code=409,
+            )
+        return {
+            "type": "bank",
+            "label": acct.label,
+            "account_holder": acct.account_holder,
+            "bank_name": acct.bank_name,
+            "iban": acct.iban,
+            "account_number": acct.account_number,
+            "swift_bic": acct.swift_bic,
+            "country": acct.country,
+            "currency": acct.currency,
+        }
+    # crypto
+    if payout_method_id is not None:
+        w = await payout_methods_service.get_crypto_wallet(session, user_id, payout_method_id)
+        return {"type": "crypto", "label": w.label, "network": w.network, "address": w.address}
+    if address and address.strip():
+        return {"type": "crypto", "network": None, "address": address.strip()}
+    wallets = await payout_methods_service.list_crypto_wallets(session, user_id)
+    default = next((w for w in wallets if w.is_default), wallets[0] if wallets else None)
+    if default is None:
+        raise AppError(
+            "NO_PAYOUT_METHOD",
+            "Add a crypto wallet before withdrawing to crypto.",
+            status_code=409,
+        )
+    return {
+        "type": "crypto",
+        "label": default.label,
+        "network": default.network,
+        "address": default.address,
+    }
 
 
 # --- executor (provider call, AFTER commit of the request) ----------------- #
@@ -266,6 +348,80 @@ async def admin_review(
         after={"status": wd.status, "reason": reason},
     )
     return wd
+
+
+async def admin_mark_paid(
+    session: AsyncSession,
+    *,
+    withdrawal_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    reference: str | None = None,
+    note: str | None = None,
+) -> Withdrawal:
+    """Manual settlement — an admin sent the money by hand: clear the hold + complete.
+    Idempotent (a completed row is returned untouched); guards the transition under the row
+    lock so a double-click can't settle twice."""
+    wd = (
+        await session.execute(
+            select(Withdrawal).where(Withdrawal.id == withdrawal_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if wd is None:
+        raise AppError("NOT_FOUND", "Withdrawal not found", status_code=404)
+    if wd.status == "completed":
+        return wd
+    if wd.status not in ("pending_review", "approved"):
+        raise AppError(
+            "INVALID_TRANSITION",
+            "Only a pending or approved withdrawal can be marked paid.",
+            status_code=409,
+        )
+    wd.status = "completed"
+    wd.completed_at = _utcnow()
+    wd.reviewed_by = actor_id
+    wd.reviewed_at = _utcnow()
+    if reference and reference.strip():
+        wd.provider_payout_id = reference.strip()
+    if note and note.strip():
+        dest = dict(wd.destination) if isinstance(wd.destination, dict) else {}
+        dest["admin_note"] = note.strip()
+        wd.destination = dest
+    # Money has actually left: clear the in-flight hold (balance was already debited at request).
+    await wallet_service.settle_withdrawal(
+        session, user_id=wd.user_id, amount=wd.amount, reference_id=wd.id, actor_id=actor_id
+    )
+    await notification_service.notify(
+        session,
+        user_id=wd.user_id,
+        type="withdrawal",
+        title="Withdrawal sent",
+        message=f"Your ${wd.amount} withdrawal has been paid out.",
+        email_category="security",
+    )
+    await write_audit(
+        session,
+        action="withdrawal.marked_paid",
+        entity_type="withdrawal",
+        entity_id=str(wd.id),
+        actor_id=actor_id,
+        after={"status": "completed", "reference": reference},
+    )
+    return wd
+
+
+async def list_for_admin(
+    session: AsyncSession, *, status: str | None = None
+) -> list[tuple[Withdrawal, str | None]]:
+    """Withdrawals for the admin queue (optionally filtered by status), newest first, each
+    paired with the requester's email."""
+    q = select(Withdrawal, User.email).join(
+        User, User.id == Withdrawal.user_id, isouter=True
+    )
+    if status:
+        q = q.where(Withdrawal.status == status)
+    q = q.order_by(Withdrawal.created_at.desc())
+    res = await session.execute(q)
+    return [(row[0], row[1]) for row in res.all()]
 
 
 # --- webhook settlement ---------------------------------------------------- #

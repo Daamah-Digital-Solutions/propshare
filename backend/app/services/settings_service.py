@@ -47,6 +47,7 @@ _SETTING_SPECS: dict[str, str] = {
     "lp_exit_request_ttl_minutes": "int",
     "withdrawal_auto_approve_limit": "int",
     "lp_passive_enabled": "bool_locked_false",
+    "manual_payouts_enabled": "bool",
 }
 
 
@@ -67,6 +68,10 @@ def validate_setting(key: str, value: str) -> None:
             _bad("PASSIVE is hard-locked; it cannot be enabled until its economics are set.")
         if raw.lower() not in ("false", "0", "no", "off", ""):
             _bad("must be a boolean (false).")
+        return
+    if spec == "bool":
+        if raw.lower() not in ("true", "1", "yes", "on", "false", "0", "no", "off", ""):
+            _bad("must be a boolean.")
         return
     if spec == "pct_open" and raw == "":
         return  # empty price bound == open
@@ -125,6 +130,9 @@ DEFAULTS: dict[str, str] = {
     # referred client (purchase platform fee + rental mgmt fee), NEVER of the investment
     # amount. Admin-editable live; each accrual snapshots the rate so history is immutable.
     "broker_commission_pct": "10.0",
+    # Manual, admin-settled withdrawals (Task 3). When true a withdrawal holds funds and waits
+    # in the admin queue for mark-paid/reject (no Stripe Connect / NOWPayments payout call).
+    "manual_payouts_enabled": "true",
 }
 
 

@@ -16,6 +16,7 @@ from fastapi import APIRouter, Query, Request
 from app.api.deps import KycVerifiedDep, PrincipalDep, SessionDep
 from app.core.config import get_settings
 from app.core.errors import AppError
+from app.schemas.payout_methods import BankClaimIn, PlatformBankAccountOut
 from app.schemas.wallet import (
     DepositIn,
     DepositOut,
@@ -23,7 +24,12 @@ from app.schemas.wallet import (
     TransactionOut,
     WalletOut,
 )
-from app.services import payment_service, wallet_service
+from app.services import (
+    manual_deposit_service,
+    payment_service,
+    platform_accounts_service,
+    wallet_service,
+)
 
 router = APIRouter(prefix="/api/v1/wallet", tags=["wallet"])
 
@@ -67,6 +73,58 @@ async def deposit(
         ipn_url=f"{api_base}/api/v1/payments/webhooks/nowpayments",
     )
     return DepositOut(**result)
+
+
+@router.get("/deposit/bank-accounts", response_model=list[PlatformBankAccountOut])
+async def deposit_bank_accounts(principal: PrincipalDep, session: SessionDep):
+    """The platform's ACTIVE receiving bank accounts — where a user transfers funds before
+    submitting a bank-transfer deposit claim. Admin-managed in the /admin panel."""
+    accts = await platform_accounts_service.list_active(session)
+    return [
+        PlatformBankAccountOut(
+            id=a.id,
+            bank_name=a.bank_name,
+            account_holder=a.account_holder,
+            iban=a.iban,
+            account_number=a.account_number,
+            swift_bic=a.swift_bic,
+            currency=a.currency,
+            country=a.country,
+            instructions=a.instructions,
+        )
+        for a in accts
+    ]
+
+
+@router.post("/deposit/bank-transfer", response_model=DepositOut)
+async def deposit_bank_transfer(
+    body: BankClaimIn, request: Request, session: SessionDep, principal: KycVerifiedDep
+):
+    """Submit a bank-transfer deposit CLAIM. After transferring to a platform account the user
+    records the amount + reference here; it stays PENDING until an admin confirms the transfer
+    arrived and the wallet is credited. KYC-gated; Idempotency-Key required (mirrors deposit)."""
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if not idempotency_key:
+        raise AppError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "An Idempotency-Key header is required for deposits.",
+            status_code=400,
+        )
+    payment = await manual_deposit_service.create_bank_claim(
+        session,
+        user_id=principal.user_id,
+        amount=body.amount,
+        platform_account_id=body.platform_account_id,
+        reference=body.reference,
+        sender_name=body.sender_name,
+        idempotency_key=idempotency_key,
+    )
+    return DepositOut(
+        payment_id=payment.id,
+        provider=payment.provider,
+        status=payment.status,
+        checkout_url=None,
+    )
 
 
 @router.get("/transactions", response_model=TransactionListOut)
