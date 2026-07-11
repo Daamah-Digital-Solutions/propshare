@@ -28,6 +28,9 @@ vi.mock("@/lib/api", () => ({
   },
   withdrawApi: { create: vi.fn() },
   connectApi: { status: (...a: unknown[]) => connectStatus(...a), onboard: vi.fn() },
+  bankAccountsApi: { list: vi.fn().mockResolvedValue([]), add: vi.fn(), remove: vi.fn(), setDefault: vi.fn() },
+  cryptoWalletsApi: { list: vi.fn().mockResolvedValue([]), add: vi.fn(), remove: vi.fn(), setDefault: vi.fn() },
+  bankDepositApi: { platformAccounts: vi.fn().mockResolvedValue([]), submitClaim: vi.fn() },
   holdingsApi: { mine: (...a: unknown[]) => holdingsMine(...a) },
   propertyApi: { list: (...a: unknown[]) => propsList(...a) },
   returnsApi: { getMine: (...a: unknown[]) => returnsGetMine(...a) },
@@ -109,13 +112,16 @@ describe("InvestorWallet payment methods (real tokenized vault, Group 3)", () =>
     pmList.mockReset();
   });
 
-  it("empty vault: honest empty-state, add button ENABLED, no fake cards", async () => {
+  it("empty vault: honest empty-states, add buttons ENABLED, no fake methods", async () => {
     pmList.mockResolvedValue([]);
     wrap(<InvestorWallet />);
-    expect(await screen.findByText(/No saved payment methods/i)).toBeInTheDocument();
+    expect(await screen.findByText(/No saved cards/i)).toBeInTheDocument();
+    expect(screen.getByText(/No saved bank account/i)).toBeInTheDocument();
+    expect(screen.getByText(/No saved crypto wallet/i)).toBeInTheDocument();
     expect(screen.queryByText(/Emirates NBD/)).toBeNull();
     expect(screen.queryByText(/bc1q/)).toBeNull();
-    expect(screen.getByRole("button", { name: /add payment method/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /add card/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /add bank account/i })).toBeEnabled();
   });
 
   it("renders real saved methods (brand •••• last4 + Default), no card number stored", async () => {

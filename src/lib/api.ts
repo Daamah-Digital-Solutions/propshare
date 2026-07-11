@@ -985,9 +985,14 @@ export interface ConnectStatus {
 }
 
 export const withdrawApi = {
-  /** Request a payout. Funds are held on request; settlement is webhook-driven. */
+  /** Request a payout. Funds are held on request; in manual mode an admin settles it. */
   create(
-    input: { amount: number; method: WithdrawMethod; address?: string },
+    input: {
+      amount: number;
+      method: WithdrawMethod;
+      address?: string;
+      payout_method_id?: string;
+    },
     idempotencyKey: string,
   ): Promise<WithdrawalCreateResponse> {
     return apiRequest<WithdrawalCreateResponse>("/api/v1/wallet/withdrawals", {
@@ -998,6 +1003,109 @@ export const withdrawApi = {
   },
   list(): Promise<{ items: WithdrawalItem[]; total: number }> {
     return apiRequest("/api/v1/wallet/withdrawals");
+  },
+};
+
+// --- Saved payout destinations + bank-transfer deposits (Task 3) ----------- //
+export interface BankAccount {
+  id: string;
+  label: string | null;
+  account_holder: string;
+  bank_name: string;
+  iban: string | null;
+  account_number: string | null;
+  swift_bic: string | null;
+  country: string | null;
+  currency: string;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface CryptoWallet {
+  id: string;
+  label: string | null;
+  network: string;
+  address: string;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface PlatformBankAccount {
+  id: string;
+  bank_name: string;
+  account_holder: string;
+  iban: string | null;
+  account_number: string | null;
+  swift_bic: string | null;
+  currency: string;
+  country: string | null;
+  instructions: string | null;
+}
+
+export const bankAccountsApi = {
+  list(): Promise<BankAccount[]> {
+    return apiRequest<BankAccount[]>("/api/v1/wallet/bank-accounts");
+  },
+  add(input: {
+    account_holder: string;
+    bank_name: string;
+    iban?: string;
+    account_number?: string;
+    swift_bic?: string;
+    country?: string;
+    currency?: string;
+    label?: string;
+  }): Promise<BankAccount> {
+    return apiRequest<BankAccount>("/api/v1/wallet/bank-accounts", { method: "POST", body: input });
+  },
+  setDefault(id: string): Promise<BankAccount> {
+    return apiRequest<BankAccount>(`/api/v1/wallet/bank-accounts/${id}/default`, { method: "POST" });
+  },
+  remove(id: string): Promise<void> {
+    return apiRequest<void>(`/api/v1/wallet/bank-accounts/${id}`, { method: "DELETE" });
+  },
+};
+
+export const cryptoWalletsApi = {
+  list(): Promise<CryptoWallet[]> {
+    return apiRequest<CryptoWallet[]>("/api/v1/wallet/crypto-wallets");
+  },
+  add(input: { network: string; address: string; label?: string }): Promise<CryptoWallet> {
+    return apiRequest<CryptoWallet>("/api/v1/wallet/crypto-wallets", {
+      method: "POST",
+      body: input,
+    });
+  },
+  setDefault(id: string): Promise<CryptoWallet> {
+    return apiRequest<CryptoWallet>(`/api/v1/wallet/crypto-wallets/${id}/default`, {
+      method: "POST",
+    });
+  },
+  remove(id: string): Promise<void> {
+    return apiRequest<void>(`/api/v1/wallet/crypto-wallets/${id}`, { method: "DELETE" });
+  },
+};
+
+export const bankDepositApi = {
+  /** The platform's active receiving accounts to transfer funds to. */
+  platformAccounts(): Promise<PlatformBankAccount[]> {
+    return apiRequest<PlatformBankAccount[]>("/api/v1/wallet/deposit/bank-accounts");
+  },
+  /** Record a bank-transfer deposit claim (stays pending until an admin confirms it arrived). */
+  submitClaim(
+    input: {
+      amount: number;
+      platform_account_id?: string;
+      reference?: string;
+      sender_name?: string;
+    },
+    idempotencyKey: string,
+  ): Promise<DepositResponse> {
+    return apiRequest<DepositResponse>("/api/v1/wallet/deposit/bank-transfer", {
+      method: "POST",
+      body: input,
+      headers: { "Idempotency-Key": idempotencyKey },
+    });
   },
 };
 
