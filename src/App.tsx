@@ -10,6 +10,7 @@ import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MainLayout } from "@/components/layout/MainLayout";
 import PWAInstallPrompt from "@/components/pwa/PWAInstallPrompt";
 import PWAServiceWorker from "@/components/pwa/PWAServiceWorker";
+import ChatWidget from "@/components/chat/ChatWidget";
 
 // Eagerly load the homepage for fast initial load
 import Index from "./pages/Index";
@@ -71,6 +72,7 @@ const App = () => (
           <BrowserRouter>
             <PWAInstallPrompt />
             <PWAServiceWorker />
+            <ChatWidget />
             <MainLayout>
               <Suspense fallback={<PageLoader />}>
                 <Routes>
