@@ -458,3 +458,78 @@ async def test_family_requires_kyc(client, db):
 async def test_family_requires_auth(client):
     assert (await client.get("/api/v1/family/groups/me")).status_code == 401
     assert (await client.post("/api/v1/family/groups", json={"name": "x"})).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_member_full_data_update_and_bank_accounts(client, db):
+    t = await _verified_user(client, db, "fam-data@x.com")
+    await _create_group(client, t)
+    r = await client.post(
+        "/api/v1/family/members",
+        json={
+            "name": "Sara Ahmed",
+            "email": "sara-child@x.com",
+            "relationship": "Daughter",
+            "date_of_birth": "2005-04-12",
+            "phone": "+971500000000",
+            "national_id": "784-2005-1234567-1",
+            "nationality": "UAE",
+            "address": "12 Marina Walk, Dubai",
+        },
+        headers=_hdr(t),
+    )
+    assert r.status_code == 200, r.text
+    m = r.json()
+    mid = m["member_id"]
+    assert m["date_of_birth"] == "2005-04-12"
+    assert m["national_id"] == "784-2005-1234567-1"
+    assert m["nationality"] == "UAE"
+    assert m["bank_accounts"] == []
+    assert m["linked_date"]
+
+    up = await client.patch(
+        f"/api/v1/family/members/{mid}",
+        json={"phone": "+971511111111", "address": "New Address, Abu Dhabi"},
+        headers=_hdr(t),
+    )
+    assert up.status_code == 200, up.text
+    assert up.json()["phone"] == "+971511111111"
+    assert up.json()["address"] == "New Address, Abu Dhabi"
+    assert up.json()["national_id"] == "784-2005-1234567-1"  # untouched field preserved
+
+    b1 = await client.post(
+        f"/api/v1/family/members/{mid}/bank-accounts",
+        json={"bank_name": "Emirates NBD", "account_holder": "Sara Ahmed", "iban": "AE070331234"},
+        headers=_hdr(t),
+    )
+    assert b1.status_code == 200, b1.text
+    await client.post(
+        f"/api/v1/family/members/{mid}/bank-accounts",
+        json={"bank_name": "ADCB", "account_number": "998877"},
+        headers=_hdr(t),
+    )
+    listed = await client.get(f"/api/v1/family/members/{mid}/bank-accounts", headers=_hdr(t))
+    assert listed.status_code == 200 and len(listed.json()) == 2
+    grp = await _group(client, t)
+    daughter = next(x for x in grp["members"] if x["member_id"] == mid)
+    assert len(daughter["bank_accounts"]) == 2
+    dele = await client.delete(
+        f"/api/v1/family/members/{mid}/bank-accounts/{b1.json()['id']}", headers=_hdr(t)
+    )
+    assert dele.status_code == 204
+    after = await client.get(f"/api/v1/family/members/{mid}/bank-accounts", headers=_hdr(t))
+    assert len(after.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_member_bank_account_requires_identifier(client, db):
+    t = await _verified_user(client, db, "fam-bank-val@x.com")
+    await _create_group(client, t)
+    r = await _add_member(client, t, "Kid", "fam-kid-val@x.com")
+    mid = r.json()["member_id"]
+    bad = await client.post(
+        f"/api/v1/family/members/{mid}/bank-accounts",
+        json={"bank_name": "Bank X"},
+        headers=_hdr(t),
+    )
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "INVALID_INPUT"

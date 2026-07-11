@@ -31,6 +31,7 @@ from app.core.errors import AppError
 from app.models import (
     FamilyGroup,
     FamilyMember,
+    FamilyMemberBankAccount,
     FamilyReturnAllocation,
     FamilyTransfer,
     KycVerification,
@@ -127,6 +128,11 @@ async def add_member(
     name: str,
     email: str | None,
     relationship: str,
+    date_of_birth: dt.date | None = None,
+    phone: str | None = None,
+    national_id: str | None = None,
+    nationality: str | None = None,
+    address: str | None = None,
 ) -> dict:
     group = await _owner_group(session, owner_id)
     user_id: uuid.UUID | None = None
@@ -147,6 +153,11 @@ async def add_member(
         name=name,
         email=email,
         relationship=relationship,
+        date_of_birth=date_of_birth,
+        phone=(phone or None),
+        national_id=(national_id or None),
+        nationality=(nationality or None),
+        address=(address or None),
         is_verified=verified,
     )
     session.add(member)
@@ -182,6 +193,145 @@ async def add_member(
             ),
         )
     return _member_result(member)
+
+
+async def _member_detail(session: AsyncSession, member: FamilyMember) -> dict:
+    banks = (
+        (
+            await session.execute(
+                select(FamilyMemberBankAccount)
+                .where(FamilyMemberBankAccount.member_id == member.id)
+                .order_by(FamilyMemberBankAccount.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    real_units = 0
+    if member.user_id is not None:
+        real_units = int(
+            await session.scalar(
+                select(func.coalesce(func.sum(OwnershipLedger.units), 0)).where(
+                    OwnershipLedger.user_id == member.user_id
+                )
+            )
+            or 0
+        )
+    return {**_member_result(member, [_bank_result(b) for b in banks]), "real_units": real_units}
+
+
+async def update_member(
+    session: AsyncSession, *, owner_id: uuid.UUID, member_id: uuid.UUID, updates: dict
+) -> dict:
+    """Edit a member's personal data (owner-scoped). Only provided fields change; name and
+    relationship can't be blanked."""
+    group = await _owner_group(session, owner_id)
+    member = await _member_in_group(session, group.id, member_id)
+    for key in (
+        "name",
+        "email",
+        "relationship",
+        "date_of_birth",
+        "phone",
+        "national_id",
+        "nationality",
+        "address",
+    ):
+        if key not in updates:
+            continue
+        val = updates[key]
+        if isinstance(val, str):
+            val = val.strip() or None
+        if key in ("name", "relationship") and not val:
+            continue  # required fields can't be blanked
+        setattr(member, key, val)
+    member.updated_at = _utcnow()
+    await session.flush()
+    await write_audit(
+        session,
+        action="family.member.updated",
+        entity_type="family_member",
+        entity_id=str(member.id),
+        actor_id=owner_id,
+    )
+    return await _member_detail(session, member)
+
+
+# --- member bank accounts (Task 9) ----------------------------------------- #
+async def add_member_bank_account(
+    session: AsyncSession,
+    *,
+    owner_id: uuid.UUID,
+    member_id: uuid.UUID,
+    bank_name: str,
+    account_holder: str | None = None,
+    iban: str | None = None,
+    account_number: str | None = None,
+    swift_bic: str | None = None,
+    label: str | None = None,
+) -> dict:
+    group = await _owner_group(session, owner_id)
+    await _member_in_group(session, group.id, member_id)
+    if not bank_name.strip():
+        raise AppError("INVALID_INPUT", "Bank name is required.", status_code=422)
+    if not (iban and iban.strip()) and not (account_number and account_number.strip()):
+        raise AppError("INVALID_INPUT", "Provide an IBAN or an account number.", status_code=422)
+    acct = FamilyMemberBankAccount(
+        member_id=member_id,
+        bank_name=bank_name.strip(),
+        account_holder=(account_holder or "").strip() or None,
+        iban=(iban or "").strip() or None,
+        account_number=(account_number or "").strip() or None,
+        swift_bic=(swift_bic or "").strip() or None,
+        label=(label or "").strip() or None,
+    )
+    session.add(acct)
+    await session.flush()
+    await write_audit(
+        session,
+        action="family.member.bank_added",
+        entity_type="family_member_bank_account",
+        entity_id=str(acct.id),
+        actor_id=owner_id,
+    )
+    return _bank_result(acct)
+
+
+async def list_member_bank_accounts(
+    session: AsyncSession, *, owner_id: uuid.UUID, member_id: uuid.UUID
+) -> list[dict]:
+    group = await _owner_group(session, owner_id)
+    await _member_in_group(session, group.id, member_id)
+    rows = (
+        (
+            await session.execute(
+                select(FamilyMemberBankAccount)
+                .where(FamilyMemberBankAccount.member_id == member_id)
+                .order_by(FamilyMemberBankAccount.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [_bank_result(b) for b in rows]
+
+
+async def delete_member_bank_account(
+    session: AsyncSession, *, owner_id: uuid.UUID, member_id: uuid.UUID, account_id: uuid.UUID
+) -> None:
+    group = await _owner_group(session, owner_id)
+    await _member_in_group(session, group.id, member_id)
+    acct = await session.get(FamilyMemberBankAccount, account_id)
+    if acct is None or acct.member_id != member_id:
+        raise AppError("NOT_FOUND", "Bank account not found.", status_code=404)
+    await session.delete(acct)
+    await write_audit(
+        session,
+        action="family.member.bank_deleted",
+        entity_type="family_member_bank_account",
+        entity_id=str(account_id),
+        actor_id=owner_id,
+    )
 
 
 # --- allocate / transfer units --------------------------------------------- #
@@ -633,6 +783,22 @@ async def get_group_view(session: AsyncSession, owner_id: uuid.UUID) -> dict | N
         .scalars()
         .all()
     )
+    member_ids = [m.id for m in members]
+    banks_by_member: dict[uuid.UUID, list[dict]] = {}
+    if member_ids:
+        bank_rows = (
+            (
+                await session.execute(
+                    select(FamilyMemberBankAccount)
+                    .where(FamilyMemberBankAccount.member_id.in_(member_ids))
+                    .order_by(FamilyMemberBankAccount.created_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for b in bank_rows:
+            banks_by_member.setdefault(b.member_id, []).append(_bank_result(b))
     out_members = []
     for m in members:
         real_units = 0
@@ -645,7 +811,9 @@ async def get_group_view(session: AsyncSession, owner_id: uuid.UUID) -> dict | N
                 )
                 or 0
             )
-        out_members.append({**_member_result(m), "real_units": real_units})
+        out_members.append(
+            {**_member_result(m, banks_by_member.get(m.id, [])), "real_units": real_units}
+        )
     return {
         "group_id": str(group.id),
         "name": group.name,
@@ -684,7 +852,7 @@ async def _member_in_group(
     return m
 
 
-def _member_result(m: FamilyMember) -> dict:
+def _member_result(m: FamilyMember, bank_accounts: list[dict] | None = None) -> dict:
     return {
         "member_id": str(m.id),
         "name": m.name,
@@ -694,6 +862,25 @@ def _member_result(m: FamilyMember) -> dict:
         "is_user": m.user_id is not None,
         "pending_units": m.allocated_units,
         "allocated_returns": str(m.allocated_returns),
+        "date_of_birth": m.date_of_birth.isoformat() if m.date_of_birth else None,
+        "phone": m.phone,
+        "national_id": m.national_id,
+        "nationality": m.nationality,
+        "address": m.address,
+        "linked_date": m.created_at.isoformat() if m.created_at else None,
+        "bank_accounts": bank_accounts or [],
+    }
+
+
+def _bank_result(b: FamilyMemberBankAccount) -> dict:
+    return {
+        "id": str(b.id),
+        "label": b.label,
+        "bank_name": b.bank_name,
+        "account_holder": b.account_holder,
+        "iban": b.iban,
+        "account_number": b.account_number,
+        "swift_bic": b.swift_bic,
     }
 
 

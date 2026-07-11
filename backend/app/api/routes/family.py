@@ -21,6 +21,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Request
+from fastapi.responses import Response
 from sqlalchemy import select
 
 from app.api.deps import KycVerifiedDep, PrincipalDep, SessionDep
@@ -31,8 +32,11 @@ from app.schemas.family import (
     FamilySettingsOut,
     GroupCreateIn,
     GroupOut,
+    MemberBankAccountIn,
+    MemberBankAccountOut,
     MemberCreateIn,
     MemberOut,
+    MemberUpdateIn,
     ReinvestIn,
     TransferCreateIn,
     TransferListOut,
@@ -76,8 +80,64 @@ async def add_member(body: MemberCreateIn, session: SessionDep, principal: KycVe
         name=body.name,
         email=str(body.email) if body.email else None,
         relationship=body.relationship,
+        date_of_birth=body.date_of_birth,
+        phone=body.phone,
+        national_id=body.national_id,
+        nationality=body.nationality,
+        address=body.address,
     )
     return MemberOut(**result)
+
+
+@router.patch("/members/{member_id}", response_model=MemberOut)
+async def update_member(
+    member_id: uuid.UUID, body: MemberUpdateIn, session: SessionDep, principal: KycVerifiedDep
+):
+    updates = body.model_dump(exclude_unset=True)
+    if "email" in updates and updates["email"] is not None:
+        updates["email"] = str(updates["email"])
+    result = await family_service.update_member(
+        session, owner_id=principal.user_id, member_id=member_id, updates=updates
+    )
+    return MemberOut(**result)
+
+
+@router.get("/members/{member_id}/bank-accounts", response_model=list[MemberBankAccountOut])
+async def list_member_bank_accounts(
+    member_id: uuid.UUID, session: SessionDep, principal: PrincipalDep
+):
+    rows = await family_service.list_member_bank_accounts(
+        session, owner_id=principal.user_id, member_id=member_id
+    )
+    return [MemberBankAccountOut(**b) for b in rows]
+
+
+@router.post("/members/{member_id}/bank-accounts", response_model=MemberBankAccountOut)
+async def add_member_bank_account(
+    member_id: uuid.UUID, body: MemberBankAccountIn, session: SessionDep, principal: KycVerifiedDep
+):
+    result = await family_service.add_member_bank_account(
+        session,
+        owner_id=principal.user_id,
+        member_id=member_id,
+        bank_name=body.bank_name,
+        account_holder=body.account_holder,
+        iban=body.iban,
+        account_number=body.account_number,
+        swift_bic=body.swift_bic,
+        label=body.label,
+    )
+    return MemberBankAccountOut(**result)
+
+
+@router.delete("/members/{member_id}/bank-accounts/{account_id}")
+async def delete_member_bank_account(
+    member_id: uuid.UUID, account_id: uuid.UUID, session: SessionDep, principal: KycVerifiedDep
+):
+    await family_service.delete_member_bank_account(
+        session, owner_id=principal.user_id, member_id=member_id, account_id=account_id
+    )
+    return Response(status_code=204)
 
 
 @router.post("/transfers", response_model=TransferOut)

@@ -403,6 +403,12 @@ class FamilyMember(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     email: Mapped[str | None] = mapped_column(Text)
     relationship: Mapped[str] = mapped_column(Text, nullable=False)
+    # Personal data (Task 9) — captured for each member so the group owner keeps a full record.
+    date_of_birth: Mapped[datetime.date | None] = mapped_column(Date)
+    phone: Mapped[str | None] = mapped_column(Text)
+    national_id: Mapped[str | None] = mapped_column(Text)
+    nationality: Mapped[str | None] = mapped_column(Text)
+    address: Mapped[str | None] = mapped_column(Text)
     allocated_units: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     allocated_returns: Mapped[decimal.Decimal] = mapped_column(
         Numeric, nullable=False, server_default="0"
@@ -414,6 +420,31 @@ class FamilyMember(Base):
         DateTime(timezone=True), server_default=_NOW
     )
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+
+class FamilyMemberBankAccount(Base):
+    """A family member's bank account (Task 9). A member can have several — matches the BRX
+    "Bank Accounts" list. Held for the owner's records / manual family payouts (no card PII)."""
+
+    __tablename__ = "family_member_bank_accounts"
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    member_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("family_members.id", ondelete="CASCADE"), nullable=False
+    )
+    label: Mapped[str | None] = mapped_column(Text)
+    bank_name: Mapped[str] = mapped_column(Text, nullable=False)
+    account_holder: Mapped[str | None] = mapped_column(Text)
+    iban: Mapped[str | None] = mapped_column(Text)
+    account_number: Mapped[str | None] = mapped_column(Text)
+    swift_bic: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=_NOW
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=_NOW
+    )
 
 
 class FamilyTransfer(Base):
@@ -530,6 +561,7 @@ __all__ = [
     "Document",
     "FamilyGroup",
     "FamilyMember",
+    "FamilyMemberBankAccount",
     "FamilyTransfer",
     "FamilyReturnAllocation",
     # identity (Phase 1)

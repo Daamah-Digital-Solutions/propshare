@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -15,6 +16,41 @@ class MemberCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     email: EmailStr | None = None
     relationship: str = Field(min_length=1, max_length=60)
+    date_of_birth: date | None = None
+    phone: str | None = Field(default=None, max_length=40)
+    national_id: str | None = Field(default=None, max_length=60)
+    nationality: str | None = Field(default=None, max_length=60)
+    address: str | None = Field(default=None, max_length=300)
+
+
+class MemberUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    email: EmailStr | None = None
+    relationship: str | None = Field(default=None, min_length=1, max_length=60)
+    date_of_birth: date | None = None
+    phone: str | None = Field(default=None, max_length=40)
+    national_id: str | None = Field(default=None, max_length=60)
+    nationality: str | None = Field(default=None, max_length=60)
+    address: str | None = Field(default=None, max_length=300)
+
+
+class MemberBankAccountIn(BaseModel):
+    bank_name: str = Field(min_length=1, max_length=120)
+    account_holder: str | None = Field(default=None, max_length=120)
+    iban: str | None = Field(default=None, max_length=64)
+    account_number: str | None = Field(default=None, max_length=64)
+    swift_bic: str | None = Field(default=None, max_length=32)
+    label: str | None = Field(default=None, max_length=80)
+
+
+class MemberBankAccountOut(BaseModel):
+    id: str
+    label: str | None
+    bank_name: str
+    account_holder: str | None
+    iban: str | None
+    account_number: str | None
+    swift_bic: str | None
 
 
 class MemberOut(BaseModel):
@@ -27,6 +63,13 @@ class MemberOut(BaseModel):
     pending_units: int
     allocated_returns: str
     real_units: int = 0
+    date_of_birth: str | None = None
+    phone: str | None = None
+    national_id: str | None = None
+    nationality: str | None = None
+    address: str | None = None
+    linked_date: str | None = None
+    bank_accounts: list[MemberBankAccountOut] = []
 
 
 class GroupOut(BaseModel):
