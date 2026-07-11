@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -96,8 +96,32 @@ const fmtMoney = (n: number) =>
 // "Not available yet" — no backend source for this metric (do NOT fake a number).
 const NA = "Not available yet";
 
+const OWNER_TABS = [
+  "overview",
+  "properties",
+  "financials",
+  "wallet",
+  "documents",
+  "list-property",
+  "cards",
+];
+
 const OwnerDashboard = () => {
-  const [activeTab, setActiveTab] = useState("overview");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState(() =>
+    OWNER_TABS.includes(tabFromUrl || "") ? tabFromUrl! : "overview",
+  );
+  useEffect(() => {
+    if (tabFromUrl && OWNER_TABS.includes(tabFromUrl) && tabFromUrl !== activeTab) {
+      setActiveTab(tabFromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabFromUrl]);
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    setSearchParams({ tab: value });
+  };
   const navigate = useNavigate();
   const { user } = useAuth();
   const greetingName =
@@ -196,7 +220,7 @@ const OwnerDashboard = () => {
         {/* Dashboard Content */}
         <section className="py-8">
           <div className="container mx-auto px-4">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-8">
+            <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-8">
               <TabsList className="w-full flex flex-wrap justify-start gap-2 h-auto p-2 bg-muted/50">
                 <TabsTrigger value="overview" className="flex items-center gap-2 data-[state=active]:bg-accent data-[state=active]:text-accent-foreground">
                   <BarChart3 className="h-4 w-4" />

@@ -407,6 +407,15 @@ export const propertyApi = {
   submit(id: string): Promise<PropertyDetail> {
     return apiRequest<PropertyDetail>(`/api/v1/properties/${id}/submit`, { method: "POST" });
   },
+  /** Upload a property image (multipart); returns the updated image URL list. */
+  uploadImage(id: string, file: File): Promise<{ images: string[] }> {
+    const fd = new FormData();
+    fd.append("file", file);
+    return apiRequest<{ images: string[] }>(`/api/v1/properties/${id}/images`, {
+      method: "POST",
+      body: fd,
+    });
+  },
   listOwner(): Promise<PropertyDetail[]> {
     return apiRequest<PropertyDetail[]>("/api/v1/owner/properties");
   },

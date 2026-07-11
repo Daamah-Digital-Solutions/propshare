@@ -94,10 +94,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
-  const switchActiveRole = useCallback(async (role: UserRole) => {
-    const me = await authApi.switchRole(role);
-    setUser(me);
-  }, []);
+  const switchActiveRole = useCallback(
+    async (role: UserRole) => {
+      // Persist the new active role, then MINT A FRESH TOKEN that carries it: active_role lives
+      // inside the JWT, so without a refresh the API keeps seeing the old role and rejects owner/
+      // broker/etc. actions with "activate <role>" even though the switch "succeeded" client-side.
+      await authApi.switchRole(role);
+      const ok = await refreshAccessToken();
+      if (ok) await loadMe();
+    },
+    [loadMe],
+  );
 
   const requestRole = useCallback(
     async (role: UserRole) => {

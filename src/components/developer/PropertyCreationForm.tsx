@@ -20,10 +20,11 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
-import { Upload, X, Plus, Loader2, ImageIcon } from "lucide-react";
+import { Upload, X, Plus, Loader2, ImageIcon, FileText } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { propertyApi, ApiError } from "@/lib/api";
+import { propertyApi, documentsApi, ApiError } from "@/lib/api";
+import { DOC_CATEGORIES } from "@/lib/documentCategories";
 import { toast } from "sonner";
 
 interface PropertyFormData {
@@ -74,8 +75,27 @@ export function PropertyCreationForm() {
   const [formData, setFormData] = useState<PropertyFormData>(initialFormData);
   const [images, setImages] = useState<File[]>([]);
   const [imagePreview, setImagePreview] = useState<string[]>([]);
+  const [docs, setDocs] = useState<{ file: File; title: string; docType: string }[]>([]);
+  const [docDraft, setDocDraft] = useState<{ title: string; docType: string; file: File | null }>({
+    title: "",
+    docType: "spv",
+    file: null,
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+
+  const addDoc = () => {
+    if (!docDraft.file || !docDraft.title.trim()) {
+      toast.error("Pick a file and enter a document title first.");
+      return;
+    }
+    setDocs((prev) => [
+      ...prev,
+      { file: docDraft.file!, title: docDraft.title.trim(), docType: docDraft.docType },
+    ]);
+    setDocDraft({ title: "", docType: "spv", file: null });
+  };
+  const removeDoc = (i: number) => setDocs((prev) => prev.filter((_, idx) => idx !== i));
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -115,10 +135,8 @@ export function PropertyCreationForm() {
     setImagePreview((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // Create the listing as a draft and submit it for admin review in one step.
-  // Image upload rides the app-storage seam (not yet provisioned), so selected
-  // files are noted honestly rather than silently dropped; URLs can be added once
-  // storage is live.
+  // Create the listing as a draft, upload its images + documents to the (now-live) storage
+  // seam, then submit it for admin review — all in one step.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -146,10 +164,26 @@ export function PropertyCreationForm() {
         spv_registration: formData.spv_registration || null,
         legal_structure: formData.legal_structure || null,
       });
+      // The property now has an id + storage is live — upload its images and documents.
+      let uploadErrors = 0;
+      for (const img of images) {
+        try {
+          await propertyApi.uploadImage(created.id, img);
+        } catch {
+          uploadErrors++;
+        }
+      }
+      for (const d of docs) {
+        try {
+          await documentsApi.upload(created.id, d.file, d.title, d.docType);
+        } catch {
+          uploadErrors++;
+        }
+      }
       await propertyApi.submit(created.id);
       toast.success("Property submitted for review", {
-        description: images.length
-          ? "Image upload will be enabled once app storage is connected."
+        description: uploadErrors
+          ? `${uploadErrors} file(s) couldn't be uploaded — you can add them later from Documents.`
           : "An admin will review and publish it to the marketplace.",
       });
       await queryClient.invalidateQueries({ queryKey: ["owner-properties"] });
@@ -169,6 +203,8 @@ export function PropertyCreationForm() {
     imagePreview.forEach((url) => URL.revokeObjectURL(url));
     setImages([]);
     setImagePreview([]);
+    setDocs([]);
+    setDocDraft({ title: "", docType: "spv", file: null });
   };
 
   return (
@@ -420,6 +456,86 @@ export function PropertyCreationForm() {
                   onChange={handleImageUpload}
                 />
               </label>
+            </div>
+          </div>
+
+          {/* Property Documents */}
+          <div className="space-y-4">
+            <h3 className="font-semibold text-foreground">Property Documents</h3>
+            <p className="text-sm text-muted-foreground">
+              Attach SPV papers, valuation reports, agreements, legal, insurance, audit reports,
+              etc. They upload when you submit and appear in the investor Documents Center.
+            </p>
+
+            {docs.length > 0 && (
+              <div className="space-y-2">
+                {docs.map((d, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between rounded-lg border border-border p-2.5"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{d.title}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {DOC_CATEGORIES.find((c) => c.value === d.docType)?.label ?? d.docType} ·{" "}
+                          {d.file.name}
+                        </p>
+                      </div>
+                    </div>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeDoc(i)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="rounded-lg border border-dashed border-border p-3 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Document title</Label>
+                  <Input
+                    value={docDraft.title}
+                    placeholder="e.g. SPV Shareholders Agreement"
+                    onChange={(e) => setDocDraft({ ...docDraft, title: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Category</Label>
+                  <Select
+                    value={docDraft.docType}
+                    onValueChange={(v) => setDocDraft({ ...docDraft, docType: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DOC_CATEGORIES.map((c) => (
+                        <SelectItem key={c.value} value={c.value}>
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+                <div className="space-y-1.5 flex-1">
+                  <Label className="text-xs">File</Label>
+                  <Input
+                    key={`doc-file-${docs.length}`}
+                    type="file"
+                    onChange={(e) =>
+                      setDocDraft({ ...docDraft, file: e.target.files?.[0] ?? null })
+                    }
+                  />
+                </div>
+                <Button type="button" variant="outline" onClick={addDoc}>
+                  <Plus className="h-4 w-4 mr-1" /> Add document
+                </Button>
+              </div>
             </div>
           </div>
 
