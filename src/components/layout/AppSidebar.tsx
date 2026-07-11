@@ -144,9 +144,12 @@ const investorNavigation: NavSection[] = [
     label: "Investor",
     defaultOpen: true,
     items: [
+      { title: "Home", url: "/", icon: Home },
       { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-      { 
-        title: "My Portfolio", 
+      { title: "Browse Marketplace", url: "/marketplace", icon: Store },
+      { title: "New Investment", url: "/marketplace", icon: Plus },
+      {
+        title: "My Portfolio",
         url: "/portfolio", 
         icon: Briefcase,
         children: [

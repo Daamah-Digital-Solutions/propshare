@@ -12,12 +12,12 @@ import { SecondaryMarketTab } from "@/components/dashboard/SecondaryMarketTab";
 import { ProShareCards } from "@/components/dashboard/ProShareCards";
 import { ReinvestReturns } from "@/components/dashboard/ReinvestReturns";
 import { FamilyInvestment } from "@/components/dashboard/FamilyInvestment";
-import { 
-  LayoutDashboard, 
-  Building2, 
-  TrendingUp, 
-  Calendar, 
-  Wallet, 
+import {
+  LayoutDashboard,
+  Building2,
+  TrendingUp,
+  Calendar,
+  Wallet,
   FileText,
   Bell,
   Settings,
@@ -25,7 +25,9 @@ import {
   RefreshCcw,
   Users,
   CreditCard,
-  LogOut
+  LogOut,
+  Home,
+  Plus
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExitRequestsPanel } from "@/components/exit/ExitRequestsPanel";
@@ -70,7 +72,22 @@ const InvestorDashboard = () => {
                 </p>
               </div>
               <div className="flex items-center gap-3 flex-wrap">
-                <ExitButton variant="default" className="bg-primary text-primary-foreground hover:bg-primary/90" label="Exit" />
+                <Button
+                  className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
+                  onClick={() => navigate("/marketplace")}
+                >
+                  <Plus className="h-4 w-4" />
+                  New Investment
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Home"
+                  onClick={() => navigate("/")}
+                >
+                  <Home className="h-5 w-5" />
+                </Button>
+                <ExitButton variant="outline" label="Exit" />
                 <Button
                   variant="outline"
                   size="icon"
