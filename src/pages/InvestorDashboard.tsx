@@ -8,6 +8,7 @@ import { ReturnsTracker } from "@/components/dashboard/ReturnsTracker";
 import { InstallmentSchedule } from "@/components/dashboard/InstallmentSchedule";
 import { InvestorWallet } from "@/components/dashboard/InvestorWallet";
 import { InvestmentCertificates } from "@/components/dashboard/InvestmentCertificates";
+import { InvestorDocuments } from "@/components/dashboard/InvestorDocuments";
 import { SecondaryMarketTab } from "@/components/dashboard/SecondaryMarketTab";
 import { ProShareCards } from "@/components/dashboard/ProShareCards";
 import { ReinvestReturns } from "@/components/dashboard/ReinvestReturns";
@@ -27,13 +28,14 @@ import {
   CreditCard,
   LogOut,
   Home,
-  Plus
+  Plus,
+  FolderOpen
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExitRequestsPanel } from "@/components/exit/ExitRequestsPanel";
 import { ExitButton } from "@/components/exit/ExitButton";
 
-const validTabs = ["overview", "investments", "returns", "installments", "wallet", "cards", "market", "reinvest", "family", "certificates", "exits"];
+const validTabs = ["overview", "investments", "returns", "installments", "wallet", "cards", "market", "reinvest", "family", "certificates", "documents", "exits"];
 
 const InvestorDashboard = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -185,14 +187,22 @@ const InvestorDashboard = () => {
                   <span className="hidden sm:inline">Family Investment</span>
                   <span className="sm:hidden">Family</span>
                 </TabsTrigger>
-                <TabsTrigger 
+                <TabsTrigger
                   value="certificates"
                   className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
                 >
                   <FileText className="h-4 w-4" />
                   Certificates
                 </TabsTrigger>
-                <TabsTrigger 
+                <TabsTrigger
+                  value="documents"
+                  className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                  <span className="hidden sm:inline">Documents Center</span>
+                  <span className="sm:hidden">Docs</span>
+                </TabsTrigger>
+                <TabsTrigger
                   value="exits"
                   className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
                 >
@@ -236,6 +246,10 @@ const InvestorDashboard = () => {
 
               <TabsContent value="certificates" className="space-y-6">
                 <InvestmentCertificates />
+              </TabsContent>
+
+              <TabsContent value="documents" className="space-y-6">
+                <InvestorDocuments />
               </TabsContent>
 
               <TabsContent value="market" className="space-y-6">

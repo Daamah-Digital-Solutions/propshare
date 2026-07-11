@@ -4,7 +4,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { propertyApi, documentsApi, apiUrl, ApiError } from "@/lib/api";
+import { DOC_CATEGORIES } from "@/lib/documentCategories";
 import { FileText, Download, Upload } from "lucide-react";
 
 /** Owner Documents tab — REAL, storage-backed. Lists each of the owner's properties with
@@ -14,6 +22,7 @@ function PropertyDocs({ propId, title }: { propId: string; title: string }) {
   const { toast } = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [docTitle, setDocTitle] = useState("");
+  const [docType, setDocType] = useState("spv");
   const [busy, setBusy] = useState(false);
 
   const { data: docs } = useQuery({
@@ -28,10 +37,11 @@ function PropertyDocs({ propId, title }: { propId: string; title: string }) {
     }
     setBusy(true);
     try {
-      await documentsApi.upload(propId, file, docTitle.trim());
+      await documentsApi.upload(propId, file, docTitle.trim(), docType);
       toast({ title: "Document uploaded" });
       setFile(null);
       setDocTitle("");
+      setDocType("spv");
       qc.invalidateQueries({ queryKey: ["prop-docs", propId] });
     } catch (e) {
       toast({
@@ -81,12 +91,24 @@ function PropertyDocs({ propId, title }: { propId: string; title: string }) {
             placeholder="Document title"
             value={docTitle}
             onChange={(e) => setDocTitle(e.target.value)}
-            className="sm:max-w-[220px]"
+            className="sm:max-w-[200px]"
           />
+          <Select value={docType} onValueChange={setDocType}>
+            <SelectTrigger className="sm:max-w-[200px]">
+              <SelectValue placeholder="Category" />
+            </SelectTrigger>
+            <SelectContent>
+              {DOC_CATEGORIES.map((c) => (
+                <SelectItem key={c.value} value={c.value}>
+                  {c.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Input
             type="file"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="sm:max-w-[260px]"
+            className="sm:max-w-[240px]"
           />
           <Button onClick={upload} disabled={busy}>
             <Upload className="mr-2 h-4 w-4" /> {busy ? "Uploading…" : "Upload"}
