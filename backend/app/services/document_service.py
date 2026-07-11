@@ -93,6 +93,30 @@ async def create_property_document(
     return doc
 
 
+async def admin_create_property_document(
+    session: AsyncSession,
+    *,
+    prop_id: uuid.UUID,
+    title: str,
+    doc_type: str,
+    filename: str,
+    data: bytes,
+) -> Document:
+    """Admin upload: publish a document for ANY property (no owner check — the /admin panel is
+    already admin-gated). Same storage + row shape as the owner path."""
+    prop = await session.get(Property, prop_id)
+    if prop is None:
+        raise AppError("PROPERTY_NOT_FOUND", "Property not found.", status_code=404)
+    safe = _safe_filename(filename)
+    key = f"documents/{prop_id}/{uuid.uuid4().hex}-{safe}"
+    storage.save(key, data, content_type_for(safe))
+    doc = Document(property_id=prop_id, user_id=None, title=title, type=doc_type, file_url=key)
+    session.add(doc)
+    await session.commit()
+    await session.refresh(doc)
+    return doc
+
+
 async def create_user_document(
     session: AsyncSession,
     *,

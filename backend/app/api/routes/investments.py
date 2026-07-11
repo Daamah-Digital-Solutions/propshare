@@ -184,6 +184,23 @@ async def my_certificate(property_id: uuid.UUID, principal: PrincipalDep, sessio
     )
 
 
+@router.get("/property/{property_id}/documents.zip")
+async def my_property_documents_zip(
+    property_id: uuid.UUID, principal: PrincipalDep, session: SessionDep
+):
+    """One .zip of EVERYTHING for a single property the caller holds: their live ownership
+    certificate PLUS every published property document (SPV, agreements, valuation/financial
+    reports, legal, insurance, audit…). 404 if the property has neither for the caller."""
+    filename, data = await certificate_service.build_property_bundle_zip(
+        session, user_id=principal.user_id, property_id=property_id
+    )
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/{investment_id}", response_model=InvestmentOut)
 async def my_investment(investment_id: uuid.UUID, principal: PrincipalDep, session: SessionDep):
     inv = await investment_service.get_my_investment(

@@ -12,13 +12,14 @@ READ-ONLY here — they must only ever change through the audited service layer
 
 from __future__ import annotations
 
+import html as _html
 import uuid
 
-from sqladmin import Admin, ModelView, action
+from sqladmin import Admin, BaseView, ModelView, action, expose
 from sqladmin.authentication import AuthenticationBackend
 from sqlalchemy import select
 from starlette.requests import Request
-from starlette.responses import RedirectResponse
+from starlette.responses import HTMLResponse, RedirectResponse
 
 from app.core.config import get_settings
 from app.core.db import get_engine, session_scope
@@ -70,6 +71,7 @@ from app.models.identity import User
 from app.services import (
     auth_service,
     distribution_service,
+    document_service,
     kyc_service,
     manual_deposit_service,
     property_service,
@@ -1167,6 +1169,114 @@ class EmailOutboxAdmin(ModelView, model=EmailOutbox):
     can_delete = False
 
 
+_DOC_CATEGORIES = [
+    ("spv", "SPV Documents"),
+    ("valuation", "Valuation Reports"),
+    ("financial", "Financial & Investment Studies"),
+    ("agreement", "Agreements"),
+    ("legal", "Legal Documents"),
+    ("insurance", "Insurance Certificates"),
+    ("audit", "Smart Contract Audit Reports"),
+    ("other", "Other Documents"),
+]
+
+_UPLOAD_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<title>Upload Document - CapiMax Admin</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ body{{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+   background:#f4f5f3;margin:0;padding:32px;color:#23302a}}
+ .card{{max-width:560px;margin:0 auto;background:#fff;border:1px solid #e8e6e1;
+   border-radius:14px;padding:28px 32px;box-shadow:0 6px 22px rgba(20,40,30,.06)}}
+ h1{{font-size:20px;margin:0 0 4px}}
+ p.sub{{color:#6b726c;margin:0 0 20px;font-size:14px}}
+ label{{display:block;font-weight:600;font-size:13px;margin:14px 0 5px}}
+ input,select{{width:100%;box-sizing:border-box;padding:10px 12px;
+   border:1px solid #d9dcd8;border-radius:8px;font-size:14px}}
+ button{{margin-top:22px;width:100%;padding:12px;border:0;border-radius:9px;
+   background:#198653;color:#fff;font-weight:600;font-size:15px;cursor:pointer}}
+ a.back{{display:inline-block;margin-top:16px;color:#198653;
+   font-size:13px;text-decoration:none}}
+ .ok{{background:#e7f5ec;border:1px solid #b7e0c6;color:#0f6e4e;padding:10px 12px;
+   border-radius:8px;margin-bottom:16px;font-size:14px}}
+ .err{{background:#fdeaea;border:1px solid #f2c2c2;color:#b00;padding:10px 12px;
+   border-radius:8px;margin-bottom:16px;font-size:14px}}
+</style></head><body>
+<div class="card">
+ <h1>Upload Property Document</h1>
+ <p class="sub">Add SPV papers, valuations, agreements, insurance, audit reports, etc. for
+   any property. It appears in the investor Documents Center and on the public property page.</p>
+ {message}
+ <form method="post" enctype="multipart/form-data">
+  <label>Property</label>
+  <select name="property_id" required>{options}</select>
+  <label>Document title</label>
+  <input name="title" placeholder="e.g. SPV Shareholders Agreement" required>
+  <label>Category</label>
+  <select name="doc_type">{cats}</select>
+  <label>File</label>
+  <input type="file" name="file" required>
+  <button type="submit">Upload document</button>
+ </form>
+ <a class="back" href="/admin">&larr; Back to admin</a>
+</div></body></html>"""
+
+
+class DocumentUploadView(BaseView):
+    """Upload a property document (SPV, valuation, agreement, insurance, audit, …) for ANY
+    property, straight from the admin panel — no owner account needed. Admin-gated like the
+    rest of /admin; the file lands in the storage seam via the audited service layer."""
+
+    name = "Upload Document"
+    icon = "fa-solid fa-file-arrow-up"
+
+    @expose("/upload-document", methods=["GET", "POST"])
+    async def upload(self, request: Request):
+        if not request.session.get("admin_id"):
+            return RedirectResponse("/admin/login", status_code=302)
+        message = ""
+        if request.method == "POST":
+            form = await request.form()
+            prop_id = str(form.get("property_id") or "").strip()
+            title = str(form.get("title") or "").strip()
+            doc_type = str(form.get("doc_type") or "other").strip()
+            upload = form.get("file")
+            try:
+                if not prop_id or not title or upload is None or not hasattr(upload, "read"):
+                    raise ValueError("Property, title and a file are all required.")
+                data = await upload.read()
+                if not data:
+                    raise ValueError("The uploaded file is empty.")
+                async with session_scope() as session:
+                    await document_service.admin_create_property_document(
+                        session,
+                        prop_id=uuid.UUID(prop_id),
+                        title=title,
+                        doc_type=doc_type,
+                        filename=getattr(upload, "filename", "file") or "file",
+                        data=data,
+                    )
+                message = (
+                    f'<div class="ok">Uploaded <b>{_html.escape(title)}</b> '
+                    f"({_html.escape(doc_type)}).</div>"
+                )
+            except (ValueError, AppError) as exc:
+                msg = getattr(exc, "message", None) or str(exc)
+                message = f'<div class="err">Upload failed: {_html.escape(msg)}</div>'
+
+        async with session_scope() as session:
+            rows = (
+                await session.execute(select(Property.id, Property.title).order_by(Property.title))
+            ).all()
+        options = "".join(
+            f'<option value="{r[0]}">{_html.escape(r[1] or str(r[0]))}</option>' for r in rows
+        )
+        cats = "".join(
+            f'<option value="{v}">{_html.escape(label)}</option>' for v, label in _DOC_CATEGORIES
+        )
+        return HTMLResponse(_UPLOAD_PAGE.format(message=message, options=options, cats=cats))
+
+
 def setup_admin(app) -> Admin:
     backend = AdminAuth(secret_key=get_settings().jwt_secret)
     admin = Admin(
@@ -1219,6 +1329,7 @@ def setup_admin(app) -> Admin:
         ScheduledGiftAdmin,
         InstallmentPlanAdmin,
         InstallmentPaymentAdmin,
+        DocumentUploadView,
     ):
         admin.add_view(view)
     return admin

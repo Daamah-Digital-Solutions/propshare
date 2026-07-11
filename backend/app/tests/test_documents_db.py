@@ -209,6 +209,62 @@ async def test_certificates_zip_404_without_holdings(client, db):
     assert r.status_code == 404 and r.json()["error"]["code"] == "NO_HOLDING"
 
 
+async def test_property_documents_bundle_zip(client, db):
+    """Per-property Download-all: one .zip with the caller's certificate + every property doc,
+    each filed under a category folder."""
+    import io
+    import zipfile
+
+    tok, uid = await _user(client, db, "bundle@x.com")
+    owner_tok, oid = await _owner(client, db, "bundle-owner@x.com")
+    pid = _seed_property(db, oid, status="active", slug="bundle-p")
+    _ledger(db, uid, pid, 5)  # caller holds units -> a certificate goes in the bundle
+    for title, dtype, body in [
+        ("SPV Agreement", "spv", b"%PDF-1.4 spv"),
+        ("Valuation", "valuation", b"%PDF-1.4 val"),
+    ]:
+        up = await client.post(
+            f"/api/v1/properties/{pid}/documents",
+            files={"file": (f"{dtype}.pdf", body, "application/pdf")},
+            data={"title": title, "doc_type": dtype},
+            headers=_h(owner_tok),
+        )
+        assert up.status_code == 201, up.text
+    r = await client.get(f"/api/v1/investments/property/{pid}/documents.zip", headers=_h(tok))
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert any(n.startswith("Certificate/") and n.endswith(".pdf") for n in names)
+    assert any(n.startswith("spv/") for n in names)
+    assert any(n.startswith("valuation/") for n in names)
+
+
+async def test_property_documents_bundle_404_when_empty(client, db):
+    tok, _uid = await _user(client, db, "bundle-empty@x.com")
+    pid = _seed_property(db, None, status="active", slug="bundle-empty")  # no holding, no docs
+    r = await client.get(f"/api/v1/investments/property/{pid}/documents.zip", headers=_h(tok))
+    assert r.status_code == 404 and r.json()["error"]["code"] == "NO_DOCUMENTS"
+
+
+async def test_admin_can_upload_property_document(client, db, asession):
+    """Admin upload path (no owner check): the document publishes + appears in the public list."""
+    from app.services import document_service
+
+    pid = _seed_property(db, None, status="active", slug="admin-doc")
+    doc = await document_service.admin_create_property_document(
+        asession,
+        prop_id=uuid.UUID(pid),
+        title="Insurance Cert",
+        doc_type="insurance",
+        filename="ins.pdf",
+        data=b"%PDF-1.4 ins",
+    )
+    assert doc.id is not None
+    listed = await client.get(f"/api/v1/properties/{pid}/documents")
+    assert listed.status_code == 200
+    assert any(d["type"] == "insurance" and d["title"] == "Insurance Cert" for d in listed.json())
+
+
 # --- property image + avatar uploads (storage seam, no more 503) ------------ #
 async def test_property_image_upload_appends_and_serves(client, db):
     tok, oid = await _owner(client, db, "img-owner@x.com")

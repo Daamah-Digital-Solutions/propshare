@@ -30,6 +30,9 @@ dependencies = [
     "slowapi>=0.1.9",
     # Certificates — branded PDF generation (pure-pip; no system deps).
     "reportlab>=4.2",
+    # Pillow lets reportlab embed the PNG logo in the certificate (pure wheel; cert rendering
+    # falls back to a vector wordmark if it is ever missing, so this is not load-bearing).
+    "pillow>=10.2",
 ]
 
 [project.optional-dependencies]

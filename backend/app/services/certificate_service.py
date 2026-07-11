@@ -16,6 +16,7 @@ import datetime as dt
 import decimal
 import io
 import math
+import pathlib
 import uuid
 import zipfile
 
@@ -40,6 +41,10 @@ _INK = HexColor("#23302A")
 _MUTED = HexColor("#6B726C")
 _CREAM = HexColor("#FCFBF5")
 _PANEL = HexColor("#F3F8F4")
+
+# Official logo asset (transparent PNG). Embedded in the certificate header when available;
+# rendering falls back to the vector emblem + wordmark if it (or Pillow) is missing.
+_LOGO_PATH = pathlib.Path(__file__).resolve().parent.parent / "assets" / "capimax-logo.png"
 
 
 def _spaced_centred(
@@ -202,6 +207,32 @@ def _seal(c: canvas.Canvas, cx: float, cy: float, r: float) -> None:
     c.restoreState()
 
 
+def _draw_brand(c: canvas.Canvas, cx: float) -> None:
+    """Centre the official CapiMax PropShare logo in the header. Falls back to the vector
+    emblem + wordmark if the logo asset — or its image backend (Pillow) — is unavailable, so a
+    certificate ALWAYS renders (never 500s on a missing dependency)."""
+    try:
+        from reportlab.lib.utils import ImageReader
+
+        img = ImageReader(str(_LOGO_PATH))
+        iw, ih = img.getSize()
+        target_w = 210.0
+        target_h = target_w * ih / iw
+        top = 792.0  # just inside the top border
+        c.drawImage(
+            img,
+            cx - target_w / 2,
+            top - target_h,
+            width=target_w,
+            height=target_h,
+            mask="auto",
+            preserveAspectRatio=True,
+        )
+    except Exception:  # asset missing / no Pillow -> elegant vector fallback
+        _emblem(c, cx, 760, 24)
+        _spaced_centred(c, cx, 724, "Times-Bold", 15, "CAPIMAX PROPSHARE", 3.2, _GREEN_D)
+
+
 def render_certificate_pdf(
     *,
     holder: str,
@@ -244,9 +275,8 @@ def render_certificate_pdf(
     _corner(c, 44, 44, 1, 1)
     _corner(c, _W - 44, 44, -1, 1)
 
-    # Header: emblem, wordmark, divider.
-    _emblem(c, _CX, 760, 24)
-    _spaced_centred(c, _CX, 724, "Times-Bold", 15, "CAPIMAX PROPSHARE", 3.2, _GREEN_D)
+    # Header: official logo (with a vector emblem + wordmark fallback), then divider.
+    _draw_brand(c, _CX)
     _divider(c, _CX, 712, 150)
 
     # Title + subtitle.
@@ -420,3 +450,68 @@ async def build_all_zip(
             )
             zf.writestr(fname, pdf)
     return "capimax-certificates.zip", buf.getvalue()
+
+
+async def build_property_bundle_zip(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    property_id: uuid.UUID,
+    now: dt.datetime | None = None,
+) -> tuple[str, bytes]:
+    """ONE .zip for a SINGLE property: the caller's live ownership certificate (when they hold
+    units) PLUS every document published for the property — SPV papers, agreements, valuation
+    and financial reports, legal docs, insurance certificates, audit reports, etc. — each filed
+    under a folder named for its category. 404 only if there is genuinely nothing to include."""
+    from app.services import document_service  # lazy: avoids any import cycle
+
+    prop = await session.get(Property, property_id)
+    if prop is None:
+        raise AppError("PROPERTY_NOT_FOUND", "Property not found.", status_code=404)
+
+    buf = io.BytesIO()
+    added = 0
+    used: set[str] = set()
+
+    def _put(zf: zipfile.ZipFile, name: str, data: bytes) -> None:
+        nonlocal added
+        candidate, i = name, 2
+        while candidate in used:  # never overwrite a same-named file inside the zip
+            stem, dot, ext = name.rpartition(".")
+            candidate = f"{stem}-{i}{dot}{ext}" if dot else f"{name}-{i}"
+            i += 1
+        used.add(candidate)
+        zf.writestr(candidate, data)
+        added += 1
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 1) the caller's live ownership certificate (skip silently if they hold nothing)
+        try:
+            fname, pdf = await build_for_holding(
+                session, user_id=user_id, property_id=property_id, now=now
+            )
+            _put(zf, f"Certificate/{fname}", pdf)
+        except AppError:
+            pass
+        # 2) every published document for the property, grouped into category folders
+        try:
+            docs = await document_service.list_property_documents(session, str(property_id))
+        except AppError:
+            docs = []  # property not public yet -> just the certificate
+        for d in docs:
+            try:
+                _doc, data, _ct = await document_service.get_for_download(session, d.id)
+            except AppError:
+                continue  # a missing/forbidden file is skipped, never fatal
+            folder = (d.type or "other").strip().replace("/", "-") or "other"
+            base = d.file_url.rsplit("/", 1)[-1]
+            _put(zf, f"{folder}/{base}", data)
+
+    if added == 0:
+        raise AppError(
+            "NO_DOCUMENTS",
+            "No certificate or documents are available for this property yet.",
+            status_code=404,
+        )
+    slug = prop.slug or str(prop.id)
+    return f"{slug}-documents.zip", buf.getvalue()
