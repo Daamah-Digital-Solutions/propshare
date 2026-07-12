@@ -8,6 +8,7 @@ import { Search, SlidersHorizontal, Grid3X3, List, Hammer, ArrowRight, Building2
 import { Slider } from "@/components/ui/slider";
 import { propertyApi } from "@/lib/api";
 import { toMarketplaceProperty } from "@/lib/properties";
+import { marketplaceCountryOptions, matchesCountryFilter } from "@/lib/countries";
 
 export type OwnershipModel =
   | "ready-income"
@@ -103,9 +104,7 @@ const Marketplace = () => {
       );
     }
 
-    if (filters.country !== "all") {
-      result = result.filter((p) => p.country === filters.country);
-    }
+    result = result.filter((p) => matchesCountryFilter(p.country, filters.country));
     if (filters.city !== "all") {
       result = result.filter((p) => p.city === filters.city);
     }
@@ -151,7 +150,9 @@ const Marketplace = () => {
     return result;
   }, [filters, combinedProperties]);
 
-  const countries = [...new Set(combinedProperties.map((p) => p.country).filter(Boolean))];
+  const countries = marketplaceCountryOptions([
+    ...new Set(combinedProperties.map((p) => p.country).filter(Boolean)),
+  ]);
   const cities = [...new Set(combinedProperties.map((p) => p.city).filter(Boolean))];
 
   return (
@@ -164,7 +165,7 @@ const Marketplace = () => {
               Investment Marketplace
             </h1>
             <p className="text-lg text-primary-foreground/80 max-w-2xl">
-              Discover premium real estate investment opportunities across the GCC region.
+              Discover premium real estate investment opportunities across global markets.
               Filter by location, property type, and expected returns.
             </p>
 
@@ -316,7 +317,7 @@ const Marketplace = () => {
               }
               className="flex-1 min-w-[120px] px-3 py-2.5 bg-secondary border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             >
-              <option value="all">All Countries</option>
+              <option value="all">All Countries (Global)</option>
               {countries.map((c) => (
                 <option key={c} value={c}>{c}</option>
               ))}

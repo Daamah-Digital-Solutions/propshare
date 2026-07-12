@@ -38,7 +38,7 @@ const HeroSection = () => {
   ];
 
   return (
-    <section className="relative min-h-screen flex items-center pt-20 overflow-hidden">
+    <section className="relative min-h-screen flex items-start sm:items-center pt-3 sm:pt-20 overflow-hidden">
       {/* Background */}
       <div className="absolute inset-0 bg-gradient-hero opacity-95" />
       <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNSI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-30" />
@@ -47,7 +47,7 @@ const HeroSection = () => {
       <div className="absolute top-1/4 right-10 w-64 h-64 bg-primary-foreground/5 rounded-full blur-3xl animate-float" />
       <div className="absolute bottom-1/4 left-10 w-48 h-48 bg-accent/10 rounded-full blur-3xl animate-float" style={{ animationDelay: "2s" }} />
 
-      <div className="container mx-auto px-4 relative z-10 py-10">
+      <div className="container mx-auto px-4 relative z-10 py-5 sm:py-10">
         {/* Institutional Ecosystem Banner */}
         <div className="mb-10 animate-fade-up">
           <div className="mx-auto max-w-5xl rounded-2xl border border-primary-foreground/15 bg-primary-foreground/[0.06] backdrop-blur-md px-5 py-4 md:px-7 md:py-5 shadow-glow">

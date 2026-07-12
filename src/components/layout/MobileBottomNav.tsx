@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Home, Store, PieChart, UserCircle, ArrowLeftRight, Menu } from "lucide-react";
+import { Home, Store, PieChart, UserCircle, LogOut, Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "@/components/ui/sidebar";
 
@@ -8,7 +8,7 @@ const navItems = [
   { label: "Marketplace", href: "/marketplace", icon: Store },
   { label: "Portfolio", href: "/dashboard", icon: PieChart },
   { label: "Account", href: "/settings", icon: UserCircle },
-  { label: "P2P", href: "/secondary-market", icon: ArrowLeftRight },
+  { label: "Exit", href: "/secondary-market", icon: LogOut },
 ];
 
 const MobileBottomNav = () => {

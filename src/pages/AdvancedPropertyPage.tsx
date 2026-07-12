@@ -1251,7 +1251,7 @@ const AdvancedPropertyPage = () => {
                     <div>
                       <div className="text-xs uppercase text-muted-foreground mb-2">Company Overview</div>
                       <p className="text-sm text-muted-foreground">
-                        {property.developer.name} is a vetted developer on the Capimax PropShare network with a strong track record of delivering institutional-grade real estate across the GCC. All projects undergo Capimax legal, financial, and engineering due diligence before being listed.
+                        {property.developer.name} is a vetted developer on the Capimax PropShare network with a strong track record of delivering institutional-grade real estate across global markets. All projects undergo Capimax legal, financial, and engineering due diligence before being listed.
                       </p>
                     </div>
 

@@ -69,7 +69,7 @@ const PropertyFilters = ({
             }
             className="w-full px-4 py-2.5 bg-secondary border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
           >
-            <option value="all">All Countries</option>
+            <option value="all">All Countries (Global)</option>
             {countries.map((country) => (
               <option key={country} value={country}>
                 {country}
