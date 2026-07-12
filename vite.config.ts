@@ -20,7 +20,10 @@ export default defineConfig(({ mode }) => ({
     react(),
     mode === "development" && componentTagger(),
     VitePWA({
-      registerType: "prompt",
+      // autoUpdate (not "prompt"): a new deploy's SW self-activates (skipWaiting + clientsClaim)
+      // and reloads, so a bad build can never strand users on a cached white screen with an
+      // un-clickable "Update" prompt (see the 2026-07 Link-import incident).
+      registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "icon-192.png", "icon-512.png"],
       manifest: {
         name: "CapiMax PropShare",
