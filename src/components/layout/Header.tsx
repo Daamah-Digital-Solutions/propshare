@@ -20,20 +20,12 @@ const Header = () => {
       <div className="container mx-auto px-4">
         <div className="flex items-center justify-between h-16 md:h-20">
           {/* Logo */}
-          <Link to="/" className="flex items-center gap-2 min-w-0">
-            <img 
-              src="/icon-192.png" 
-              alt="CapiMax PropShare" 
-              className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl shadow-md flex-shrink-0"
+          <Link to="/" className="flex items-center min-w-0">
+            <img
+              src="/capimax-logo.png"
+              alt="CapiMax PropShare"
+              className="h-7 sm:h-9 w-auto flex-shrink-0"
             />
-            <div className="flex flex-col sm:flex-row sm:items-baseline leading-tight">
-              <span className="text-sm sm:text-xl font-bold text-foreground">
-                CapiMax
-              </span>
-              <span className="text-sm sm:text-xl font-bold text-primary">
-                PropShare
-              </span>
-            </div>
           </Link>
 
           {/* Desktop Navigation */}

@@ -378,17 +378,13 @@ export function AppSidebar() {
     >
       {/* Header */}
       <SidebarHeader className="border-b border-border p-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-primary to-primary/80 rounded-xl flex items-center justify-center shadow-md flex-shrink-0">
-            <span className="text-primary-foreground font-bold text-lg">C</span>
-          </div>
-          {!collapsed && (
-            <div className="flex flex-col">
-              <span className="font-bold text-foreground">Capimax</span>
-              <span className="text-xs text-primary">PropShare</span>
-            </div>
+        <Link to="/" className="flex items-center">
+          {collapsed ? (
+            <img src="/icon-192.png" alt="CapiMax PropShare" className="w-9 h-9 mx-auto" />
+          ) : (
+            <img src="/capimax-logo.png" alt="CapiMax PropShare" className="h-8 w-auto" />
           )}
-        </div>
+        </Link>
       </SidebarHeader>
 
       {/* View switcher — ALWAYS visible so anyone (guests included) can explore every role's

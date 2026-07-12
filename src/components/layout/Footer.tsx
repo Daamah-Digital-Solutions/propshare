@@ -37,13 +37,8 @@ const Footer = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-8 lg:gap-12">
           {/* Brand Column */}
           <div className="lg:col-span-2">
-            <Link to="/" className="flex items-center gap-2 mb-6">
-              <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center">
-                <span className="text-primary-foreground font-bold text-lg">C</span>
-              </div>
-              <span className="text-xl font-bold">
-                Capimax<span className="text-primary">PropShare</span>
-              </span>
+            <Link to="/" className="flex items-center mb-6">
+              <img src="/capimax-logo-white.png" alt="CapiMax PropShare" className="h-9 w-auto" />
             </Link>
             <p className="text-primary-foreground/70 mb-6 max-w-xs">
               Democratizing real estate investment through fractional ownership. Build wealth with as little as $100.

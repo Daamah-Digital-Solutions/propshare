@@ -43,16 +43,8 @@ export function MainLayout({ children }: MainLayoutProps) {
               <SidebarTrigger className="h-9 w-9" />
               
               {/* Platform Name - Always visible */}
-              <Link to="/" className="flex items-center gap-2">
-                <img 
-                  src="/icon-192.png" 
-                  alt="CapiMax PropShare" 
-                  className="w-8 h-8 rounded-lg shadow-sm"
-                />
-                <div className="flex items-baseline gap-0.5">
-                  <span className="text-base font-bold text-foreground">CapiMax</span>
-                  <span className="text-base font-bold text-primary">PropShare</span>
-                </div>
+              <Link to="/" className="flex items-center">
+                <img src="/capimax-logo.png" alt="CapiMax PropShare" className="h-8 w-auto" />
               </Link>
 
               <div className="hidden lg:flex relative ml-4">
