@@ -7,7 +7,10 @@ cookie and never exposed to JS.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, Response
+import json
+from typing import Annotated
+
+from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 from sqlalchemy import select
 
 from app.api.deps import PrincipalDep, SessionDep, current_principal
@@ -66,6 +69,7 @@ def _token_out(access: str) -> TokenOut:
 
 async def _build_me(session: SessionDep, user: User) -> MeOut:
     roles = await auth_service.get_roles(session, user.id)
+    pending_roles = await auth_service.pending_role_names(session, user.id)
     kyc = await session.execute(
         select(KycVerification.status).where(KycVerification.user_id == user.id)
     )
@@ -84,6 +88,7 @@ async def _build_me(session: SessionDep, user: User) -> MeOut:
         phone=user.phone,
         email_verified=user.email_verified,
         roles=roles,
+        pending_roles=pending_roles,
         active_role=str(user.active_role) if user.active_role is not None else None,
         kyc_status=str(kyc.scalar_one_or_none() or "pending"),
         wallet=wallet_summary,
@@ -178,6 +183,48 @@ async def request_role(body: RequestRoleIn, principal: PrincipalDep, session: Se
     if user is None:
         raise AppError("NOT_FOUND", "User not found", status_code=404)
     return await auth_service.request_role(session, user=user, role=body.role)
+
+
+_MAX_APP_FILES = 8
+_MAX_APP_FILE_BYTES = 12 * 1024 * 1024  # 12 MB per document
+
+
+@router.post("/roles/apply")
+async def apply_for_role(
+    principal: PrincipalDep,
+    session: SessionDep,
+    role: Annotated[str, Form()],
+    fields: Annotated[str, Form()] = "{}",
+    files: Annotated[list[UploadFile] | None, File()] = None,
+) -> dict:
+    """Submit a Broker / Liquidity-Provider join application (form fields + documents). Creates
+    or updates the caller's pending approval request; the admin reviews it in the panel."""
+    user = await session.get(User, principal.user_id)
+    if user is None:
+        raise AppError("NOT_FOUND", "User not found", status_code=404)
+    try:
+        parsed = json.loads(fields or "{}")
+    except json.JSONDecodeError as exc:
+        raise AppError("INVALID_FIELDS", "fields must be valid JSON.", status_code=422) from exc
+    if not isinstance(parsed, dict):
+        raise AppError("INVALID_FIELDS", "fields must be a JSON object.", status_code=422)
+
+    incoming = [f for f in (files or []) if f.filename]
+    if len(incoming) > _MAX_APP_FILES:
+        raise AppError("TOO_MANY_FILES", f"At most {_MAX_APP_FILES} documents.", status_code=422)
+    file_tuples: list[tuple[str, bytes, str | None]] = []
+    for f in incoming:
+        data = await f.read()
+        if not data:
+            continue
+        if len(data) > _MAX_APP_FILE_BYTES:
+            raise AppError("FILE_TOO_LARGE", f"'{f.filename}' exceeds 12 MB.", status_code=422)
+        file_tuples.append((f.filename or "document", data, f.content_type))
+
+    req = await auth_service.submit_role_application(
+        session, user=user, role=role, fields=parsed, files=file_tuples
+    )
+    return {"status": "pending_approval", "role": role, "request_id": str(req.id)}
 
 
 # --------------------------------------------------------------------------- #

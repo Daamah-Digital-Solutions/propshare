@@ -42,6 +42,8 @@ class MeOut(BaseModel):
     phone: str | None
     email_verified: bool
     roles: list[str]
+    # Roles the user has a pending approval request for (Task 12 — drives preview access).
+    pending_roles: list[str] = []
     active_role: str | None
     kyc_status: str
     wallet: WalletSummary

@@ -1,6 +1,8 @@
 import { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
+import { Clock } from "lucide-react";
 import { useAuth, UserRole } from "@/contexts/AuthContext";
+import { roleLabel } from "@/lib/roles";
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -17,7 +19,7 @@ const Spinner = () => (
 );
 
 export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
-  const { isAuthenticated, isLoading, userRole, authorizedRoles } = useAuth();
+  const { isAuthenticated, isLoading, userRole, authorizedRoles, pendingRoles } = useAuth();
   const location = useLocation();
 
   if (isLoading) return <Spinner />;
@@ -27,8 +29,26 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
   }
 
   if (roles && roles.length > 0 && !roles.includes(userRole)) {
-    // Authenticated but the active role can't see this page. If the user holds
-    // a required role, send them to switch; otherwise to their own dashboard.
+    // Task 12 — preview access: a user whose application for a required role is still pending
+    // may browse that role's area READ-ONLY (with a banner), instead of being bounced. Real
+    // actions stay gated server-side until the admin approves.
+    const previewing = roles.find((r) => pendingRoles.includes(r));
+    if (previewing) {
+      return (
+        <div>
+          <div className="flex items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-center text-sm text-amber-700">
+            <Clock className="h-4 w-4 shrink-0" />
+            <span>
+              You're previewing the <strong>{roleLabel(previewing)}</strong> area — your
+              application is pending admin approval. Some actions stay locked until it's approved.
+            </span>
+          </div>
+          {children}
+        </div>
+      );
+    }
+    // Authenticated but the active role can't see this page. If the user holds a required role,
+    // send them to switch; otherwise to their own dashboard.
     const canSwitch = roles.some((r) => authorizedRoles.includes(r));
     return (
       <Navigate

@@ -27,6 +27,8 @@ class RoleRequestOut(BaseModel):
     user_id: uuid.UUID
     role: str
     status: str
+    # Task 12 — the applicant's join-form data + document refs ({"fields","documents"}).
+    application: dict = {}
     created_at: dt.datetime
 
 

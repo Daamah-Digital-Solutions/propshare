@@ -33,6 +33,7 @@ from app.models.base import AppRole
 from app.models.identity import EmailToken, OAuthIdentity, RefreshToken, RoleGrantRequest, User
 from app.services import broker_service
 from app.services.integrations import email as email_provider
+from app.services.integrations import storage
 
 
 def _utcnow() -> dt.datetime:
@@ -263,6 +264,68 @@ async def request_role(session: AsyncSession, *, user: User, role: str) -> dict[
     if existing.scalar_one_or_none() is None:
         session.add(RoleGrantRequest(user_id=user.id, role=AppRole(role)))
     return {"status": "pending_approval", "role": role}
+
+
+# Roles that go through a join-form application (fields + documents) before admin approval.
+APPLICATION_ROLES = {"broker", "liquidity_provider"}
+
+
+async def pending_role_names(session: AsyncSession, user_id: uuid.UUID) -> list[str]:
+    """Roles the user has a still-pending approval request for (drives 'preview' access)."""
+    res = await session.execute(
+        select(RoleGrantRequest.role).where(
+            RoleGrantRequest.user_id == user_id, RoleGrantRequest.status == "pending"
+        )
+    )
+    return sorted(str(r) for r in res.scalars().all())
+
+
+async def submit_role_application(
+    session: AsyncSession,
+    *,
+    user: User,
+    role: str,
+    fields: dict,
+    files: list[tuple[str, bytes, str | None]],
+) -> RoleGrantRequest:
+    """Submit (or resubmit) a Broker / Liquidity-Provider join application — the applicant's
+    form fields + uploaded documents — attaching them to a pending approval request the admin
+    reviews. Documents are saved to object storage; only their refs live on the request."""
+    from app.services.document_service import _safe_filename, content_type_for  # lazy: no cycle
+
+    if role not in APPLICATION_ROLES:
+        raise AppError(
+            "INVALID_ROLE", "This role does not require an application.", status_code=422
+        )
+    if await has_role(session, user.id, role):
+        raise AppError("ALREADY_HAS_ROLE", "You already hold this role.", status_code=409)
+
+    req = (
+        await session.execute(
+            select(RoleGrantRequest).where(
+                RoleGrantRequest.user_id == user.id,
+                RoleGrantRequest.role == AppRole(role),
+                RoleGrantRequest.status == "pending",
+            )
+        )
+    ).scalar_one_or_none()
+    if req is None:
+        req = RoleGrantRequest(user_id=user.id, role=AppRole(role))
+        session.add(req)
+        await session.flush()  # need req.id to key the document storage paths
+
+    documents: list[dict] = []
+    for filename, data, content_type in files:
+        safe = _safe_filename(filename)
+        ct = content_type or content_type_for(safe)
+        key = f"role-requests/{req.id}/{uuid.uuid4().hex}-{safe}"
+        storage.save(key, data, ct)
+        documents.append(
+            {"label": filename, "key": key, "filename": safe, "content_type": ct}
+        )
+
+    req.application = {"fields": fields, "documents": documents, "submitted": True}
+    return req
 
 
 # --------------------------------------------------------------------------- #

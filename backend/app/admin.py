@@ -15,11 +15,12 @@ from __future__ import annotations
 import html as _html
 import uuid
 
+from markupsafe import Markup
 from sqladmin import Admin, BaseView, ModelView, action, expose
 from sqladmin.authentication import AuthenticationBackend
 from sqlalchemy import select
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import HTMLResponse, RedirectResponse, Response
 
 from app.core.config import get_settings
 from app.core.db import get_engine, session_scope
@@ -67,7 +68,7 @@ from app.models import (
     Wallet,
     Withdrawal,
 )
-from app.models.identity import User
+from app.models.identity import RoleGrantRequest, User
 from app.services import (
     auth_service,
     distribution_service,
@@ -77,6 +78,7 @@ from app.services import (
     property_service,
     withdrawal_service,
 )
+from app.services.integrations import storage
 
 
 class AdminAuth(AuthenticationBackend):
@@ -1277,6 +1279,132 @@ class DocumentUploadView(BaseView):
         return HTMLResponse(_UPLOAD_PAGE.format(message=message, options=options, cats=cats))
 
 
+def _fmt_application_list(model, _attr) -> str:
+    app = getattr(model, "application", None) or {}
+    nf = len(app.get("fields", {}) or {})
+    nd = len(app.get("documents", []) or [])
+    return f"{nf} fields · {nd} docs" if (nf or nd) else "—"
+
+
+def _fmt_application_detail(model, _attr) -> Markup:
+    app = getattr(model, "application", None) or {}
+    fields = app.get("fields", {}) or {}
+    docs = app.get("documents", []) or []
+    parts: list[str] = []
+    if fields:
+        parts.append("<b>Application fields</b><ul style='margin:4px 0 12px'>")
+        for k, v in fields.items():
+            parts.append(f"<li>{_html.escape(str(k))}: <b>{_html.escape(str(v))}</b></li>")
+        parts.append("</ul>")
+    if docs:
+        parts.append("<b>Documents</b><ul style='margin:4px 0'>")
+        for i, d in enumerate(docs):
+            label = _html.escape(str(d.get("label") or d.get("filename") or f"Document {i + 1}"))
+            href = f"/admin/role-application-doc?req={model.id}&i={i}"
+            parts.append(f'<li><a href="{href}" target="_blank">{label}</a></li>')
+        parts.append("</ul>")
+    return Markup("".join(parts) or "—")
+
+
+class RoleGrantRequestAdmin(ModelView, model=RoleGrantRequest):
+    name = "Role Application"
+    name_plural = "Role Applications"
+    icon = "fa-solid fa-user-shield"
+    # Broker / Liquidity-Provider activation requests (Task 12) — the applicant's join-form
+    # data + documents. Approving GRANTS the role (auto-activation).
+    column_list = [
+        RoleGrantRequest.user_id,
+        RoleGrantRequest.role,
+        RoleGrantRequest.status,
+        RoleGrantRequest.application,
+        RoleGrantRequest.created_at,
+        RoleGrantRequest.decided_at,
+    ]
+    column_labels = {
+        RoleGrantRequest.user_id: "User ID",
+        RoleGrantRequest.application: "Application",
+    }
+    column_default_sort = [(RoleGrantRequest.created_at, True)]
+    column_formatters = {RoleGrantRequest.application: _fmt_application_list}
+    column_formatters_detail = {RoleGrantRequest.application: _fmt_application_detail}
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+    async def _decide(self, request: Request, approve: bool) -> RedirectResponse:
+        pks = [p for p in request.query_params.get("pks", "").split(",") if p]
+        actor = request.session.get("admin_id")
+        actor_uuid = uuid.UUID(actor) if actor else None
+        async with session_scope() as session:
+            for pk in pks:
+                try:
+                    await auth_service.decide_role_request(
+                        session, request_id=uuid.UUID(pk), approve=approve, actor_id=actor_uuid
+                    )
+                except AppError:
+                    pass  # already decided / not found — skip, best-effort batch
+        return _back(request)
+
+    @action(
+        name="approve_role",
+        label="Approve (grant role)",
+        confirmation_message="Approve and grant the role to the selected applicant(s)?",
+        add_in_detail=True,
+        add_in_list=True,
+    )
+    async def approve_role(self, request: Request) -> RedirectResponse:
+        return await self._decide(request, True)
+
+    @action(
+        name="reject_role",
+        label="Reject",
+        confirmation_message="Reject the selected role application(s)?",
+        add_in_detail=True,
+        add_in_list=True,
+    )
+    async def reject_role(self, request: Request) -> RedirectResponse:
+        return await self._decide(request, False)
+
+
+class RoleDocView(BaseView):
+    """Session-authed download of a role-application document (linked from the detail view).
+    Hidden from the sidebar — it's a link target, not a menu item."""
+
+    name = "Role Application Document"
+
+    def is_visible(self, request: Request) -> bool:
+        return False
+
+    def is_accessible(self, request: Request) -> bool:
+        return bool(request.session.get("admin_id"))
+
+    @expose("/role-application-doc", methods=["GET"])
+    async def download(self, request: Request):
+        if not request.session.get("admin_id"):
+            return RedirectResponse("/admin/login", status_code=302)
+        try:
+            rid = uuid.UUID(request.query_params.get("req", ""))
+            i = int(request.query_params.get("i", "0"))
+        except (ValueError, TypeError):
+            return HTMLResponse("Bad request", status_code=400)
+        async with session_scope() as session:
+            req = await session.get(RoleGrantRequest, rid)
+            docs = (req.application or {}).get("documents", []) if req else []
+        if not docs or i < 0 or i >= len(docs):
+            return HTMLResponse("Not found", status_code=404)
+        doc = docs[i]
+        try:
+            data = storage.load(doc["key"])
+        except Exception:  # noqa: BLE001 — any storage error → not found
+            return HTMLResponse("File missing", status_code=404)
+        filename = doc.get("filename") or "document"
+        return Response(
+            content=data,
+            media_type=doc.get("content_type") or "application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+
 def setup_admin(app) -> Admin:
     backend = AdminAuth(secret_key=get_settings().jwt_secret)
     admin = Admin(
@@ -1291,6 +1419,7 @@ def setup_admin(app) -> Admin:
         PropertyMilestoneAdmin,
         UserAdmin,
         UserRoleAdmin,
+        RoleGrantRequestAdmin,
         KycAdmin,
         InvestmentAdmin,
         WalletAdmin,
@@ -1330,6 +1459,7 @@ def setup_admin(app) -> Admin:
         InstallmentPlanAdmin,
         InstallmentPaymentAdmin,
         DocumentUploadView,
+        RoleDocView,
     ):
         admin.add_view(view)
     return admin

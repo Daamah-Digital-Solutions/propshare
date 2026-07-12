@@ -17,7 +17,7 @@ import datetime
 import uuid
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Text, UniqueConstraint, func
-from sqlalchemy.dialects.postgresql import ENUM, UUID
+from sqlalchemy.dialects.postgresql import ENUM, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import AppRole, Base
@@ -130,6 +130,9 @@ class RoleGrantRequest(Base):
     )
     role: Mapped[AppRole] = mapped_column(_app_role, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    # Task 12 — the applicant's join-form data + uploaded document refs:
+    #   {"fields": {...}, "documents": [{"label","key","filename","content_type"}]}
+    application: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     decided_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )

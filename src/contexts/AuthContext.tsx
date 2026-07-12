@@ -15,6 +15,8 @@ interface AuthContextType {
   userRole: UserRole;
   /** Roles the user is authorized to switch to (from the backend). */
   authorizedRoles: UserRole[];
+  /** Roles with a pending admin approval request — grants read-only preview access. */
+  pendingRoles: UserRole[];
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
@@ -30,6 +32,12 @@ interface AuthContextType {
   switchActiveRole: (role: UserRole) => Promise<void>;
   /** Request a new role: self-serve (investor/owner) is granted; others queue for admin. */
   requestRole: (role: UserRole) => Promise<{ status: string; role: string }>;
+  /** Submit a Broker / Liquidity-Provider join application (fields + documents). */
+  applyForRole: (
+    role: UserRole,
+    fields: Record<string, string>,
+    documents: { label: string; file: File }[],
+  ) => Promise<{ status: string; role: string; request_id: string }>;
   /** Reload the current user from the backend. */
   refresh: () => Promise<void>;
 }
@@ -116,8 +124,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     [loadMe],
   );
 
+  const applyForRole = useCallback(
+    async (
+      role: UserRole,
+      fields: Record<string, string>,
+      documents: { label: string; file: File }[],
+    ) => {
+      const result = await authApi.applyForRole(role, fields, documents);
+      await loadMe(); // reflect the now-pending role (enables preview access)
+      return result;
+    },
+    [loadMe],
+  );
+
   const activeRole = (user?.active_role as UserRole | undefined) ?? "guest";
   const authorizedRoles = (user?.roles as UserRole[] | undefined) ?? [];
+  const pendingRoles = (user?.pending_roles as UserRole[] | undefined) ?? [];
 
   return (
     <AuthContext.Provider
@@ -125,6 +147,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         user,
         userRole: user ? activeRole : "guest",
         authorizedRoles,
+        pendingRoles,
         isAuthenticated: !!user,
         isLoading,
         login,
@@ -132,6 +155,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         signOut,
         switchActiveRole,
         requestRole,
+        applyForRole,
         refresh: loadMe,
       }}
     >

@@ -46,6 +46,7 @@ const RiskDisclosure = lazy(() => import("./pages/RiskDisclosure"));
 const PlatformRules = lazy(() => import("./pages/PlatformRules"));
 const KYCVerification = lazy(() => import("./pages/KYCVerification"));
 const AccountSettings = lazy(() => import("./pages/AccountSettings"));
+const RoleApplication = lazy(() => import("./pages/RoleApplication"));
 const AboutCapimaxPropShare = lazy(() => import("./pages/AboutCapimaxPropShare"));
 const FAQ = lazy(() => import("./pages/FAQ"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
@@ -164,6 +165,14 @@ const App = () => (
                     element={
                       <ProtectedRoute>
                         <AccountSettings />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/roles/apply/:role"
+                    element={
+                      <ProtectedRoute>
+                        <RoleApplication />
                       </ProtectedRoute>
                     }
                   />

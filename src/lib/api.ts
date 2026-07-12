@@ -132,6 +132,8 @@ export interface MeResponse {
   phone: string | null;
   email_verified: boolean;
   roles: string[];
+  /** Roles with a pending admin approval request (Task 12 — drives preview access). */
+  pending_roles: string[];
   active_role: string | null;
   kyc_status: string;
   wallet: WalletSummary;
@@ -198,6 +200,22 @@ export const authApi = {
 
   requestRole(role: string): Promise<{ status: string; role: string }> {
     return apiRequest("/api/v1/auth/roles/request", { method: "POST", body: { role } });
+  },
+
+  /** Submit a Broker / Liquidity-Provider join application: form fields + documents (each file
+   *  is tagged with its role — e.g. "Government ID" — via its multipart filename). */
+  applyForRole(
+    role: string,
+    fields: Record<string, string>,
+    documents: { label: string; file: File }[],
+  ): Promise<{ status: string; role: string; request_id: string }> {
+    const fd = new FormData();
+    fd.append("role", role);
+    fd.append("fields", JSON.stringify(fields));
+    for (const { label, file } of documents) {
+      fd.append("files", file, `${label} - ${file.name}`);
+    }
+    return apiRequest("/api/v1/auth/roles/apply", { method: "POST", body: fd });
   },
 
   forgotPassword(email: string): Promise<void> {

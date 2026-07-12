@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from sqlalchemy import select
 
 from app.api.deps import AdminDep, SessionDep
+from app.core.errors import AppError
 from app.models.identity import RoleGrantRequest, User
 from app.schemas.admin import AdminUserOut, GrantRoleIn, RoleDecisionIn, RoleRequestOut
 from app.services import auth_service
+from app.services.integrations import storage
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -67,10 +69,35 @@ async def list_role_requests(session: SessionDep, _admin: AdminDep, status: str 
             user_id=r.user_id,
             role=str(r.role),
             status=r.status,
+            application=r.application or {},
             created_at=r.created_at,
         )
         for r in res.scalars().all()
     ]
+
+
+@router.get("/role-requests/{request_id}/documents/{index}/download")
+async def download_role_request_document(
+    request_id: uuid.UUID, index: int, session: SessionDep, _admin: AdminDep
+):
+    """Stream one uploaded application document (admin-only) for review."""
+    req = await session.get(RoleGrantRequest, request_id)
+    if req is None:
+        raise AppError("NOT_FOUND", "Role request not found", status_code=404)
+    docs = (req.application or {}).get("documents", [])
+    if index < 0 or index >= len(docs):
+        raise AppError("NOT_FOUND", "Document not found", status_code=404)
+    doc = docs[index]
+    try:
+        data = storage.load(doc["key"])
+    except storage.StorageNotFound as exc:
+        raise AppError("NOT_FOUND", "Document file is missing", status_code=404) from exc
+    filename = doc.get("filename") or "document"
+    return Response(
+        content=data,
+        media_type=doc.get("content_type") or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/role-requests/{request_id}/decision", response_model=RoleRequestOut)
@@ -88,5 +115,6 @@ async def decide_role_request(
         user_id=req.user_id,
         role=str(req.role),
         status=req.status,
+        application=req.application or {},
         created_at=req.created_at,
     )
