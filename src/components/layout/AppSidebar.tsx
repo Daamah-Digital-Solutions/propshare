@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { Link, NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, UserRole } from "@/contexts/AuthContext";
+import { applicationRoles, roleLabel } from "@/lib/roles";
 import { BrandMark } from "@/components/layout/BrandMark";
 import { Button } from "@/components/ui/button";
 import {
@@ -65,6 +66,8 @@ import {
   Handshake,
   ChevronDown,
   ChevronRight,
+  ArrowRight,
+  Clock,
   Globe,
   Sun,
   Moon,
@@ -324,7 +327,8 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const location = useLocation();
-  const { userRole, authorizedRoles, switchActiveRole, isAuthenticated, signOut } = useAuth();
+  const { userRole, authorizedRoles, pendingRoles, switchActiveRole, isAuthenticated, signOut } = useAuth();
+  const navigate = useNavigate();
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   // Which role's view the sidebar shows. Defaults to (and follows) the real active role, but
@@ -344,6 +348,15 @@ export function AppSidebar() {
   };
 
   const navigation = getNavigationForRole(previewRole);
+
+  // When the sidebar is showing an APPROVAL role's view (Broker / Liquidity Provider) that the
+  // signed-in user doesn't actually hold, surface a Request-Access CTA right here so they don't
+  // have to open a locked dashboard to discover the join flow. Hidden once they hold the role.
+  const gatedRole =
+    applicationRoles().includes(previewRole) && !authorizedRoles.includes(previewRole)
+      ? previewRole
+      : null;
+  const gatedPending = gatedRole ? pendingRoles.includes(gatedRole) : false;
 
   useEffect(() => {
     const isDark = document.documentElement.classList.contains("dark");
@@ -415,6 +428,37 @@ export function AppSidebar() {
 
       {/* Navigation Content */}
       <SidebarContent className="px-2 py-2">
+        {/* Request-Access CTA — shown when previewing an approval role the user doesn't hold. */}
+        {!collapsed && gatedRole && (
+          <div className="mx-1 mb-2 rounded-lg border border-primary/25 bg-primary/5 p-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+              <Shield className="h-4 w-4 text-primary" />
+              {roleLabel(gatedRole)} access
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1 mb-2 leading-snug">
+              {gatedPending
+                ? "Your application is pending admin review."
+                : `You're previewing the ${roleLabel(gatedRole)} area. Request access to activate it.`}
+            </p>
+            <Button
+              size="sm"
+              variant={gatedPending ? "outline" : "default"}
+              className="w-full h-8 gap-1 text-xs"
+              onClick={() => navigate(`/roles/apply/${gatedRole}`)}
+            >
+              {gatedPending ? (
+                <>
+                  <Clock className="h-3.5 w-3.5" /> View application
+                </>
+              ) : (
+                <>
+                  <Shield className="h-3.5 w-3.5" /> Request Access
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </>
+              )}
+            </Button>
+          </div>
+        )}
         {navigation.map((section) => (
           <SidebarGroup key={section.label}>
             {!collapsed && (
