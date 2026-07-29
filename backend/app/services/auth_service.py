@@ -14,6 +14,7 @@ Cross-cutting rules honoured:
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import uuid
 
 from sqlalchemy import func, select
@@ -34,6 +35,20 @@ from app.models.identity import EmailToken, OAuthIdentity, RefreshToken, RoleGra
 from app.services import broker_service
 from app.services.integrations import email as email_provider
 from app.services.integrations import storage
+
+logger = logging.getLogger("capimax.auth")
+
+_ROLE_LABELS = {
+    "broker": "Broker",
+    "liquidity_provider": "Liquidity Provider",
+    "owner": "Property Owner",
+    "investor": "Investor",
+}
+_ROLE_DASHBOARD = {
+    "broker": "/broker-dashboard",
+    "liquidity_provider": "/liquidity-dashboard",
+    "owner": "/owner-dashboard",
+}
 
 
 def _utcnow() -> dt.datetime:
@@ -509,4 +524,53 @@ async def decide_role_request(
     req.decided_at = _utcnow()
     if approve:
         await admin_grant_role(session, target_user_id=req.user_id, role=str(req.role))
+    await _notify_role_decision(session, user_id=req.user_id, role=str(req.role), approved=approve)
     return req
+
+
+async def _notify_role_decision(
+    session: AsyncSession, *, user_id: uuid.UUID, role: str, approved: bool
+) -> None:
+    """Tell the applicant their role request was decided — an in-app notification AND a
+    transactional email (Task 12 / client requirement: 'after admin approval, an approval
+    message is sent to the user's email'). Best-effort: a mail/notify hiccup must never roll
+    back the role grant itself."""
+    from app.services import notification_service
+
+    label = _ROLE_LABELS.get(role, role.replace("_", " ").title())
+    site = get_settings().app_base_url.rstrip("/")
+    if approved:
+        dash = _ROLE_DASHBOARD.get(role)
+        link = f"{site}{dash}" if dash else site
+        subject = f"Your {label} application is approved"
+        body = (
+            f"Great news — your application for the {label} role on CapiMax PropShare has been "
+            f"approved. Your {label} dashboard and tools are now active.\n\n"
+            f"Open your dashboard: {link}\n\n"
+            "You can switch to this role anytime from the role switcher in the sidebar."
+        )
+        title = f"{label} access approved"
+        message = f"Your {label} application was approved — your {label} tools are now active."
+    else:
+        subject = f"Update on your {label} application"
+        body = (
+            f"Thank you for your interest in the {label} role on CapiMax PropShare. After review, "
+            "we're unable to approve your application at this time. If you believe this was in "
+            "error or would like to reapply, please contact our support team."
+        )
+        title = f"{label} application update"
+        message = f"Your {label} application was not approved. Please contact support for details."
+    try:
+        await notification_service.notify(
+            session,
+            user_id=user_id,
+            type="account",
+            title=title,
+            message=message,
+            email_category="security",
+            force_email=True,
+            email_subject=subject,
+            email_body=body,
+        )
+    except Exception:  # noqa: BLE001 — approval email is best-effort, never block the grant
+        logger.exception("role-decision notify failed (user=%s role=%s)", user_id, role)

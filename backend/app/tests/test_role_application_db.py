@@ -83,6 +83,13 @@ async def test_broker_application_end_to_end(client, db):
     me2 = (await client.get("/api/v1/auth/me", headers=_h(tok))).json()
     assert "broker" in me2["roles"] and "broker" not in me2["pending_roles"]
 
+    # client requirement: approval notifies the applicant — an in-app notification AND a
+    # queued (forced) approval email in the outbox that the dispatch cron sends out.
+    notifs = db("SELECT title FROM notifications WHERE user_id=:u", u=uid)
+    assert any("approved" in (t or "").lower() for (t,) in notifs), notifs
+    outbox = db("SELECT subject, status FROM email_outbox WHERE user_id=:u", u=uid)
+    assert any("approved" in (s or "").lower() and st == "pending" for (s, st) in outbox), outbox
+
 
 async def test_apply_rejects_self_serve_role(client, db):
     tok, _uid = await _user(client, db, "brk-bad@x.com")
