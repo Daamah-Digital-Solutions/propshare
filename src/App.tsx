@@ -49,6 +49,7 @@ const AccountSettings = lazy(() => import("./pages/AccountSettings"));
 const RoleApplication = lazy(() => import("./pages/RoleApplication"));
 const AboutCapimaxPropShare = lazy(() => import("./pages/AboutCapimaxPropShare"));
 const Reports = lazy(() => import("./pages/Reports"));
+const LpReports = lazy(() => import("./pages/LpReports"));
 const FAQ = lazy(() => import("./pages/FAQ"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
@@ -166,6 +167,14 @@ const App = () => (
                     element={
                       <ProtectedRoute roles={["investor"]}>
                         <Reports />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/lp-reports"
+                    element={
+                      <ProtectedRoute roles={["liquidity_provider"]}>
+                        <LpReports />
                       </ProtectedRoute>
                     }
                   />
