@@ -2,7 +2,8 @@ import { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { Clock } from "lucide-react";
 import { useAuth, UserRole } from "@/contexts/AuthContext";
-import { roleLabel } from "@/lib/roles";
+import { applicationRoles, roleLabel } from "@/lib/roles";
+import { RoleGate } from "@/components/auth/RoleGate";
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -47,16 +48,22 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
         </div>
       );
     }
-    // Authenticated but the active role can't see this page. If the user holds a required role,
-    // send them to switch; otherwise to their own dashboard.
+    // Authenticated but the active role can't see this page. If the user already HOLDS a
+    // required role, send them to switch it. Otherwise, show a Role Gate that explains the
+    // access requirement and offers "Request Access" (approval roles) / "Become" (self-serve)
+    // — instead of silently bouncing them home with no way forward.
     const canSwitch = roles.some((r) => authorizedRoles.includes(r));
-    return (
-      <Navigate
-        to={canSwitch ? "/auth?switch=1" : "/"}
-        replace
-        state={{ from: location.pathname, needRoles: roles }}
-      />
-    );
+    if (canSwitch) {
+      return (
+        <Navigate
+          to="/auth?switch=1"
+          replace
+          state={{ from: location.pathname, needRoles: roles }}
+        />
+      );
+    }
+    const target = roles.find((r) => applicationRoles().includes(r)) ?? roles[0];
+    return <RoleGate role={target} />;
   }
 
   return <>{children}</>;
