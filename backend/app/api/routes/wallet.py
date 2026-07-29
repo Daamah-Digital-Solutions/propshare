@@ -19,6 +19,7 @@ from app.core.errors import AppError
 from app.schemas.payout_methods import BankClaimIn, PlatformBankAccountOut
 from app.schemas.wallet import (
     DepositIn,
+    DepositMethodsOut,
     DepositOut,
     TransactionListOut,
     TransactionOut,
@@ -73,6 +74,20 @@ async def deposit(
         ipn_url=f"{api_base}/api/v1/payments/webhooks/nowpayments",
     )
     return DepositOut(**result)
+
+
+@router.get("/deposit/methods", response_model=DepositMethodsOut)
+async def deposit_methods(principal: PrincipalDep, session: SessionDep):
+    """Which deposit rails are live right now. Card/crypto reflect whether their
+    provider keys are set on the server; bank reflects whether the platform has at
+    least one active receiving account. The SPA uses this to show 'Coming soon' on a
+    rail before the user tries it — no fabricated availability."""
+    active_accounts = await platform_accounts_service.list_active(session)
+    return DepositMethodsOut(
+        card=payment_service.provider_configured("card"),
+        crypto=payment_service.provider_configured("crypto"),
+        bank=len(active_accounts) > 0,
+    )
 
 
 @router.get("/deposit/bank-accounts", response_model=list[PlatformBankAccountOut])

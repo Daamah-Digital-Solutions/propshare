@@ -48,6 +48,7 @@ const KYCVerification = lazy(() => import("./pages/KYCVerification"));
 const AccountSettings = lazy(() => import("./pages/AccountSettings"));
 const RoleApplication = lazy(() => import("./pages/RoleApplication"));
 const AboutCapimaxPropShare = lazy(() => import("./pages/AboutCapimaxPropShare"));
+const Reports = lazy(() => import("./pages/Reports"));
 const FAQ = lazy(() => import("./pages/FAQ"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
@@ -157,6 +158,14 @@ const App = () => (
                     element={
                       <ProtectedRoute>
                         <KYCVerification />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/reports"
+                    element={
+                      <ProtectedRoute roles={["investor"]}>
+                        <Reports />
                       </ProtectedRoute>
                     }
                   />

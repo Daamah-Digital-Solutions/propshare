@@ -93,11 +93,22 @@ export const InvestorWallet = () => {
     queryKey: ["deposit-bank-accounts"],
     queryFn: bankDepositApi.platformAccounts,
   });
+  const { data: depositMethods } = useQuery({
+    queryKey: ["deposit-methods"],
+    queryFn: walletApi.depositMethods,
+  });
 
   const methods = savedMethods ?? [];
   const banks = bankAccounts ?? [];
   const wallets = cryptoWallets ?? [];
   const platforms = platformAccounts ?? [];
+  // Which deposit rails are live. Until the query resolves, assume card/crypto are
+  // available (optimistic) so the control isn't disabled on a slow network; the server
+  // still 503s honestly if a rail isn't configured.
+  const cardLive = depositMethods?.card ?? true;
+  const cryptoLive = depositMethods?.crypto ?? true;
+  const selectedRailLive =
+    depositMethod === "card" ? cardLive : depositMethod === "crypto" ? cryptoLive : true;
 
   const available = Number(wallet?.balance ?? 0);
   const pending = Number(wallet?.pending_balance ?? 0);
@@ -365,12 +376,24 @@ export const InvestorWallet = () => {
                     <SelectValue placeholder="Select payment method" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="card">Card (Visa / Mastercard / Apple Pay / Google Pay)</SelectItem>
-                    <SelectItem value="crypto">Cryptocurrency</SelectItem>
+                    <SelectItem value="card" disabled={!cardLive}>
+                      Card (Visa / Mastercard / Apple Pay / Google Pay)
+                      {!cardLive && " — Coming soon"}
+                    </SelectItem>
+                    <SelectItem value="crypto" disabled={!cryptoLive}>
+                      Cryptocurrency{!cryptoLive && " — Coming soon"}
+                    </SelectItem>
                     <SelectItem value="bank">Bank Transfer</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+
+              {(depositMethod === "card" || depositMethod === "crypto") && !selectedRailLive && (
+                <p className="text-sm text-muted-foreground rounded-lg border border-border p-3 bg-muted/30">
+                  {depositMethod === "card" ? "Card" : "Crypto"} deposits are coming online soon.
+                  You can deposit by bank transfer in the meantime.
+                </p>
+              )}
 
               {depositMethod === "bank" && (
                 <div className="space-y-3 rounded-lg border border-border p-3 bg-muted/30">
@@ -428,7 +451,11 @@ export const InvestorWallet = () => {
               <Button
                 className="w-full"
                 onClick={handleDeposit}
-                disabled={depositing || (depositMethod === "bank" && platforms.length === 0)}
+                disabled={
+                  depositing ||
+                  (depositMethod === "bank" && platforms.length === 0) ||
+                  !selectedRailLive
+                }
               >
                 {depositing
                   ? "Submitting…"

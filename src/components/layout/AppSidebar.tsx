@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useAuth, UserRole } from "@/contexts/AuthContext";
+import { BrandMark } from "@/components/layout/BrandMark";
 import { Button } from "@/components/ui/button";
 import {
   Sidebar,
@@ -378,13 +379,13 @@ export function AppSidebar() {
     >
       {/* Header */}
       <SidebarHeader className="border-b border-border p-4">
-        <Link to="/" className="flex items-center">
-          {collapsed ? (
+        {collapsed ? (
+          <Link to="/" className="flex items-center" aria-label="CapiMax PropShare">
             <img src="/icon-192.png" alt="CapiMax PropShare" className="w-9 h-9 mx-auto" />
-          ) : (
-            <img src="/capimax-logo.png" alt="CapiMax PropShare" className="h-8 w-auto" />
-          )}
-        </Link>
+          </Link>
+        ) : (
+          <BrandMark />
+        )}
       </SidebarHeader>
 
       {/* View switcher — ALWAYS visible so anyone (guests included) can explore every role's

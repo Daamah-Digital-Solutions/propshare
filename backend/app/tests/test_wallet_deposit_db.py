@@ -264,3 +264,24 @@ async def test_nowpayments_ipn_credits(client, db, monkeypatch):
 async def test_wallet_me_requires_auth(client):
     assert (await client.get("/api/v1/wallet/me")).status_code == 401
     assert (await client.get("/api/v1/wallet/transactions")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_deposit_methods_reflects_provider_config(client, db, monkeypatch):
+    # Unauthenticated -> 401.
+    assert (await client.get("/api/v1/wallet/deposit/methods")).status_code == 401
+
+    token, _ = await _register(client, "methods@dep.com")
+    hdr = {"Authorization": f"Bearer {token}"}
+
+    # Default test settings: no Stripe/NOWPayments keys, no active platform account.
+    r = await client.get("/api/v1/wallet/deposit/methods", headers=hdr)
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {"card": False, "crypto": False, "bank": False}
+
+    # Flip Stripe on -> card becomes live, crypto still off.
+    monkeypatch.setattr(stripe, "is_configured", lambda: True)
+    r2 = await client.get("/api/v1/wallet/deposit/methods", headers=hdr)
+    assert r2.json()["card"] is True
+    assert r2.json()["crypto"] is False

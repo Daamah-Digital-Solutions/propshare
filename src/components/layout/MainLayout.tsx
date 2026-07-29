@@ -1,6 +1,7 @@
 import { ReactNode, useState } from "react";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/AppSidebar";
+import { BrandMark } from "@/components/layout/BrandMark";
 import { DevelopmentNoticeBanner } from "@/components/layout/DevelopmentNoticeBanner";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import { Button } from "@/components/ui/button";
@@ -42,10 +43,8 @@ export function MainLayout({ children }: MainLayoutProps) {
             <div className="flex items-center gap-3">
               <SidebarTrigger className="h-9 w-9" />
               
-              {/* Platform Name - Always visible */}
-              <Link to="/" className="flex items-center">
-                <img src="/capimax-logo.png" alt="CapiMax PropShare" className="h-8 w-auto" />
-              </Link>
+              {/* Platform Name - Always visible, name rendered as crisp text */}
+              <BrandMark />
 
               <div className="hidden lg:flex relative ml-4">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

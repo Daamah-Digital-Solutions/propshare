@@ -512,7 +512,18 @@ export const walletApi = {
       headers: { "Idempotency-Key": idempotencyKey },
     });
   },
+  // Which deposit rails are live right now (card->Stripe, crypto->NOWPayments, bank).
+  // Lets the UI show "Coming soon" upfront instead of after a failed attempt.
+  depositMethods(): Promise<DepositMethods> {
+    return apiRequest<DepositMethods>("/api/v1/wallet/deposit/methods");
+  },
 };
+
+export interface DepositMethods {
+  card: boolean;
+  crypto: boolean;
+  bank: boolean;
+}
 
 export const paymentApi = {
   get(id: string): Promise<PaymentStatus> {

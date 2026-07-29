@@ -51,6 +51,17 @@ class DepositOut(BaseModel):
     checkout_url: str | None  # hosted checkout to redirect to
 
 
+class DepositMethodsOut(BaseModel):
+    """Which deposit rails are LIVE right now, so the SPA can reflect availability
+    upfront instead of surprising the user with a 503 after they try. Card->Stripe,
+    crypto->NOWPayments flip on the moment their keys are set on the server; bank is
+    live whenever the platform has at least one active receiving account."""
+
+    card: bool
+    crypto: bool
+    bank: bool
+
+
 class PaymentStatusOut(BaseModel):
     id: uuid.UUID
     provider: str
