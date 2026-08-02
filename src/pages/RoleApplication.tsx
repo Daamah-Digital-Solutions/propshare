@@ -36,9 +36,12 @@ export default function RoleApplication() {
   const [files, setFiles] = useState<Record<string, File | null>>({});
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  // "Edit & resubmit" override: the server-side request stays pending (so pendingRoles still
+  // includes the role), so clearing `done` alone wouldn't reveal the form — this flag forces it.
+  const [editing, setEditing] = useState(false);
 
   const alreadyHas = authorizedRoles.includes(role as never);
-  const isPending = pendingRoles.includes(role as never) || done;
+  const isPending = (pendingRoles.includes(role as never) || done) && !editing;
 
   const label = spec ? roleLabel(spec.role) : role;
 
@@ -82,6 +85,7 @@ export default function RoleApplication() {
         .map((d) => ({ label: d.label, file: files[d.name] as File }));
       await applyForRole(spec.role, values, documents);
       setDone(true);
+      setEditing(false);
       toast.success("Application submitted", {
         description: `Your ${label} application is now pending admin review.`,
       });
@@ -133,7 +137,7 @@ export default function RoleApplication() {
                 been sent to our team. You now have read-only preview access to the {label} area —
                 we'll activate the role once it's approved.
               </p>
-              <Button variant="outline" onClick={() => setDone(false)}>
+              <Button variant="outline" onClick={() => { setEditing(true); setDone(false); }}>
                 Edit &amp; resubmit
               </Button>
             </CardContent>
@@ -142,6 +146,12 @@ export default function RoleApplication() {
           <Card>
             <CardHeader>
               <CardTitle>Application details</CardTitle>
+              {editing && (
+                <p className="text-sm text-muted-foreground">
+                  Re-enter your details and documents below, then resubmit — this updates your
+                  pending application.
+                </p>
+              )}
             </CardHeader>
             <CardContent className="space-y-5">
               {/* Fields */}
