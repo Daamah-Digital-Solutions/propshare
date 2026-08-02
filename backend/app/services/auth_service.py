@@ -329,18 +329,50 @@ async def submit_role_application(
         session.add(req)
         await session.flush()  # need req.id to key the document storage paths
 
-    documents: list[dict] = []
+    # Carry previously-uploaded documents forward on a resubmit; a new upload sharing the same
+    # label (the "<Label> - filename" prefix the SPA sends) replaces that slot. So editing just the
+    # text fields and resubmitting keeps the documents — the user needn't re-upload everything.
+    prev = req.application if isinstance(req.application, dict) else {}
+    existing = prev.get("documents", []) or []
+    by_label: dict[str, dict] = {_doc_label_key(str(d.get("label", ""))): d for d in existing}
     for filename, data, content_type in files:
         safe = _safe_filename(filename)
         ct = content_type or content_type_for(safe)
         key = f"role-requests/{req.id}/{uuid.uuid4().hex}-{safe}"
         storage.save(key, data, ct)
-        documents.append(
-            {"label": filename, "key": key, "filename": safe, "content_type": ct}
-        )
+        by_label[_doc_label_key(filename)] = {
+            "label": filename,
+            "key": key,
+            "filename": safe,
+            "content_type": ct,
+        }
 
-    req.application = {"fields": fields, "documents": documents, "submitted": True}
+    req.application = {"fields": fields, "documents": list(by_label.values()), "submitted": True}
     return req
+
+
+def _doc_label_key(name: str) -> str:
+    """The document's slot label — the part before the first ' - ' the SPA prefixes onto the
+    uploaded filename (spec labels like 'Government ID' never contain ' - ')."""
+    return name.split(" - ", 1)[0].strip()
+
+
+async def get_pending_application(
+    session: AsyncSession, *, user_id: uuid.UUID, role: str
+) -> RoleGrantRequest | None:
+    """The caller's still-pending application for ``role`` (fields + document refs), so the SPA can
+    pre-fill the edit form. None when there is no pending request."""
+    if role not in APPLICATION_ROLES:
+        return None
+    return (
+        await session.execute(
+            select(RoleGrantRequest).where(
+                RoleGrantRequest.user_id == user_id,
+                RoleGrantRequest.role == AppRole(role),
+                RoleGrantRequest.status == "pending",
+            )
+        )
+    ).scalar_one_or_none()
 
 
 # --------------------------------------------------------------------------- #

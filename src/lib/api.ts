@@ -218,6 +218,19 @@ export const authApi = {
     return apiRequest("/api/v1/auth/roles/apply", { method: "POST", body: fd });
   },
 
+  /** The caller's own pending application for a role (fields + document names), to pre-fill the
+   *  "Edit & resubmit" form. Rejects with a NOT_FOUND ApiError when there's no pending request. */
+  getRoleApplication(
+    role: string,
+  ): Promise<{
+    role: string;
+    status: string;
+    fields: Record<string, string>;
+    documents: { label: string; filename: string }[];
+  }> {
+    return apiRequest(`/api/v1/auth/roles/application/${role}`);
+  },
+
   forgotPassword(email: string): Promise<void> {
     return apiRequest("/api/v1/auth/password/forgot", {
       method: "POST",

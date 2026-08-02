@@ -101,13 +101,25 @@ async def test_apply_rejects_self_serve_role(client, db):
     assert r.status_code == 422  # owner is self-serve — not an application role
 
 
-async def test_apply_resubmit_updates_same_request(client, db):
+async def test_apply_resubmit_keeps_docs_and_prefill_endpoint(client, db):
     tok, uid = await _user(client, db, "lp-apply@x.com")
+    # first submit: a field + one document
     await client.post(
         "/api/v1/auth/roles/apply",
         data={"role": "liquidity_provider", "fields": json.dumps({"entity_type": "individual"})},
+        files=[("files", ("Proof of Funds - pof.pdf", b"%PDF pof", "application/pdf"))],
         headers=_h(tok),
     )
+
+    # prefill endpoint returns the caller's own fields + document NAMES (never storage keys)
+    app = (
+        await client.get("/api/v1/auth/roles/application/liquidity_provider", headers=_h(tok))
+    ).json()
+    assert app["status"] == "pending"
+    assert app["fields"]["entity_type"] == "individual"
+    assert len(app["documents"]) == 1 and "key" not in app["documents"][0]
+
+    # resubmit with UPDATED fields and NO files -> same request, fields updated, document kept
     await client.post(
         "/api/v1/auth/roles/apply",
         data={"role": "liquidity_provider", "fields": json.dumps({"entity_type": "institution"})},
@@ -120,3 +132,22 @@ async def test_apply_resubmit_updates_same_request(client, db):
     )
     assert len(rows) == 1  # resubmission updates the SAME pending request, not a duplicate
     assert rows[0][0]["fields"]["entity_type"] == "institution"
+    assert len(rows[0][0]["documents"]) == 1  # document carried forward on the text-only resubmit
+
+    # re-upload the SAME label -> replaces that slot (still exactly one doc for it)
+    await client.post(
+        "/api/v1/auth/roles/apply",
+        data={"role": "liquidity_provider", "fields": json.dumps({"entity_type": "institution"})},
+        files=[("files", ("Proof of Funds - pof2.pdf", b"%PDF pof2", "application/pdf"))],
+        headers=_h(tok),
+    )
+    docs = db(
+        "SELECT application FROM role_grant_requests WHERE user_id=:u AND status='pending'", u=uid
+    )[0][0]["documents"]
+    assert len(docs) == 1 and docs[0]["label"].startswith("Proof of Funds")
+
+
+async def test_role_application_prefill_404_when_none(client, db):
+    tok, _uid = await _user(client, db, "noapp@x.com")
+    r = await client.get("/api/v1/auth/roles/application/broker", headers=_h(tok))
+    assert r.status_code == 404

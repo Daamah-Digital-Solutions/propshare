@@ -227,6 +227,29 @@ async def apply_for_role(
     return {"status": "pending_approval", "role": role, "request_id": str(req.id)}
 
 
+@router.get("/roles/application/{role}")
+async def my_role_application(role: str, principal: PrincipalDep, session: SessionDep) -> dict:
+    """The caller's own pending application for ``role`` (fields + document names), so the SPA can
+    pre-fill the 'Edit & resubmit' form. 404 when there's no pending request. Storage keys are
+    never exposed — only the display label + filename."""
+    req = await auth_service.get_pending_application(
+        session, user_id=principal.user_id, role=role
+    )
+    if req is None:
+        raise AppError("NOT_FOUND", "No pending application for this role.", status_code=404)
+    app = req.application if isinstance(req.application, dict) else {}
+    documents = [
+        {"label": str(d.get("label", "")), "filename": str(d.get("filename", ""))}
+        for d in (app.get("documents") or [])
+    ]
+    return {
+        "role": role,
+        "status": req.status,
+        "fields": app.get("fields") or {},
+        "documents": documents,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Email verification & password reset
 # --------------------------------------------------------------------------- #

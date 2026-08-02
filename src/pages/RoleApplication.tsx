@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { ApiError } from "@/lib/api";
+import { ApiError, authApi } from "@/lib/api";
 import { ROLE_APPLICATIONS, roleLabel, type RoleDoc } from "@/lib/roles";
 
 /**
@@ -39,11 +39,20 @@ export default function RoleApplication() {
   // "Edit & resubmit" override: the server-side request stays pending (so pendingRoles still
   // includes the role), so clearing `done` alone wouldn't reveal the form — this flag forces it.
   const [editing, setEditing] = useState(false);
+  // Documents already attached to the pending request (from a prior submit) — carried forward on
+  // resubmit unless replaced, so a required doc that's already "on file" doesn't count as missing.
+  const [existingDocs, setExistingDocs] = useState<{ label: string; filename: string }[]>([]);
+  const [loadingExisting, setLoadingExisting] = useState(false);
 
   const alreadyHas = authorizedRoles.includes(role as never);
   const isPending = (pendingRoles.includes(role as never) || done) && !editing;
 
   const label = spec ? roleLabel(spec.role) : role;
+
+  // A document slot's label is the "<Label> - filename" prefix the SPA sends on upload.
+  const docKey = (name: string) => name.split(" - ")[0].trim();
+  const hasExistingDoc = (docLabel: string) =>
+    existingDocs.some((ed) => docKey(ed.label) === docLabel);
 
   const missing = useMemo(() => {
     if (!spec) return [];
@@ -52,10 +61,27 @@ export default function RoleApplication() {
       if (f.required && !(values[f.name] ?? "").trim()) m.push(f.label);
     }
     for (const d of spec.documents) {
-      if (d.required && !files[d.name]) m.push(d.label);
+      const onFile = existingDocs.some((ed) => ed.label.split(" - ")[0].trim() === d.label);
+      if (d.required && !files[d.name] && !onFile) m.push(d.label);
     }
     return m;
-  }, [spec, values, files]);
+  }, [spec, values, files, existingDocs]);
+
+  // "Edit & resubmit": force the form open and pre-fill it with the pending submission.
+  const startEditing = async () => {
+    setEditing(true);
+    setDone(false);
+    setLoadingExisting(true);
+    try {
+      const app = await authApi.getRoleApplication(role);
+      setValues(app.fields ?? {});
+      setExistingDocs(app.documents ?? []);
+    } catch {
+      // no pending application to prefill (e.g. just submitted this session) — open a blank form
+    } finally {
+      setLoadingExisting(false);
+    }
+  };
 
   if (!spec) {
     return (
@@ -137,7 +163,7 @@ export default function RoleApplication() {
                 been sent to our team. You now have read-only preview access to the {label} area —
                 we'll activate the role once it's approved.
               </p>
-              <Button variant="outline" onClick={() => { setEditing(true); setDone(false); }}>
+              <Button variant="outline" onClick={startEditing}>
                 Edit &amp; resubmit
               </Button>
             </CardContent>
@@ -148,8 +174,9 @@ export default function RoleApplication() {
               <CardTitle>Application details</CardTitle>
               {editing && (
                 <p className="text-sm text-muted-foreground">
-                  Re-enter your details and documents below, then resubmit — this updates your
-                  pending application.
+                  {loadingExisting
+                    ? "Loading your submitted details…"
+                    : "Your submitted details are loaded below. Update anything and resubmit — your uploaded documents are kept unless you replace them."}
                 </p>
               )}
             </CardHeader>
@@ -216,9 +243,18 @@ export default function RoleApplication() {
                         {d.required && <span className="text-destructive">*</span>}
                       </div>
                       {d.hint && <p className="text-xs text-muted-foreground ml-6">{d.hint}</p>}
-                      {files[d.name] && (
+                      {files[d.name] ? (
                         <p className="text-xs text-primary ml-6 truncate">{files[d.name]?.name}</p>
-                      )}
+                      ) : hasExistingDoc(d.label) ? (
+                        <p className="text-xs text-primary ml-6 flex items-center gap-1 truncate">
+                          <CheckCircle2 className="h-3 w-3 shrink-0" />
+                          On file
+                          {(() => {
+                            const ed = existingDocs.find((e) => docKey(e.label) === d.label);
+                            return ed?.filename ? `: ${ed.filename}` : "";
+                          })()}
+                        </p>
+                      ) : null}
                     </div>
                     <label className="shrink-0 cursor-pointer">
                       <input
@@ -231,7 +267,7 @@ export default function RoleApplication() {
                       />
                       <span className="inline-flex items-center gap-1.5 rounded-md border border-input px-3 py-2 text-sm hover:bg-secondary">
                         <UploadCloud className="h-4 w-4" />
-                        {files[d.name] ? "Replace" : "Upload"}
+                        {files[d.name] || hasExistingDoc(d.label) ? "Replace" : "Upload"}
                       </span>
                     </label>
                   </div>
