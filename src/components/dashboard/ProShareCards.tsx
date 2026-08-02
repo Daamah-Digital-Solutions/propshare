@@ -108,7 +108,7 @@ export const ProShareCards = () => {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Badge variant="outline" className="border-primary/30 text-primary">
-              <CreditCard className="w-3 h-3 mr-1" /> CapiMax ProShare Cards
+              <CreditCard className="w-3 h-3 mr-1" /> Capimax ProShare Cards
             </Badge>
             <Badge variant="outline" className="border-amber-500/30 text-amber-600">
               <Sparkles className="w-3 h-3 mr-1" /> Preview

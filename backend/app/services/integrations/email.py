@@ -75,7 +75,7 @@ def render_email_html(
     footnote: str | None = None,
     preheader: str | None = None,
 ) -> str:
-    """Render a plain message into the branded CapiMax PropShare HTML email."""
+    """Render a plain message into the branded Capimax PropShare HTML email."""
     site = get_settings().app_base_url.rstrip("/")
     year = dt.datetime.now(dt.UTC).year
     esc_title = htmllib.escape(title)
@@ -131,7 +131,7 @@ def render_email_html(
             <!-- Logo header -->
             <tr><td align="center" style="background:#ffffff;padding:32px 40px 24px;
                    border-bottom:1px solid {_BORDER};">
-              <img src="{logo}" width="220" height="62" alt="CapiMax PropShare"
+              <img src="{logo}" width="220" height="62" alt="Capimax PropShare"
                    style="display:block;width:220px;max-width:62%;height:auto;border:0;
                    outline:none;text-decoration:none;margin:0 auto;">
             </td></tr>
@@ -151,7 +151,7 @@ def render_email_html(
         <tr><td style="padding:24px 20px 6px;text-align:center;">
           <p style="margin:0 0 10px;color:{_MUTED};font-size:12px;line-height:1.7;">
             <a href="{site}"
-               style="color:{_MUTED};text-decoration:underline;">Visit CapiMax PropShare</a>
+               style="color:{_MUTED};text-decoration:underline;">Visit Capimax PropShare</a>
             &nbsp;&middot;&nbsp;
             <a href="{site}/support" style="color:{_MUTED};text-decoration:underline;">Support</a>
             &nbsp;&middot;&nbsp;
@@ -160,8 +160,8 @@ def render_email_html(
             <a href="{site}/terms" style="color:{_MUTED};text-decoration:underline;">Terms</a>
           </p>
           <p style="margin:0;color:{_MUTED};font-size:12px;line-height:1.7;">
-            This is an automated message from CapiMax PropShare — please do not reply.<br>
-            &copy; {year} CapiMax PropShare · Fractional real-estate ownership across global markets.
+            This is an automated message from Capimax PropShare — please do not reply.<br>
+            &copy; {year} Capimax PropShare · Fractional real-estate ownership across global markets.
           </p>
         </td></tr>
       </table>
@@ -174,7 +174,7 @@ async def send_email(*, to: str, subject: str, text: str, html: str | None = Non
     """Send an email via the configured provider as multipart (plain text + branded HTML).
 
     ``text`` is always the fallback body; ``html`` is the rich body. When ``html`` is omitted
-    the plain text is auto-wrapped in the branded CapiMax PropShare template, so EVERY email
+    the plain text is auto-wrapped in the branded Capimax PropShare template, so EVERY email
     (verification, reset, notifications) looks professional with no per-caller work. A provider
     error is logged and re-raised so the caller can decide — except console, which never raises."""
     settings = get_settings()

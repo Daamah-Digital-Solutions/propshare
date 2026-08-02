@@ -170,7 +170,7 @@ async def test_certificate_pdf_from_real_holding(client, db):
     assert r.content.startswith(b"%PDF")
     assert b"Prop" in r.content  # real property title in the document
     assert b"12 fractional ownership" in r.content  # real units from the ledger (attestation)
-    assert b"CapiMax PropShare" in r.content  # branded header
+    assert b"Capimax PropShare" in r.content  # branded header
 
 
 async def test_certificate_404_without_holding(client, db):

@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     # --- Email (Phase 1: verification + password reset ONLY) ---
     # provider: "console" (dev — logs the link), "resend", or "smtp"
     email_provider: str = "console"
-    email_from: str = "CapiMax <no-reply@capimax.local>"
+    email_from: str = "Capimax <no-reply@capimax.local>"
     resend_api_key: str = ""
     smtp_host: str = ""
     smtp_port: int = 587

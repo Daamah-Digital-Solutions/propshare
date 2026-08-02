@@ -208,7 +208,7 @@ def _seal(c: canvas.Canvas, cx: float, cy: float, r: float) -> None:
 
 
 def _draw_brand(c: canvas.Canvas, cx: float) -> None:
-    """Centre the official CapiMax PropShare logo in the header. Falls back to the vector
+    """Centre the official Capimax PropShare logo in the header. Falls back to the vector
     emblem + wordmark if the logo asset — or its image backend (Pillow) — is unavailable, so a
     certificate ALWAYS renders (never 500s on a missing dependency)."""
     try:
@@ -246,10 +246,10 @@ def render_certificate_pdf(
     cert_ref: str,
     issued: str,
 ) -> bytes:
-    """Draw the branded CapiMax PropShare certificate (A4, classic styling)."""
+    """Draw the branded Capimax PropShare certificate (A4, classic styling)."""
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(_W, _H), pageCompression=0)
-    c.setTitle("CapiMax PropShare — Certificate of Ownership")
+    c.setTitle("Capimax PropShare — Certificate of Ownership")
 
     # Ground + faint monogram watermark.
     c.setFillColor(_CREAM)
@@ -300,7 +300,7 @@ def render_certificate_pdf(
     _fit_centred(c, _CX, 530, "Times-Bold", 14, property_title, 430, _GREEN)
     c.setFillColor(_INK)
     c.setFont("Times-Roman", 12)
-    c.drawCentredString(_CX, 510, "as recorded in the CapiMax PropShare ownership ledger.")
+    c.drawCentredString(_CX, 510, "as recorded in the Capimax PropShare ownership ledger.")
 
     # Fact panel (2 columns x 4 rows).
     px, py, pw, ph = 82, 292, _W - 164, 170
@@ -336,7 +336,7 @@ def render_certificate_pdf(
     c.line(92, 210, 250, 210)
     c.setFillColor(_GREEN_D)
     c.setFont("Times-Italic", 12)
-    c.drawString(98, 216, "CapiMax PropShare")
+    c.drawString(98, 216, "Capimax PropShare")
     c.setFillColor(_MUTED)
     c.setFont("Helvetica", 8)
     c.drawString(92, 196, "Authorized on behalf of the platform")
@@ -345,7 +345,7 @@ def render_certificate_pdf(
     c.setFillColor(_MUTED)
     c.setFont("Times-Roman", 8.5)
     footer_text = (
-        "This certificate reflects the fractional units recorded in the CapiMax PropShare "
+        "This certificate reflects the fractional units recorded in the Capimax PropShare "
         "ownership ledger as of the issue date. It is generated from live data and is not a "
         "transferable security or a substitute for the offering documents and SPV agreements "
         "governing this property."

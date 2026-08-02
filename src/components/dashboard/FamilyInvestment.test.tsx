@@ -29,7 +29,7 @@ vi.mock("@/lib/api", () => ({
   holdingsApi: { mine: (...a: unknown[]) => holdingsMock(...a) },
 }));
 
-// Estate/Gifting is CapiMax's own feature (real backend planned, built last); its mock
+// Estate/Gifting is Capimax's own feature (real backend planned, built last); its mock
 // component is no longer mounted by FamilyInvestment, but stub it harmlessly for safety.
 vi.mock("./FamilyBeneficiaryGifting", () => ({ FamilyBeneficiaryGifting: () => <div>estate</div> }));
 

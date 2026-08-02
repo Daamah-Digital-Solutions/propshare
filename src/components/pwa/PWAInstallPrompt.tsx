@@ -53,10 +53,10 @@ const PWAInstallPrompt = () => {
         <div className="bg-card border border-border rounded-2xl shadow-xl p-4">
           <div className="flex items-start gap-3">
             <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0">
-              <img src="/icon-192.png" alt="CapiMax PropShare" className="w-full h-full object-cover" />
+              <img src="/icon-192.png" alt="Capimax PropShare" className="w-full h-full object-cover" />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-foreground text-sm">Install CapiMax PropShare</h3>
+              <h3 className="font-semibold text-foreground text-sm">Install Capimax PropShare</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Add to home screen for quick access & offline use
               </p>
@@ -92,10 +92,10 @@ const PWAInstallPrompt = () => {
         <div className="bg-card border border-border rounded-2xl shadow-xl p-4">
           <div className="flex items-start gap-3">
             <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0">
-              <img src="/icon-192.png" alt="CapiMax PropShare" className="w-full h-full object-cover" />
+              <img src="/icon-192.png" alt="Capimax PropShare" className="w-full h-full object-cover" />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-foreground text-sm">Install CapiMax PropShare</h3>
+              <h3 className="font-semibold text-foreground text-sm">Install Capimax PropShare</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Tap <span className="inline-flex items-center align-middle mx-0.5 px-1 py-0.5 bg-secondary rounded text-foreground">
                   <Smartphone className="h-3 w-3 mr-0.5" /> Share

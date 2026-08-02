@@ -1,4 +1,4 @@
-// CapiMax API client (Phase 1 cutover).
+// Capimax API client (Phase 1 cutover).
 //
 // Talks to the Python (FastAPI) backend. Security model (owner-mandated):
 //   - the ACCESS token lives in MEMORY only (this module) — never localStorage;

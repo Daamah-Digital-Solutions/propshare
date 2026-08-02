@@ -1183,7 +1183,7 @@ _DOC_CATEGORIES = [
 ]
 
 _UPLOAD_PAGE = """<!doctype html><html><head><meta charset="utf-8">
-<title>Upload Document - CapiMax Admin</title>
+<title>Upload Document - Capimax Admin</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
  body{{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;
@@ -1412,7 +1412,7 @@ def setup_admin(app) -> Admin:
         engine=get_engine(),
         authentication_backend=backend,
         base_url="/admin",
-        title="CapiMax Admin",
+        title="Capimax Admin",
     )
     for view in (
         PropertyAdmin,

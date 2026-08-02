@@ -365,20 +365,20 @@ async def issue_email_token(session: AsyncSession, user: User, *, kind: str) -> 
     path = "/verify-email" if kind == "verify" else "/reset-password"
     link = email_provider.build_link(path, raw)
     if kind == "verify":
-        subject = "Verify your CapiMax PropShare email"
+        subject = "Verify your Capimax PropShare email"
         intro = (
-            "Welcome to CapiMax PropShare! Please confirm your email address to activate your "
+            "Welcome to Capimax PropShare! Please confirm your email address to activate your "
             "account and start exploring fractional property ownership."
         )
         cta_label = "Verify email address"
         expiry = "24 hours"
         footnote = (
-            "If you didn't create a CapiMax PropShare account, "
+            "If you didn't create a Capimax PropShare account, "
             "you can safely ignore this email."
         )
     else:
-        subject = "Reset your CapiMax PropShare password"
-        intro = "We received a request to reset the password for your CapiMax PropShare account."
+        subject = "Reset your Capimax PropShare password"
+        intro = "We received a request to reset the password for your Capimax PropShare account."
         cta_label = "Reset password"
         expiry = "1 hour"
         footnote = (
@@ -544,7 +544,7 @@ async def _notify_role_decision(
         link = f"{site}{dash}" if dash else site
         subject = f"Your {label} application is approved"
         body = (
-            f"Great news — your application for the {label} role on CapiMax PropShare has been "
+            f"Great news — your application for the {label} role on Capimax PropShare has been "
             f"approved. Your {label} dashboard and tools are now active.\n\n"
             f"Open your dashboard: {link}\n\n"
             "You can switch to this role anytime from the role switcher in the sidebar."
@@ -554,7 +554,7 @@ async def _notify_role_decision(
     else:
         subject = f"Update on your {label} application"
         body = (
-            f"Thank you for your interest in the {label} role on CapiMax PropShare. After review, "
+            f"Thank you for your interest in the {label} role on Capimax PropShare. After review, "
             "we're unable to approve your application at this time. If you believe this was in "
             "error or would like to reapply, please contact our support team."
         )

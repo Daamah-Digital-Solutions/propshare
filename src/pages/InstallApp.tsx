@@ -69,11 +69,11 @@ const InstallApp = () => {
         <Card className="max-w-md w-full text-center">
           <CardHeader>
             <div className="mx-auto w-20 h-20 mb-4">
-              <img src="/icon-512.png" alt="CapiMax PropShare" className="w-full h-full rounded-2xl shadow-lg" />
+              <img src="/icon-512.png" alt="Capimax PropShare" className="w-full h-full rounded-2xl shadow-lg" />
             </div>
             <CardTitle className="text-2xl text-primary">App Installed!</CardTitle>
             <CardDescription>
-              CapiMax PropShare is now installed on your device. You can access it from your home screen.
+              Capimax PropShare is now installed on your device. You can access it from your home screen.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -96,10 +96,10 @@ const InstallApp = () => {
         {/* Header */}
         <div className="text-center mb-8">
           <div className="mx-auto w-24 h-24 mb-6">
-            <img src="/icon-512.png" alt="CapiMax PropShare" className="w-full h-full rounded-3xl shadow-xl" />
+            <img src="/icon-512.png" alt="Capimax PropShare" className="w-full h-full rounded-3xl shadow-xl" />
           </div>
           <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-3">
-            Install CapiMax PropShare
+            Install Capimax PropShare
           </h1>
           <p className="text-muted-foreground text-lg">
             Get the full mobile experience with our installable app
@@ -174,7 +174,7 @@ const InstallApp = () => {
             <CardContent className="pt-6">
               <Button onClick={handleInstall} size="lg" className="w-full gap-2">
                 <Download className="h-5 w-5" />
-                Install CapiMax PropShare
+                Install Capimax PropShare
               </Button>
             </CardContent>
           </Card>

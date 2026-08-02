@@ -360,7 +360,7 @@ const Reports = () => {
         </Card>
 
         <p className="text-xs text-muted-foreground text-center">
-          All figures are generated live from your account records. CapiMax PropShare · confidential statement.
+          All figures are generated live from your account records. Capimax PropShare · confidential statement.
         </p>
       </div>
     </div>

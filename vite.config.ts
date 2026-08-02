@@ -26,8 +26,8 @@ export default defineConfig(({ mode }) => ({
       registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "icon-192.png", "icon-512.png"],
       manifest: {
-        name: "CapiMax PropShare",
-        short_name: "CapiMax",
+        name: "Capimax PropShare",
+        short_name: "Capimax",
         description: "Invest in premium real estate through fractional ownership. Earn rental income and benefit from property appreciation starting at $100.",
         theme_color: "#1a365d",
         background_color: "#ffffff",

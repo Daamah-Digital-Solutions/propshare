@@ -1,6 +1,6 @@
 """Unit tests for the branded HTML email template (no DB / no network).
 
-Guards that every outgoing email is wrapped in the professional CapiMax PropShare
+Guards that every outgoing email is wrapped in the professional Capimax PropShare
 shell, that user-supplied text is HTML-escaped (no injection / broken markup), that a
 CTA renders as a button + copy-paste fallback, and that plain-text sends auto-wrap."""
 

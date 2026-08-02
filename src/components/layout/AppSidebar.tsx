@@ -383,7 +383,7 @@ export function AppSidebar() {
   const handleInstallPWA = async () => {
     if (isInstalled) {
       toast.success("App already installed", {
-        description: "CapiMax PropShare is installed on this device.",
+        description: "Capimax PropShare is installed on this device.",
       });
       return;
     }
@@ -412,8 +412,8 @@ export function AppSidebar() {
       {/* Header */}
       <SidebarHeader className="border-b border-border p-4">
         {collapsed ? (
-          <Link to="/" className="flex items-center" aria-label="CapiMax PropShare">
-            <img src="/icon-192.png" alt="CapiMax PropShare" className="w-9 h-9 mx-auto" />
+          <Link to="/" className="flex items-center" aria-label="Capimax PropShare">
+            <img src="/icon-192.png" alt="Capimax PropShare" className="w-9 h-9 mx-auto" />
           </Link>
         ) : (
           <BrandMark />

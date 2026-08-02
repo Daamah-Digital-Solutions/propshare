@@ -38,7 +38,7 @@ const Footer = () => {
           {/* Brand Column */}
           <div className="lg:col-span-2">
             <Link to="/" className="flex items-center mb-6">
-              <img src="/capimax-logo-white.png" alt="CapiMax PropShare" className="h-9 w-auto" />
+              <img src="/capimax-logo-white.png" alt="Capimax PropShare" className="h-9 w-auto" />
             </Link>
             <p className="text-primary-foreground/70 mb-6 max-w-xs">
               Democratizing real estate investment through fractional ownership. Build wealth with as little as $100.

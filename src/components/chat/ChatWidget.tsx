@@ -3,7 +3,7 @@ import { MessageCircle, X, Send, RefreshCw, Sparkles, Loader2 } from "lucide-rea
 import { cn } from "@/lib/utils";
 
 /**
- * CapiMax PropShare assistant — a floating chat widget wired to the platform's n8n agent.
+ * Capimax PropShare assistant — a floating chat widget wired to the platform's n8n agent.
  *
  * The browser calls the webhook DIRECTLY (CORS is pre-enabled for the apex + www); no backend
  * proxy. Contract:
@@ -31,7 +31,7 @@ interface ChatMessage {
 const WELCOME: ChatMessage = {
   id: "welcome",
   role: "assistant",
-  text: "👋 Hi! I'm the CapiMax PropShare assistant. Ask me anything about investing, properties, fees, or how the platform works.",
+  text: "👋 Hi! I'm the Capimax PropShare assistant. Ask me anything about investing, properties, fees, or how the platform works.",
 };
 
 const uid = () =>
@@ -252,7 +252,7 @@ export function ChatWidget() {
       {!open && (
         <button
           type="button"
-          aria-label="Open CapiMax assistant"
+          aria-label="Open Capimax assistant"
           onClick={() => setOpen(true)}
           // Sits above the mobile bottom tab bar (h-16 + safe area, shown below `lg`); drops to
           // the normal corner offset at `lg`+ where that nav is hidden.
@@ -270,7 +270,7 @@ export function ChatWidget() {
       {open && (
         <div
           role="dialog"
-          aria-label="CapiMax assistant"
+          aria-label="Capimax assistant"
           // Panel clears the mobile tab bar too (below `lg`), and tucks into the corner at `lg`+.
           className="fixed bottom-[calc(5rem_+_env(safe-area-inset-bottom))] right-4 z-[60] flex w-[calc(100vw-2rem)] max-w-[380px] flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl lg:bottom-4"
           style={{ height: "min(65vh, 560px)" }}
@@ -281,7 +281,7 @@ export function ChatWidget() {
               <Sparkles className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold leading-tight">CapiMax Assistant</div>
+              <div className="text-sm font-semibold leading-tight">Capimax Assistant</div>
               <div className="text-[11px] text-primary-foreground/80">
                 Investing, properties &amp; fees
               </div>

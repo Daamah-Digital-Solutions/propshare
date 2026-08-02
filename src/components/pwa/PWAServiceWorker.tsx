@@ -17,7 +17,7 @@ const PWAServiceWorker = () => {
           immediate: true,
           onOfflineReady() {
             toast.success("App ready for offline use", {
-              description: "CapiMax PropShare has been cached and works offline.",
+              description: "Capimax PropShare has been cached and works offline.",
               icon: <WifiOff className="h-5 w-5" />,
               duration: 5000,
             });

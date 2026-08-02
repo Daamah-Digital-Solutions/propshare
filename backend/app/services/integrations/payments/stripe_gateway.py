@@ -46,7 +46,7 @@ async def create_checkout(
     success_url: str,
     cancel_url: str,
     idempotency_key: str | None,
-    product_name: str = "CapiMax wallet deposit",
+    product_name: str = "Capimax wallet deposit",
 ) -> CheckoutResult:
     if not is_configured():
         raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)

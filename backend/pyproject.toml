@@ -1,7 +1,7 @@
 [project]
 name = "capimax-backend"
 version = "0.0.1"
-description = "CapiMax PropShare — Python (FastAPI) backend. Phase 0: foundation & schema adoption."
+description = "Capimax PropShare — Python (FastAPI) backend. Phase 0: foundation & schema adoption."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",

@@ -23,7 +23,7 @@ const Header = () => {
           <Link to="/" className="flex items-center min-w-0">
             <img
               src="/capimax-logo.png"
-              alt="CapiMax PropShare"
+              alt="Capimax PropShare"
               className="h-7 sm:h-9 w-auto flex-shrink-0"
             />
           </Link>

@@ -13,7 +13,7 @@ def test_openapi_json() -> None:
         assert resp.status_code == 200
         spec = resp.json()
         assert spec["openapi"].startswith("3.")
-        assert spec["info"]["title"] == "CapiMax PropShare API"
+        assert spec["info"]["title"] == "Capimax PropShare API"
         assert "/healthz" in spec["paths"]
 
 

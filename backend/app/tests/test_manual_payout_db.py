@@ -195,14 +195,14 @@ async def test_bank_deposit_claim_confirm_credits(client, db, asession):
     acct = await platform_accounts_service.create(
         asession,
         actor_id=None,
-        bank_name="CapiMax Bank",
-        account_holder="CapiMax LTD",
+        bank_name="Capimax Bank",
+        account_holder="Capimax LTD",
         iban="AE000CAPIMAX",
     )
     await asession.commit()
     h = _auth(tok)
     listed = (await client.get("/api/v1/wallet/deposit/bank-accounts", headers=h)).json()
-    assert len(listed) == 1 and listed[0]["bank_name"] == "CapiMax Bank"
+    assert len(listed) == 1 and listed[0]["bank_name"] == "Capimax Bank"
 
     res = await client.post(
         "/api/v1/wallet/deposit/bank-transfer",

@@ -403,7 +403,7 @@ const LpReports = () => {
 
         <p className="text-xs text-muted-foreground text-center">
           Realized cash flows only — resale proceeds settle to your wallet per sale (Wallet → Transactions).
-          All figures are live from your account. CapiMax PropShare · confidential statement.
+          All figures are live from your account. Capimax PropShare · confidential statement.
         </p>
       </div>
     </div>

@@ -402,7 +402,7 @@ export const FamilyInvestment = () => {
           </div>
         </TabsContent>
 
-        {/* Estate / Beneficiaries — CapiMax's OWN feature (not BRX). Real beneficiary
+        {/* Estate / Beneficiaries — Capimax's OWN feature (not BRX). Real beneficiary
             register wired to the estate API (Group 4); inheritance executes on admin-verified
             death. The gifting section inside is an honest placeholder (backend pending). */}
         <TabsContent value="estate" className="space-y-4">

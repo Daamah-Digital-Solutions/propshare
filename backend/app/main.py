@@ -73,9 +73,9 @@ async def lifespan(_: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
-        title="CapiMax PropShare API",
+        title="Capimax PropShare API",
         version=__version__,
-        description="CapiMax PropShare backend. Phase 0 — foundation & schema adoption.",
+        description="Capimax PropShare backend. Phase 0 — foundation & schema adoption.",
         lifespan=lifespan,
     )
 

@@ -186,9 +186,9 @@ async def add_member(
             email_category="invite" if email else None,
             email_to=email,
             force_email=bool(email),
-            email_subject="You've been invited to a CapiMax family group",
+            email_subject="You've been invited to a Capimax family group",
             email_body=(
-                f"{name}, you've been invited to join a family investment group on CapiMax "
+                f"{name}, you've been invited to join a family investment group on Capimax "
                 "PropShare. Register and verify your identity to receive your allocated units."
             ),
         )

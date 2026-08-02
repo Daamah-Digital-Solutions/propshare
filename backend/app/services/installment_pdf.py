@@ -1,6 +1,6 @@
 """Branded installment-schedule PDF (Task 6).
 
-A REAL, elegantly branded PDF of an investor's installment plan — the official CapiMax
+A REAL, elegantly branded PDF of an investor's installment plan — the official Capimax
 PropShare design (green/gold classic frame, the platform logo in the header, a serif hand),
 matching the certificate's visual language. It carries the full plan details the client asked
 for: the property under installment, the plan summary (contract value, down payment, duration,
@@ -79,7 +79,7 @@ def _footer(c: canvas.Canvas, plan_ref: str) -> None:
     c.setFillColor(_MUTED)
     c.setFont("Times-Roman", 8.5)
     note = (
-        "This schedule reflects the installment plan recorded in the CapiMax PropShare ledger as "
+        "This schedule reflects the installment plan recorded in the Capimax PropShare ledger as "
         "of the issue date. It is generated from live data. Ownership vests progressively with "
         "each paid installment; rental income begins at handover (final payment)."
     )
@@ -165,7 +165,7 @@ def render_schedule_pdf(
     figures appear literally in the bytes (verifiable in tests)."""
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(_W, _H), pageCompression=0)
-    c.setTitle("CapiMax PropShare — Installment Schedule")
+    c.setTitle("Capimax PropShare — Installment Schedule")
 
     _page_frame(c)
 

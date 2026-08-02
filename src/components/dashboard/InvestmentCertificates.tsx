@@ -319,7 +319,7 @@ export const InvestmentCertificates = () => {
             <div>
               <h4 className="font-semibold text-foreground mb-2">Important Notice</h4>
               <p className="text-sm text-muted-foreground">
-                Your investment certificates reflect the fractional units recorded in the CapiMax
+                Your investment certificates reflect the fractional units recorded in the Capimax
                 PropShare ownership ledger as of their generation date. They are generated from live
                 data and are not transferable securities or a substitute for the offering documents
                 and SPV agreements governing each property.

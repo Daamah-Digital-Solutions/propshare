@@ -16,9 +16,9 @@ describe("ChatWidget", () => {
 
   it("opens from the launcher and shows a welcome message", () => {
     render(<ChatWidget />);
-    expect(screen.queryByText(/CapiMax Assistant/i)).toBeNull(); // closed
+    expect(screen.queryByText(/Capimax Assistant/i)).toBeNull(); // closed
     open();
-    expect(screen.getByText(/CapiMax Assistant/i)).toBeInTheDocument();
+    expect(screen.getByText(/Capimax Assistant/i)).toBeInTheDocument();
     expect(screen.getByText(/Ask me anything about investing/i)).toBeInTheDocument();
   });
 
