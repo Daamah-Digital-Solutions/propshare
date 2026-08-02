@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, UserRole } from "@/contexts/AuthContext";
 import { applicationRoles, roleLabel } from "@/lib/roles";
+import { usePwaInstall } from "@/hooks/usePwaInstall";
+import { toast } from "sonner";
 import { BrandMark } from "@/components/layout/BrandMark";
 import { Button } from "@/components/ui/button";
 import {
@@ -329,6 +331,7 @@ export function AppSidebar() {
   const location = useLocation();
   const { userRole, authorizedRoles, pendingRoles, switchActiveRole, isAuthenticated, signOut } = useAuth();
   const navigate = useNavigate();
+  const { isInstalled, triggerInstall } = usePwaInstall();
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   // Which role's view the sidebar shows. Defaults to (and follows) the real active role, but
@@ -377,9 +380,25 @@ export function AppSidebar() {
     setOpenGroups(prev => ({ ...prev, [label]: !prev[label] }));
   };
 
-  const handleInstallPWA = () => {
-    // PWA install logic would go here
-    alert("Install Capimax PropShare App");
+  const handleInstallPWA = async () => {
+    if (isInstalled) {
+      toast.success("App already installed", {
+        description: "CapiMax PropShare is installed on this device.",
+      });
+      return;
+    }
+    const outcome = await triggerInstall();
+    if (outcome === "ios") {
+      toast("Install on iPhone / iPad", {
+        description: "Tap the Share icon, then choose “Add to Home Screen”.",
+      });
+    } else if (outcome === "unavailable") {
+      toast("Install from your browser", {
+        description:
+          "Open your browser menu and choose “Install app” / “Add to Home screen”.",
+      });
+    }
+    // "accepted" / "dismissed" are handled by the browser's native install dialog.
   };
 
   return (

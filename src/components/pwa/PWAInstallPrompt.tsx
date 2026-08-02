@@ -2,84 +2,49 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { X, Download, Smartphone } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePwaInstall } from "@/hooks/usePwaInstall";
 
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
-}
+const DISMISS_KEY = "pwa-prompt-dismissed";
+
+// Was the auto-popup dismissed within the last 7 days?
+const dismissedRecently = () => {
+  const at = localStorage.getItem(DISMISS_KEY);
+  if (!at) return false;
+  return (Date.now() - parseInt(at)) / (1000 * 60 * 60 * 24) < 7;
+};
 
 const PWAInstallPrompt = () => {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const { canInstall, isIOS, isInstalled, triggerInstall } = usePwaInstall();
   const [showPrompt, setShowPrompt] = useState(false);
-  const [isIOS, setIsIOS] = useState(false);
   const [showIOSPrompt, setShowIOSPrompt] = useState(false);
 
   useEffect(() => {
-    // Check if already installed
-    if (window.matchMedia("(display-mode: standalone)").matches) {
-      return;
+    if (isInstalled || dismissedRecently()) return;
+    // iOS Safari has no beforeinstallprompt — nudge with Share → Add to Home Screen.
+    if (isIOS) {
+      const t = setTimeout(() => setShowIOSPrompt(true), 3000);
+      return () => clearTimeout(t);
     }
-
-    // Check if dismissed recently (within 7 days)
-    const dismissedAt = localStorage.getItem("pwa-prompt-dismissed");
-    if (dismissedAt) {
-      const daysSinceDismissed = (Date.now() - parseInt(dismissedAt)) / (1000 * 60 * 60 * 24);
-      if (daysSinceDismissed < 7) return;
+    // Android/Desktop: only once the browser has offered an installable prompt.
+    if (canInstall) {
+      const t = setTimeout(() => setShowPrompt(true), 2000);
+      return () => clearTimeout(t);
     }
-
-    // Check if iOS
-    const isIOSDevice =
-      /iPad|iPhone|iPod/.test(navigator.userAgent) &&
-      !(window as Window & { MSStream?: unknown }).MSStream;
-    setIsIOS(isIOSDevice);
-
-    if (isIOSDevice) {
-      // Show iOS prompt after a delay
-      const timer = setTimeout(() => setShowIOSPrompt(true), 3000);
-      return () => clearTimeout(timer);
-    }
-
-    // Listen for install prompt (Android/Desktop)
-    const handleBeforeInstall = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e as BeforeInstallPromptEvent);
-      // Show prompt after a short delay
-      setTimeout(() => setShowPrompt(true), 2000);
-    };
-
-    window.addEventListener("beforeinstallprompt", handleBeforeInstall);
-
-    // Listen for successful install
-    window.addEventListener("appinstalled", () => {
-      setShowPrompt(false);
-      setDeferredPrompt(null);
-    });
-
-    return () => {
-      window.removeEventListener("beforeinstallprompt", handleBeforeInstall);
-    };
-  }, []);
+  }, [canInstall, isIOS, isInstalled]);
 
   const handleInstall = async () => {
-    if (!deferredPrompt) return;
-
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-
-    if (outcome === "accepted") {
-      setShowPrompt(false);
-    }
-    setDeferredPrompt(null);
+    await triggerInstall();
+    setShowPrompt(false);
   };
 
   const handleDismiss = () => {
     setShowPrompt(false);
     setShowIOSPrompt(false);
-    localStorage.setItem("pwa-prompt-dismissed", Date.now().toString());
+    localStorage.setItem(DISMISS_KEY, Date.now().toString());
   };
 
   // Android/Desktop Install Prompt
-  if (showPrompt && deferredPrompt) {
+  if (showPrompt && canInstall) {
     return (
       <div className={cn(
         "fixed bottom-20 lg:bottom-4 left-4 right-4 z-50 animate-fade-up",
@@ -105,7 +70,7 @@ const PWAInstallPrompt = () => {
                 </Button>
               </div>
             </div>
-            <button 
+            <button
               onClick={handleDismiss}
               className="text-muted-foreground hover:text-foreground p-1"
             >
@@ -142,7 +107,7 @@ const PWAInstallPrompt = () => {
                 </Button>
               </div>
             </div>
-            <button 
+            <button
               onClick={handleDismiss}
               className="text-muted-foreground hover:text-foreground p-1"
             >
