@@ -133,6 +133,7 @@ async def admin_confirm(
         type="wallet",
         title="Deposit confirmed",
         message=f"Your ${payment.amount} bank-transfer deposit has been credited to your wallet.",
+        email_category="investment_updates",
     )
     await write_audit(
         session,
@@ -172,6 +173,7 @@ async def admin_reject(
             f"Your ${payment.amount} bank-transfer deposit claim was not confirmed. "
             f"{payload['reject_reason']}"
         ),
+        email_category="investment_updates",
     )
     await write_audit(
         session,

@@ -302,6 +302,7 @@ async def process_webhook(
             type="wallet",
             title="Deposit received",
             message=f"Your deposit of {locked.amount_captured} {locked.currency} was credited.",
+            email_category="investment_updates",
         )
         return {"status": "processed", "result": "credited"}
 

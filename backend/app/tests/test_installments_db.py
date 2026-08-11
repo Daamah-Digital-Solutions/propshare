@@ -184,6 +184,42 @@ async def test_pay_to_completion_conserves_and_completes(client, db):
     assert _available(db, pid) + _total_ledger(db, pid) + _plan_unvested(db, pid) == 100
 
 
+# --- client requirement: every installment charge emails a receipt ----------- #
+async def test_installment_payment_sends_receipt_notification_and_email(client, db):
+    """Paying an installment must confirm to the investor — an in-app 'Installment paid'
+    notification AND a queued (email) receipt in the outbox the dispatch cron sends."""
+    tok, uid = await _user(client, db, "in-receipt@x.com")
+    _kyc_verify(db, uid)
+    _set_balance(db, uid, 100000)
+    pid = _seed_property(db)
+    plan = (await _create(client, tok, pid, amount=1200, duration=12)).json()
+
+    # the down payment (charged at creation) already produced a paid-receipt notification
+    down = db(
+        "SELECT COUNT(*) FROM notifications WHERE user_id=:u AND type='installment' "
+        "AND title='Installment paid'",
+        u=uid,
+    )[0][0]
+    assert int(down) >= 1
+
+    # pay one scheduled installment manually -> another receipt + a pending email row
+    nxt = next(p for p in plan["payments"] if p["status"] != "paid")
+    resp = await client.post(
+        f"/api/v1/installments/payments/{nxt['id']}/pay", headers={**_h(tok), **_idem()}
+    )
+    assert resp.status_code == 200, resp.text
+    notifs = db(
+        "SELECT COUNT(*) FROM notifications WHERE user_id=:u AND title='Installment paid'", u=uid
+    )[0][0]
+    assert int(notifs) >= 2
+    outbox = db(
+        "SELECT COUNT(*) FROM email_outbox WHERE user_id=:u AND status='pending' "
+        "AND subject='Installment paid'",
+        u=uid,
+    )[0][0]
+    assert int(outbox) >= 1
+
+
 # --- regression: installment principal counts toward invested cost basis ----- #
 async def test_installment_principal_counts_toward_total_invested(client, db):
     """wallet.total_invested (the portfolio's 'invested') must include installment principal —

@@ -388,6 +388,33 @@ async def _charge_payment(
         plan.status = "completed"
         plan.completed_at = _utcnow()
 
+    # Payment receipt — in-app + email. Covers BOTH the manual "Pay now" and the cron
+    # auto-charge (this is the single settle path), so every installment charged from the
+    # wallet reaches the investor as a confirmation, not just a silent balance change.
+    prop_title = prop.title
+    if plan.status == "completed":
+        notif_title = "Installment plan completed"
+        notif_msg = (
+            f"Your final installment of ${payment.total_amount} for {prop_title} was paid "
+            f"from your wallet. All {plan.units_total} units are now fully vested — the plan "
+            "is complete."
+        )
+    else:
+        label = "down payment" if payment.seq == 0 else f"installment {payment.seq}"
+        notif_msg = (
+            f"Your {label} of ${payment.total_amount} for {prop_title} was paid from your "
+            f"wallet. {plan.vested_units} of {plan.units_total} units are now vested."
+        )
+        notif_title = "Installment paid"
+    await notification_service.notify(
+        session,
+        user_id=plan.investor_id,
+        type="installment",
+        title=notif_title,
+        message=notif_msg,
+        email_category="investment_updates",
+    )
+
     await write_audit(
         session,
         action="installment.payment.paid",

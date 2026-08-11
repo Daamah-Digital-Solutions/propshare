@@ -4,6 +4,17 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Wallet, ArrowRight } from "lucide-react";
+import {
   Table,
   TableBody,
   TableCell,
@@ -29,6 +40,7 @@ import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   installmentsApi,
+  walletApi,
   ApiError,
   type InstallmentPayment,
   type InstallmentPlan,
@@ -92,10 +104,18 @@ function PlanCard({ plan }: { plan: InstallmentPlan }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  // The installment the user tapped "Pay now" on — drives the confirmation dialog. The charge
+  // is a REAL wallet debit, so we confirm the amount + source before it goes through.
+  const [confirming, setConfirming] = useState<InstallmentPayment | null>(null);
+
+  // Wallet balance, so the confirmation can show what's available and flag a shortfall up front.
+  const { data: wallet } = useQuery({ queryKey: ["wallet"], queryFn: walletApi.getMe });
+  const walletBalance = num(wallet?.balance ?? "0");
 
   const payMutation = useMutation({
     mutationFn: (paymentId: string) => installmentsApi.pay(paymentId),
     onSuccess: () => {
+      setConfirming(null);
       queryClient.invalidateQueries({ queryKey: ["installments"] });
       queryClient.invalidateQueries({ queryKey: ["wallet"] });
       queryClient.invalidateQueries({ queryKey: ["portfolio"] });
@@ -309,7 +329,7 @@ function PlanCard({ plan }: { plan: InstallmentPlan }) {
                             size="sm"
                             variant="outline"
                             disabled={payMutation.isPending}
-                            onClick={() => payMutation.mutate(p.id)}
+                            onClick={() => setConfirming(p)}
                           >
                             Pay now
                           </Button>
@@ -323,6 +343,90 @@ function PlanCard({ plan }: { plan: InstallmentPlan }) {
           </div>
         </CardContent>
       )}
+
+      {/* Payment confirmation — makes the charge a deliberate, clearly wallet-funded step
+          (not an instant "fake" click). Shows the amount, the wallet source + balance, what
+          it vests, and blocks when the balance is short. */}
+      <AlertDialog open={!!confirming} onOpenChange={(o) => !o && setConfirming(null)}>
+        <AlertDialogContent>
+          {confirming &&
+            (() => {
+              const amount = num(confirming.total_amount);
+              const short = walletBalance < amount;
+              const label =
+                confirming.kind === "downpayment"
+                  ? "down payment"
+                  : `installment (Month ${confirming.seq})`;
+              return (
+                <>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Confirm installment payment</AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                      <div className="space-y-3 pt-1">
+                        <p>
+                          You're about to pay the {label} for{" "}
+                          <span className="font-medium text-foreground">{plan.property_title}</span>.
+                          This is charged now from your{" "}
+                          <span className="font-medium text-foreground">wallet balance</span>.
+                        </p>
+                        <div className="rounded-lg border bg-muted/40 p-3 space-y-2 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Amount (base + fee)</span>
+                            <span className="font-semibold text-foreground">
+                              ${confirming.base_amount} + ${confirming.fee_amount} ={" "}
+                              {fmtUSD(amount)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground inline-flex items-center gap-1.5">
+                              <Wallet className="h-3.5 w-3.5" /> Wallet balance
+                            </span>
+                            <span
+                              className={`font-semibold ${short ? "text-destructive" : "text-foreground"}`}
+                            >
+                              {fmtUSD(walletBalance)}
+                            </span>
+                          </div>
+                          {confirming.vest_units > 0 && (
+                            <div className="flex items-center justify-between">
+                              <span className="text-muted-foreground inline-flex items-center gap-1.5">
+                                <ArrowRight className="h-3.5 w-3.5" /> Ownership this payment
+                              </span>
+                              <span className="font-semibold text-primary">
+                                +{confirming.vest_units} unit(s) vested
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        {short && (
+                          <p className="text-destructive text-sm">
+                            Your wallet balance is too low. Add funds, then try again.
+                          </p>
+                        )}
+                      </div>
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={payMutation.isPending}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={short || payMutation.isPending}
+                      onClick={(e) => {
+                        e.preventDefault(); // keep the dialog open until the mutation resolves
+                        payMutation.mutate(confirming.id);
+                      }}
+                    >
+                      {payMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <>Pay {fmtUSD(amount)} from wallet</>
+                      )}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </>
+              );
+            })()}
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
