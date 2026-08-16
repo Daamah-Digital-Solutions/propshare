@@ -60,12 +60,15 @@ export default function VerificationCenter() {
         {/* Capimax Trust gateway card + primary CTA */}
         <Card className="border-primary/20 overflow-hidden">
           <div className="bg-gradient-to-br from-primary/10 to-transparent p-8 md:p-12 text-center">
-            {/* Capimax Trust brand badge. Swap in the official Capimax Trust logo asset here
-                when provided — until then this is a branded shield lockup. */}
-            <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/20">
-              <ShieldCheck className="h-11 w-11 text-primary" />
+            {/* Official Capimax Trust logo on a clean white plate (the artwork has a light ground). */}
+            <div className="mx-auto mb-6 inline-flex items-center justify-center rounded-2xl bg-white p-6 shadow-sm ring-1 ring-border">
+              <img
+                src="/capimax-trust-logo.png"
+                alt="Capimax Trust — Verified · Secured · Connected"
+                className="h-24 md:h-28 w-auto"
+              />
             </div>
-            <h2 className="text-2xl md:text-3xl font-bold text-foreground">Capimax Trust</h2>
+            <h2 className="sr-only">Capimax Trust</h2>
             <p className="mt-1 text-sm font-medium tracking-wide text-primary uppercase">
               Central Verification Gateway
             </p>
