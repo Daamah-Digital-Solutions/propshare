@@ -14,6 +14,7 @@ const Footer = () => {
     ],
     company: [
       { label: "About Capimax PropShare", href: "/about-capimax-propshare" },
+      { label: "Verification Center", href: "/verification-center" },
       { label: "Partners", href: "/partners" },
       { label: "Platform Rules", href: "/platform-rules" },
     ],

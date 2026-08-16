@@ -78,6 +78,7 @@ import {
   UserCheck,
   Droplets,
   Layers,
+  ShieldCheck,
 } from "lucide-react";
 
 interface NavItem {
@@ -120,6 +121,7 @@ const publicNavigation: NavSection[] = [
     label: "About Platform",
     items: [
       { title: "About Capimax PropShare", url: "/about-capimax-propshare", icon: Info },
+      { title: "Verification Center", url: "/verification-center", icon: ShieldCheck },
       { title: "How It Works", url: "/how-it-works", icon: HelpCircle },
       { title: "SPV Model", url: "/spv-model", icon: Shield },
       { title: "Fees", url: "/fees", icon: CreditCard },

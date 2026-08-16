@@ -51,6 +51,7 @@ const AboutCapimaxPropShare = lazy(() => import("./pages/AboutCapimaxPropShare")
 const Reports = lazy(() => import("./pages/Reports"));
 const LpReports = lazy(() => import("./pages/LpReports"));
 const FAQ = lazy(() => import("./pages/FAQ"));
+const VerificationCenter = lazy(() => import("./pages/VerificationCenter"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
@@ -196,6 +197,7 @@ const App = () => (
                   />
                   <Route path="/about-capimax-propshare" element={<AboutCapimaxPropShare />} />
                   <Route path="/faq" element={<FAQ />} />
+                  <Route path="/verification-center" element={<VerificationCenter />} />
                   {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                   <Route path="*" element={<NotFound />} />
                 </Routes>
