@@ -2,7 +2,6 @@ import { ReactNode, useState } from "react";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { BrandMark } from "@/components/layout/BrandMark";
-import { DevelopmentNoticeBanner } from "@/components/layout/DevelopmentNoticeBanner";
 import MobileBottomNav from "@/components/layout/MobileBottomNav";
 import { Button } from "@/components/ui/button";
 import { Bell, Search, User } from "lucide-react";
@@ -99,9 +98,6 @@ export function MainLayout({ children }: MainLayoutProps) {
               )}
             </div>
           </header>
-
-          {/* Development Notice Banner */}
-          <DevelopmentNoticeBanner />
 
           {/* Main Content */}
           <main className="flex-1 pb-20 lg:pb-0">

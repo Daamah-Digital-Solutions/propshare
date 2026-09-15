@@ -16,7 +16,6 @@ vi.mock("@/lib/api", () => ({
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 vi.mock("./AppSidebar", () => ({ AppSidebar: () => <div /> }));
 vi.mock("./MobileBottomNav", () => ({ default: () => <div /> }));
-vi.mock("./DevelopmentNoticeBanner", () => ({ DevelopmentNoticeBanner: () => <div /> }));
 
 function renderIt() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
