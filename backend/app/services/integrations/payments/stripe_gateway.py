@@ -31,7 +31,9 @@ _API_BASE = "https://api.stripe.com/v1"
 
 
 def is_configured() -> bool:
-    return get_settings().stripe_configured
+    # Customer-facing readiness: in production this requires LIVE keys (see
+    # Settings.stripe_customer_ready) so a real customer never lands on a test-card checkout.
+    return get_settings().stripe_customer_ready
 
 
 def connect_configured() -> bool:

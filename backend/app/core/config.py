@@ -111,6 +111,22 @@ class Settings(BaseSettings):
         return bool(self.stripe_secret_key and self.stripe_webhook_secret)
 
     @property
+    def stripe_livemode(self) -> bool:
+        """True when the configured Stripe key is a LIVE key (real money), not a test key."""
+        return self.stripe_secret_key.startswith("sk_live_")
+
+    @property
+    def stripe_customer_ready(self) -> bool:
+        """Whether the card rail may be offered to CUSTOMERS. In production this REQUIRES a
+        live key — test keys would send a real customer to a checkout that only accepts
+        Stripe test cards, so the rail honestly reports itself unavailable ("Coming soon")
+        until live keys are on the box. Outside production, test keys are fine (dev/QA).
+        Webhook verification is NOT gated here (it only needs the webhook secret)."""
+        if not self.stripe_configured:
+            return False
+        return self.stripe_livemode or self.environment != "production"
+
+    @property
     def nowpayments_configured(self) -> bool:
         return bool(self.nowpayments_api_key and self.nowpayments_ipn_secret)
 

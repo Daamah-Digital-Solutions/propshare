@@ -285,3 +285,31 @@ async def test_deposit_methods_reflects_provider_config(client, db, monkeypatch)
     r2 = await client.get("/api/v1/wallet/deposit/methods", headers=hdr)
     assert r2.json()["card"] is True
     assert r2.json()["crypto"] is False
+
+
+@pytest.mark.asyncio
+async def test_card_rail_requires_live_keys_in_production(client, db, monkeypatch):
+    """Go-live guard: in production, Stripe TEST keys must NOT surface the card rail to
+    customers (they'd land on a test-card-only checkout). Live keys enable it; outside
+    production test keys are fine for dev/QA."""
+    from app.core.config import get_settings
+
+    token, _ = await _register(client, "livegate@dep.com")
+    hdr = {"Authorization": f"Bearer {token}"}
+    s = get_settings()
+    monkeypatch.setattr(s, "stripe_webhook_secret", "whsec_x", raising=False)
+
+    async def card() -> bool:
+        return (await client.get("/api/v1/wallet/deposit/methods", headers=hdr)).json()["card"]
+
+    # production + test key -> hidden ("Coming soon")
+    monkeypatch.setattr(s, "environment", "production", raising=False)
+    monkeypatch.setattr(s, "stripe_secret_key", "sk_test_abc", raising=False)
+    assert await card() is False
+    # production + live key -> offered
+    monkeypatch.setattr(s, "stripe_secret_key", "sk_live_abc", raising=False)
+    assert await card() is True
+    # non-production + test key -> offered (dev/QA)
+    monkeypatch.setattr(s, "environment", "local", raising=False)
+    monkeypatch.setattr(s, "stripe_secret_key", "sk_test_abc", raising=False)
+    assert await card() is True
