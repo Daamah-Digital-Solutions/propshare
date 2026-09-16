@@ -71,11 +71,9 @@ export const toMarketplaceProperty = (s: PropertySummary): Property => ({
   propertyStatus: READY_MODELS.has(s.model) ? "ready" : "construction",
   ownershipModel: s.model as OwnershipModel,
   investors: s.investors_count,
+  // The backend has no funding deadline, so no "days left" is ever shown (0 = unknown).
   daysLeft: 0,
   developer: s.developer_name ?? "—",
-  propertyManagement: "Nova Property Management",
-  insurance: "Assurax Insurance",
-  valuation: "Capimax Financial Management",
   isSample: isSampleSlug(s.slug),
   slug: s.slug ?? undefined,
 });

@@ -62,7 +62,7 @@ const models: Record<ModelKey, ModelConfig> = {
     ],
     howItWorks: [
       { title: "Reserve", desc: "Pay the down payment to lock in your unit allocation at today's price." },
-      { title: "Installment Plan", desc: "Equal monthly payments tracked on-chain and held in regulated escrow." },
+      { title: "Installment Plan", desc: "Equal monthly payments recorded in your dashboard and held in regulated escrow." },
       { title: "Milestone Audits", desc: "Independent inspectors verify construction stages before each developer draw." },
       { title: "Handover & Title", desc: "Final installment unlocks full ownership and rental income begins." },
     ],
@@ -206,7 +206,7 @@ const models: Record<ModelKey, ModelConfig> = {
     ],
     risks: [
       { label: "Development risk", level: "high", note: "Cost overruns, permitting, sales velocity all impact returns." },
-      { label: "Liquidity", level: "high", note: "Partnership positions are less liquid than tokenized units." },
+      { label: "Liquidity", level: "high", note: "Partnership positions are less liquid than standard fractional units." },
       { label: "Sponsor risk", level: "medium", note: "Mitigated by GP track record, audits, and fiduciary controls." },
     ],
     exits: [

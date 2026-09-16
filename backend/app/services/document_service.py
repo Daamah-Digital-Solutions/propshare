@@ -88,7 +88,10 @@ async def create_property_document(
     storage.save(key, data, content_type_for(safe))
     doc = Document(property_id=prop_id, user_id=None, title=title, type=doc_type, file_url=key)
     session.add(doc)
-    await session.commit()
+    # flush (not commit): the caller owns the transaction — the API request session commits
+    # at teardown and the admin panel's session_scope() commits on exit. Committing here
+    # closed that outer transaction and made the panel's refresh()/exit blow up with 500.
+    await session.flush()
     await session.refresh(doc)
     return doc
 
@@ -112,7 +115,10 @@ async def admin_create_property_document(
     storage.save(key, data, content_type_for(safe))
     doc = Document(property_id=prop_id, user_id=None, title=title, type=doc_type, file_url=key)
     session.add(doc)
-    await session.commit()
+    # flush (not commit): the caller owns the transaction — the API request session commits
+    # at teardown and the admin panel's session_scope() commits on exit. Committing here
+    # closed that outer transaction and made the panel's refresh()/exit blow up with 500.
+    await session.flush()
     await session.refresh(doc)
     return doc
 

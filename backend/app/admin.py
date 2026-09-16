@@ -12,16 +12,18 @@ READ-ONLY here — they must only ever change through the audited service layer
 
 from __future__ import annotations
 
+import decimal
 import html as _html
 import uuid
 
 from markupsafe import Markup
 from sqladmin import Admin, BaseView, ModelView, action, expose
 from sqladmin.authentication import AuthenticationBackend
-from sqlalchemy import select
+from sqlalchemy import func, select
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
+from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.db import get_engine, session_scope
 from app.core.errors import AppError
@@ -68,6 +70,7 @@ from app.models import (
     Wallet,
     Withdrawal,
 )
+from app.models.base import InvestmentStatus
 from app.models.identity import RoleGrantRequest, User
 from app.services import (
     auth_service,
@@ -130,6 +133,151 @@ class PropertyAdmin(ModelView, model=Property):
     can_create = False
     can_edit = True
     can_delete = False
+
+    # Only listing content is editable by hand. Server-authoritative counters
+    # (funded_amount, funding_progress, investors_count, available_units) and the
+    # status (use the Approve/Reject/Close actions, which are audited) are NOT on the form;
+    # `documents` is a dead legacy column (the real documents live in the documents table).
+    form_columns = [
+        Property.title,
+        Property.subtitle,
+        Property.slug,
+        Property.model,
+        Property.property_type,
+        Property.description,
+        Property.location,
+        Property.country,
+        Property.city,
+        Property.total_value,
+        Property.unit_price,
+        Property.total_units,
+        Property.minimum_investment,
+        Property.target_yield,
+        Property.expected_yield,
+        Property.capital_appreciation,
+        Property.total_return,
+        Property.expected_completion,
+        Property.spv_name,
+        Property.spv_registration,
+        Property.legal_structure,
+        Property.images,
+        Property.content,
+        Property.fees,
+        Property.owner_id,
+    ]
+    column_details_exclude_list = [Property.documents]
+
+    # Fields that define what an investor bought — frozen once anyone holds units.
+    _LOCKED_WITH_POSITIONS = ("unit_price", "total_units")
+
+    @staticmethod
+    async def _positions(prop_id: uuid.UUID) -> int:
+        """Open investor positions on a property: live investments + ledger rows + plans."""
+        async with session_scope() as session:
+            inv = await session.scalar(
+                select(func.count())
+                .select_from(Investment)
+                .where(
+                    Investment.property_id == prop_id,
+                    Investment.status.in_(
+                        (
+                            InvestmentStatus.pending,
+                            InvestmentStatus.confirmed,
+                            InvestmentStatus.active,
+                            InvestmentStatus.completed,
+                        )
+                    ),
+                )
+            )
+            led = await session.scalar(
+                select(func.count())
+                .select_from(OwnershipLedger)
+                .where(OwnershipLedger.property_id == prop_id)
+            )
+            plans = await session.scalar(
+                select(func.count())
+                .select_from(InstallmentPlan)
+                .where(InstallmentPlan.property_id == prop_id)
+            )
+        return int(inv or 0) + int(led or 0) + int(plans or 0)
+
+    @staticmethod
+    def _same(a: object, b: object) -> bool:
+        if a is None or b is None:
+            return a is b
+        try:
+            return decimal.Decimal(str(a)) == decimal.Decimal(str(b))
+        except (decimal.InvalidOperation, ValueError):
+            return str(a) == str(b)
+
+    async def on_model_change(
+        self, data: dict, model: Property, is_created: bool, request: Request
+    ) -> None:
+        """Guards for hand edits (raise ValueError -> shown as a form error, nothing saved):
+        valid ownership model, unique slug, and units/price frozen once investors hold units.
+        While nothing is sold, available_units follows total_units (same rule as the owner API)."""
+        title = str(data.get("title") or "").strip()
+        if not title:
+            raise ValueError("Title is required.")
+        if data.get("model"):
+            try:
+                property_service.validate_model(str(data["model"]))
+            except AppError as exc:
+                raise ValueError(exc.message) from exc
+        slug = str(data.get("slug") or "").strip()
+        if not slug:
+            slug = (None if is_created else model.slug) or property_service.slugify(title)
+        data["slug"] = slug
+        async with session_scope() as session:
+            clash = await session.scalar(
+                select(Property.id).where(
+                    Property.slug == slug, Property.id != (None if is_created else model.id)
+                )
+            )
+        if clash is not None:
+            raise ValueError(f"Slug '{slug}' is already used by another property.")
+        total_units = data.get("total_units")
+        if is_created:
+            if total_units is not None:
+                data["available_units"] = int(total_units)
+            return
+        positions = await self._positions(model.id)
+        if positions:
+            for field in self._LOCKED_WITH_POSITIONS:
+                if field in data and not self._same(data[field], getattr(model, field)):
+                    raise ValueError(
+                        f"'{field}' is locked: {positions} investor position(s) exist on this "
+                        "property. Units and unit price cannot change once investors hold units."
+                    )
+        elif total_units is not None and not self._same(total_units, model.total_units):
+            data["available_units"] = int(total_units)
+        # Snapshot for the audit row written after a successful save.
+        request.state.property_before = {
+            k: (None if getattr(model, k, None) is None else str(getattr(model, k)))
+            for k in data
+            if hasattr(model, k)
+        }
+
+    async def after_model_change(
+        self, data: dict, model: Property, is_created: bool, request: Request
+    ) -> None:
+        before = getattr(request.state, "property_before", {}) if not is_created else {}
+        after = {k: (None if v is None else str(v)) for k, v in data.items()}
+        if is_created:
+            changed = after
+        else:
+            changed = {k: v for k, v in after.items() if before.get(k) != v}
+        actor = request.session.get("admin_id")
+        async with session_scope() as session:
+            await write_audit(
+                session,
+                action="property.admin_create" if is_created else "property.admin_edit",
+                entity_type="property",
+                entity_id=str(model.id),
+                actor_id=uuid.UUID(actor) if actor else None,
+                before={k: before.get(k) for k in changed} if not is_created else None,
+                after=changed,
+            )
 
     async def _moderate(self, request: Request, what: str) -> RedirectResponse:
         pks = [p for p in request.query_params.get("pks", "").split(",") if p]

@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import PropertyFilters from "@/components/marketplace/PropertyFilters";
 import PropertyGrid from "@/components/marketplace/PropertyGrid";
 import { Button } from "@/components/ui/button";
-import { Search, SlidersHorizontal, Grid3X3, List, Hammer, ArrowRight, Building2, Loader2 } from "lucide-react";
+import { Search, SlidersHorizontal, Grid3X3, List, Hammer, Building2, Loader2 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { propertyApi } from "@/lib/api";
 import { toMarketplaceProperty } from "@/lib/properties";
@@ -37,9 +37,6 @@ export interface Property {
   investors: number;
   daysLeft: number;
   developer: string;
-  propertyManagement: string;
-  insurance: string;
-  valuation: string;
   isSample?: boolean;
   slug?: string;
 }
@@ -291,12 +288,6 @@ const Marketplace = () => {
                         >
                           Filter
                         </button>
-                        <Link
-                          to={`/advanced-property/${m.key}`}
-                          className="text-[10px] px-2 py-0.5 rounded-full border border-border hover:border-primary/40 text-foreground inline-flex items-center gap-1"
-                        >
-                          Open page <ArrowRight className="h-2.5 w-2.5" />
-                        </Link>
                       </div>
                     </div>
                   ))}

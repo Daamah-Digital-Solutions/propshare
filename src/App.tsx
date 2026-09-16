@@ -28,7 +28,6 @@ const LiquidityProviderMarket = lazy(() => import("./pages/LiquidityProviderMark
 const ExitMechanisms = lazy(() => import("./pages/ExitMechanisms"));
 const PropertyTypes = lazy(() => import("./pages/PropertyTypes"));
 const ConstructionModelPage = lazy(() => import("./pages/ConstructionModelPage"));
-const AdvancedPropertyPage = lazy(() => import("./pages/AdvancedPropertyPage"));
 const BrokerDashboard = lazy(() => import("./pages/BrokerDashboard"));
 const Notifications = lazy(() => import("./pages/Notifications"));
 const Partners = lazy(() => import("./pages/Partners"));
@@ -121,7 +120,6 @@ const App = () => (
                   <Route path="/exit-mechanisms" element={<ExitMechanisms />} />
                   <Route path="/property-types" element={<PropertyTypes />} />
                   <Route path="/properties/:model" element={<ConstructionModelPage />} />
-                  <Route path="/advanced-property/:model" element={<AdvancedPropertyPage />} />
                   <Route
                     path="/broker-dashboard"
                     element={

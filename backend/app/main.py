@@ -153,7 +153,8 @@ def create_app() -> FastAPI:
     # Server-rendered, admin-gated management panel at /admin.
     from app.admin import setup_admin
 
-    setup_admin(app)
+    # kept on app.state so tests can rebind the panel's session_maker to the test DB
+    app.state.admin = setup_admin(app)
     return app
 
 

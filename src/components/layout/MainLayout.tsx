@@ -38,8 +38,8 @@ export function MainLayout({ children }: MainLayoutProps) {
         <AppSidebar />
         <SidebarInset className="flex-1 flex flex-col">
           {/* Top Header */}
-          <header className="h-14 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-40 flex items-center justify-between px-4 gap-4">
-            <div className="flex items-center gap-3">
+          <header className="h-14 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-40 flex items-center justify-between px-3 sm:px-4 gap-2 sm:gap-4 overflow-hidden">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               <SidebarTrigger className="h-9 w-9" />
               
               {/* Platform Name - Always visible, name rendered as crisp text */}
@@ -88,7 +88,8 @@ export function MainLayout({ children }: MainLayoutProps) {
                 </>
               ) : (
                 <div className="flex items-center gap-2">
-                  <Link to="/auth">
+                  {/* On phones only one CTA fits beside the brand — the ghost link is hidden. */}
+                  <Link to="/auth" className="hidden sm:block">
                     <Button variant="ghost" size="sm">Sign In</Button>
                   </Link>
                   <Link to="/auth">

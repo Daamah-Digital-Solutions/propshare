@@ -260,6 +260,9 @@ async def test_admin_can_upload_property_document(client, db, asession):
         data=b"%PDF-1.4 ins",
     )
     assert doc.id is not None
+    # The service flushes only — the caller owns the transaction (request session / admin
+    # session_scope commit it). This test is the caller, so it commits.
+    await asession.commit()
     listed = await client.get(f"/api/v1/properties/{pid}/documents")
     assert listed.status_code == 200
     assert any(d["type"] == "insurance" and d["title"] == "Insurance Cert" for d in listed.json())

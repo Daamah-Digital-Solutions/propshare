@@ -1,7 +1,7 @@
 import { Slider } from "@/components/ui/slider";
 import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
-import { X, RotateCcw, ExternalLink } from "lucide-react";
+import { X, RotateCcw } from "lucide-react";
 import type { Filters } from "@/pages/Marketplace";
 
 interface PropertyFiltersProps {
@@ -240,19 +240,6 @@ const PropertyFilters = ({
                       >
                         {o.l}
                       </button>
-                      {o.page && (
-                        <Link
-                          to={`/advanced-property/${o.page}`}
-                          title={`Open ${o.l} page`}
-                          className={`px-2 flex items-center border-l border-border transition-colors ${
-                            active
-                              ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                              : "bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10"
-                          }`}
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      )}
                     </div>
                   );
                 })}

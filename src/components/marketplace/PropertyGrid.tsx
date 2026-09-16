@@ -44,22 +44,11 @@ const PropertyCard = ({ property, viewMode }: { property: Property; viewMode: "g
   };
 
   const ownership = ownershipLabel(property.ownershipModel);
-  const advancedSlug =
-    property.ownershipModel === "option"
-      ? "option"
-      : property.ownershipModel === "future"
-      ? "future"
-      : property.ownershipModel === "installment"
-      ? "installment"
-      : property.ownershipModel === "shared-development"
-      ? "shared"
-      : null;
-  // Every property card opens the full property detail page (the original 5-tab design:
-  // Overview / Financials / SPV Structure / Documents / Timeline). Demo/Sample properties used
-  // to detour to a simpler page — they now use the same page as real listings (Task 8).
-  const detailsHref = advancedSlug
-    ? `/advanced-property/${advancedSlug}`
-    : `/property/${property.id}`;
+  // Every property card — whatever its ownership model — opens the data-driven property
+  // detail page (Overview / Financials / SPV Structure / Documents / Timeline). The old
+  // model-keyed "advanced" page showed the newest property of that model with fabricated
+  // SPV/valuation/document content, so real listings must never route there.
+  const detailsHref = `/property/${property.slug ?? property.id}`;
 
   const getTypeBadge = () => {
     const typeLabels = {
@@ -262,15 +251,10 @@ const PropertyCard = ({ property, viewMode }: { property: Property; viewMode: "g
               <Users size={12} />
               {property.investors} investors
             </span>
-            {property.daysLeft > 0 ? (
+            {property.daysLeft > 0 && (
               <span className="flex items-center gap-1">
                 <Clock size={12} />
                 {property.daysLeft} days left
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-success">
-                <CheckCircle size={12} />
-                Completed
               </span>
             )}
           </div>

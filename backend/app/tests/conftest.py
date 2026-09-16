@@ -106,7 +106,27 @@ def _override_session(_test_db):
                 raise
 
     app.dependency_overrides[get_session] = _get_session
+    # Code outside the request dependency (the SQLAdmin panel, `session_scope()` callers)
+    # goes through app.core.db's module-level engine — point it at the test DB too, so
+    # admin-panel integration tests see the same data as the API.
+    import app.core.db as dbmod
+
+    prev_engine, prev_maker = dbmod._engine, dbmod._sessionmaker
+    dbmod._engine, dbmod._sessionmaker = engine, sessionmaker
+    # SQLAdmin captured its own engine at app import — rebind every view to the test DB.
+    admin = getattr(app.state, "admin", None)
+    prev_admin_makers = []
+    if admin is not None:
+        prev_admin_makers = [
+            (v, v.session_maker) for v in admin.views if hasattr(v, "session_maker")
+        ]
+        prev_admin_makers.append((admin, admin.session_maker))
+        for v, _ in prev_admin_makers:
+            v.session_maker = sessionmaker
     yield
+    for v, maker in prev_admin_makers:
+        v.session_maker = maker
+    dbmod._engine, dbmod._sessionmaker = prev_engine, prev_maker
     app.dependency_overrides.pop(get_session, None)
 
 

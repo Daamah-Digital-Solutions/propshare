@@ -201,6 +201,11 @@ async def _resolve(session: AsyncSession, id_or_slug: str) -> Property | None:
     return await session.get(Property, pid)
 
 
+# Public aliases for the admin panel (same rules as the owner API).
+slugify = _slugify
+validate_model = _validate_model
+
+
 # --- Owner writes ---------------------------------------------------------- #
 async def create(session: AsyncSession, *, owner_id: uuid.UUID, data: dict) -> Property:
     model = _validate_model(data.get("model") or "ready-income")

@@ -287,7 +287,7 @@ const InstallmentCalculator = ({
         </div>
 
         {/* Construction Progress */}
-        {propertyData.constructionProgress && (
+        {(propertyData.constructionProgress > 0 || propertyData.expectedCompletion) && (
           <div className="space-y-2 mb-4">
             <div className="flex justify-between text-sm">
               <span>Construction Progress</span>
@@ -295,7 +295,15 @@ const InstallmentCalculator = ({
             </div>
             <Progress value={propertyData.constructionProgress} className="h-2 bg-background/20" />
             {propertyData.expectedCompletion && (
-              <p className="text-xs opacity-80">Expected completion: {propertyData.expectedCompletion}</p>
+              <p className="text-xs opacity-80">
+                Expected completion:{" "}
+                {(() => {
+                  const d = new Date(propertyData.expectedCompletion);
+                  return Number.isNaN(d.getTime())
+                    ? propertyData.expectedCompletion
+                    : d.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+                })()}
+              </p>
             )}
           </div>
         )}

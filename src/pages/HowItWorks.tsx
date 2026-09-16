@@ -64,7 +64,7 @@ const spvBenefits = [
   },
   {
     title: "Clear Ownership",
-    description: "Digital shares represent direct ownership in the property SPV, recorded on the blockchain.",
+    description: "Your units represent direct ownership in the property SPV, recorded in the central ownership ledger.",
     icon: FileText,
   },
   {

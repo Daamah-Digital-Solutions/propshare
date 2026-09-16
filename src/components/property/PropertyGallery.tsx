@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Building2, ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
 
 interface PropertyGalleryProps {
   images: string[];
@@ -17,6 +17,33 @@ const PropertyGallery = ({ images, title }: PropertyGalleryProps) => {
   const prevImage = () => {
     setCurrentIndex((prev) => (prev - 1 + images.length) % images.length);
   };
+
+  // The fullscreen hint promises ESC — honour it.
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsFullscreen(false);
+      if (e.key === "ArrowRight") nextImage();
+      if (e.key === "ArrowLeft") prevImage();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFullscreen, images.length]);
+
+  // A listing without photos yet: show an honest placeholder instead of a broken <img>
+  // and a "1 / 0" counter.
+  if (images.length === 0) {
+    return (
+      <div
+        data-testid="gallery-empty"
+        className="relative aspect-[16/10] rounded-2xl bg-secondary flex flex-col items-center justify-center text-muted-foreground"
+      >
+        <Building2 size={40} className="mb-2 opacity-60" />
+        <span className="text-sm">Photos coming soon</span>
+      </div>
+    );
+  }
 
   return (
     <>

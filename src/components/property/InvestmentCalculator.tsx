@@ -251,10 +251,6 @@ const InvestmentCalculator = ({
             <Users size={14} />
             <span>{propertyData.investorsCount} investors</span>
           </div>
-          <div className="flex items-center gap-1">
-            <Clock size={14} />
-            <span>{propertyData.daysLeft} days left</span>
-          </div>
         </div>
       </div>
 

@@ -39,8 +39,6 @@ import { Loader2 } from "lucide-react";
 import { propertyApi, type PropertyDetail } from "@/lib/api";
 
 const READY_MODELS = new Set(["ready-income", "ready-portfolio"]);
-const DEFAULT_DEV_LOGO =
-  "https://images.unsplash.com/photo-1560179707-f14e90ef3623?w=100&auto=format&fit=crop&q=80";
 
 // Build the view-model the page renders from a live PropertyDetail. Rich fields
 // not held as columns live in `content`; everything degrades gracefully when a
@@ -57,6 +55,7 @@ const toViewModel = (d: PropertyDetail) => {
   const dev = asObj(c.developer);
   const fees = asObj(d.fees);
   const cFees = asObj(c.fees);
+  const terms = asObj(c.terms);
   const isReady = READY_MODELS.has(d.model);
   return {
     id: d.id,
@@ -80,7 +79,6 @@ const toViewModel = (d: PropertyDetail) => {
     fundingGoal: d.total_value,
     fundedAmount: d.funded_amount,
     investorsCount: d.investors_count,
-    daysLeft: 0,
     // Phase 15b — real, computed construction % (falls back to the legacy blob if absent).
     constructionProgress: d.construction_progress ?? asNum(c.constructionProgress) ?? 0,
     milestones: d.milestones ?? [],
@@ -94,18 +92,29 @@ const toViewModel = (d: PropertyDetail) => {
     },
     developer: {
       name: asStr(dev.name) || d.developer_name || "—",
-      logo: asStr(dev.logo) || DEFAULT_DEV_LOGO,
-      projectsCompleted: asNum(dev.projectsCompleted) ?? 0,
-      rating: asNum(dev.rating) ?? 0,
+      // No stock placeholder: when the listing has no logo the card shows an initial avatar.
+      logo: asStr(dev.logo),
+      projectsCompleted: asNum(dev.projectsCompleted),
+      rating: asNum(dev.rating),
     },
     description: d.description ?? "",
     amenities: (Array.isArray(details.amenities) ? details.amenities : []) as string[],
+    // Per-listing commercial terms (optional, admin-editable via content.terms). Nothing is
+    // invented: a missing term is simply not shown.
+    terms: {
+      distributionFrequency: asStr(terms.distributionFrequency),
+      investmentTerm: asStr(terms.investmentTerm),
+      exitOptions: asStr(terms.exitOptions),
+    },
+    // Platform/management/installment rates are overlaid by the backend from platform_settings
+    // on every read; these fallbacks match settings_service.DEFAULTS and the sidebar calculator.
+    // Performance/exit fees exist only when the listing declares them (content.fees).
     fees: {
-      platformFee: asNum(fees.platform_fee) ?? 2.0,
-      managementFee: asNum(fees.management_fee) ?? 1.5,
+      platformFee: asNum(fees.platform_fee) ?? 2.5,
+      managementFee: asNum(fees.management_fee) ?? 1.0,
       installmentFee: asNum(fees.installment_fee) ?? 4.0,
-      performanceFee: asNum(cFees.performance) ?? 10.0,
-      exitFee: asNum(cFees.exit) ?? 1.0,
+      performanceFee: asNum(cFees.performance),
+      exitFee: asNum(cFees.exit),
     },
   };
 };
@@ -194,7 +203,9 @@ const PropertyDetails = () => {
 
           <div className="grid lg:grid-cols-3 gap-8">
             {/* Left Column - Property Info */}
-            <div className="lg:col-span-2 space-y-8">
+            {/* min-w-0 lets this grid column shrink below its content's min width on phones,
+                otherwise the 5-tab strip widens the whole page and it scrolls sideways. */}
+            <div className="lg:col-span-2 min-w-0 space-y-8">
               {/* Gallery */}
               <PropertyGallery images={propertyData.images} title={propertyData.title} />
 
@@ -248,7 +259,7 @@ const PropertyDetails = () => {
 
               {/* Tabs */}
               <Tabs defaultValue="overview" className="w-full">
-                <TabsList className="w-full justify-start bg-secondary/50 p-1 rounded-xl">
+                <TabsList className="w-full justify-start bg-secondary/50 p-1 rounded-xl overflow-x-auto">
                   <TabsTrigger value="overview" className="rounded-lg">Overview</TabsTrigger>
                   <TabsTrigger value="financials" className="rounded-lg">Financials</TabsTrigger>
                   <TabsTrigger value="structure" className="rounded-lg">SPV Structure</TabsTrigger>
@@ -287,20 +298,35 @@ const PropertyDetails = () => {
                   <div className="bg-card rounded-2xl p-6 border border-border">
                     <h3 className="text-xl font-semibold text-foreground mb-4">Developer</h3>
                     <div className="flex items-center gap-4">
-                      <img 
-                        src={propertyData.developer.logo} 
-                        alt={propertyData.developer.name}
-                        className="w-16 h-16 rounded-xl object-cover"
-                      />
+                      {propertyData.developer.logo ? (
+                        <img
+                          src={propertyData.developer.logo}
+                          alt={propertyData.developer.name}
+                          className="w-16 h-16 rounded-xl object-cover"
+                        />
+                      ) : (
+                        <div
+                          aria-hidden
+                          className="w-16 h-16 rounded-xl bg-primary/10 text-primary flex items-center justify-center text-xl font-semibold"
+                        >
+                          {propertyData.developer.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
                       <div className="flex-1">
                         <h4 className="font-semibold text-foreground">{propertyData.developer.name}</h4>
-                        <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Star size={14} className="text-warning fill-warning" />
-                            {propertyData.developer.rating}
-                          </span>
-                          <span>{propertyData.developer.projectsCompleted} projects completed</span>
-                        </div>
+                        {(propertyData.developer.rating != null || propertyData.developer.projectsCompleted != null) && (
+                          <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                            {propertyData.developer.rating != null && (
+                              <span className="flex items-center gap-1">
+                                <Star size={14} className="text-warning fill-warning" />
+                                {propertyData.developer.rating}
+                              </span>
+                            )}
+                            {propertyData.developer.projectsCompleted != null && (
+                              <span>{propertyData.developer.projectsCompleted} projects completed</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <Button variant="outline" size="sm" disabled title="Developer profiles are not available yet">View Profile</Button>
                     </div>
@@ -335,10 +361,13 @@ const PropertyDetails = () => {
                         { label: "Property Value", value: `$${propertyData.propertyValue.toLocaleString()}` },
                         { label: "Minimum Investment", value: `$${propertyData.minInvestment}` },
                         { label: "Maximum Investment", value: `$${propertyData.maxInvestment.toLocaleString()}` },
-                        { label: "Distribution Frequency", value: "Quarterly" },
-                        { label: "Investment Term", value: "5 Years" },
-                        { label: "Exit Options", value: "Secondary Market (after 6 months)" },
-                      ].map((item, index) => (
+                        // Listing-specific terms are shown only when the listing declares them.
+                        { label: "Distribution Frequency", value: propertyData.terms.distributionFrequency },
+                        { label: "Investment Term", value: propertyData.terms.investmentTerm },
+                        { label: "Exit Options", value: propertyData.terms.exitOptions },
+                      ]
+                        .filter((item) => item.value)
+                        .map((item, index) => (
                         <div key={index} className="flex justify-between py-3 border-b border-border last:border-0">
                           <span className="text-muted-foreground">{item.label}</span>
                           <span className="font-medium text-foreground">{item.value}</span>
@@ -357,8 +386,12 @@ const PropertyDetails = () => {
                       {[
                         { label: "Platform Fee", value: `${propertyData.fees.platformFee}%`, note: "One-time" },
                         { label: "Management Fee", value: `${propertyData.fees.managementFee}%`, note: "Annual" },
-                        { label: "Performance Fee", value: `${propertyData.fees.performanceFee}%`, note: "On profits above 8%" },
-                        { label: "Exit Fee", value: `${propertyData.fees.exitFee}%`, note: "On secondary sales" },
+                        ...(propertyData.fees.performanceFee != null
+                          ? [{ label: "Performance Fee", value: `${propertyData.fees.performanceFee}%`, note: "On profits" }]
+                          : []),
+                        ...(propertyData.fees.exitFee != null
+                          ? [{ label: "Exit Fee", value: `${propertyData.fees.exitFee}%`, note: "On secondary sales" }]
+                          : []),
                       ].map((fee, index) => (
                         <div key={index} className="flex items-center justify-between py-2">
                           <div>
@@ -413,7 +446,7 @@ const PropertyDetails = () => {
                       {
                         icon: FileText,
                         title: "Clear Ownership",
-                        description: "Digital shares represent direct ownership in the property SPV"
+                        description: "Your units are recorded in the central ownership ledger and represent ownership in the property SPV"
                       },
                       {
                         icon: Users,
@@ -422,8 +455,8 @@ const PropertyDetails = () => {
                       },
                       {
                         icon: TrendingUp,
-                        title: "Tradeable Shares",
-                        description: "Sell your shares on the secondary market after 6 months"
+                        title: "Tradeable Units",
+                        description: "Sell your units on the secondary market, subject to platform rules"
                       },
                     ].map((benefit, index) => (
                       <div key={index} className="bg-secondary/50 rounded-xl p-4">
@@ -436,7 +469,7 @@ const PropertyDetails = () => {
 
                   {/* Link to full SPV page */}
                   <div className="text-center pt-4">
-                    <Link to={`/spv-model/${id || '1'}`}>
+                    <Link to={`/spv-model/${propertyData.id}`}>
                       <Button variant="outline" className="gap-2">
                         <Info size={16} />
                         View Full SPV Details
