@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -36,7 +36,7 @@ import PropertyDocuments from "@/components/property/PropertyDocuments";
 import PropertyTimeline from "@/components/property/PropertyTimeline";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { Loader2 } from "lucide-react";
-import { propertyApi, type PropertyDetail } from "@/lib/api";
+import { assetUrl, propertyApi, type PropertyDetail } from "@/lib/api";
 
 const READY_MODELS = new Set(["ready-income", "ready-portfolio"]);
 
@@ -64,7 +64,7 @@ const toViewModel = (d: PropertyDetail) => {
     location: d.location,
     status: d.status === "funded" ? "funded" : "open",
     type: isReady ? "ready" : "under_construction",
-    images: d.images?.length ? d.images : d.image ? [d.image] : [],
+    images: (d.images?.length ? d.images : d.image ? [d.image] : []).map(assetUrl),
     bedrooms: asNum(details.bedrooms),
     bathrooms: asNum(details.bathrooms),
     area: asNum(details.area),
@@ -93,7 +93,7 @@ const toViewModel = (d: PropertyDetail) => {
     developer: {
       name: asStr(dev.name) || d.developer_name || "—",
       // No stock placeholder: when the listing has no logo the card shows an initial avatar.
-      logo: asStr(dev.logo),
+      logo: assetUrl(asStr(dev.logo)),
       projectsCompleted: asNum(dev.projectsCompleted),
       rating: asNum(dev.rating),
     },
@@ -121,10 +121,14 @@ const toViewModel = (d: PropertyDetail) => {
 
 const PropertyDetails = () => {
   const { id } = useParams();
+  // Admin preview-before-publish: a signed token in ?preview= lets a draft render exactly
+  // as investors will see it (backend-verified, this property only, 24h).
+  const [searchParams] = useSearchParams();
+  const preview = searchParams.get("preview");
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["property", id],
-    queryFn: () => propertyApi.get(id as string),
+    queryKey: ["property", id, preview],
+    queryFn: () => propertyApi.get(id as string, preview),
     enabled: !!id,
   });
 
@@ -173,6 +177,15 @@ const PropertyDetails = () => {
   return (
     <div className="min-h-screen bg-background">
       <main>
+        {preview && data && data.status !== "active" && data.status !== "funded" && (
+          <div
+            data-testid="preview-banner"
+            className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800"
+          >
+            <strong>Preview</strong> — this listing is <strong>{data.status.replace("_", " ")}</strong> and
+            not visible to investors. This is exactly how the page will look once published.
+          </div>
+        )}
         {/* Breadcrumb */}
         <div className="bg-secondary/30 border-b border-border">
           <div className="container mx-auto px-4 py-4">
@@ -480,7 +493,7 @@ const PropertyDetails = () => {
                 </TabsContent>
 
                 <TabsContent value="documents" className="mt-6">
-                  <PropertyDocuments propertyId={propertyData.id} />
+                  <PropertyDocuments propertyId={propertyData.id} preview={preview} />
                 </TabsContent>
 
                 <TabsContent value="timeline" className="mt-6">

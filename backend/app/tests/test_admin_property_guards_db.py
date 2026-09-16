@@ -126,8 +126,11 @@ async def test_admin_edit_rejects_duplicate_slug_and_invalid_model(client, db):
     r = await client.post(f"/admin/property/edit/{b}", data=_form(db, b, slug="tower-a"))
     assert r.status_code == 400 and "already used" in r.text
     assert db("SELECT slug FROM properties WHERE id=:i", i=b)[0][0] == "tower-b"
+    # `model` is a dropdown now: WTForms rejects an unknown choice before our hook runs;
+    # either message proves the value never reaches the database.
     r2 = await client.post(f"/admin/property/edit/{a}", data=_form(db, a, model="tokenized"))
-    assert r2.status_code == 400 and "model must be one of" in r2.text
+    assert r2.status_code == 400
+    assert "Not a valid choice" in r2.text or "model must be one of" in r2.text
     assert db("SELECT model FROM properties WHERE id=:i", i=a)[0][0] == "ready-income"
     # a blanked slug is regenerated, never saved as NULL
     r3 = await client.post(f"/admin/property/edit/{a}", data=_form(db, a, slug=""))

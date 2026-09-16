@@ -17,8 +17,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 
 from app.api.deps import Principal, SessionDep, require_active_role_db
-from app.core.config import get_settings
-from app.core.errors import AppError
 from app.schemas.property import (
     OwnerPropertyOut,
     PropertyCreateIn,
@@ -27,8 +25,12 @@ from app.schemas.property import (
     PropertySummaryOut,
     PropertyUpdateIn,
 )
-from app.services import milestone_service, property_service, settings_service
-from app.services.integrations import storage
+from app.services import (
+    listing_media_service,
+    milestone_service,
+    property_service,
+    settings_service,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["properties"])
 
@@ -87,8 +89,10 @@ async def my_properties(principal: OwnerDep, session: SessionDep):
 
 
 @router.get("/properties/{id_or_slug}", response_model=PropertyDetailOut)
-async def get_property(id_or_slug: str, session: SessionDep):
-    prop = await property_service.get_public_detail(session, id_or_slug)
+async def get_property(id_or_slug: str, session: SessionDep, preview: str | None = None):
+    """Public detail. ``preview`` = a signed 24h token minted by the admin Listing Editor;
+    it lets the owner see a draft exactly as investors will, without publishing it."""
+    prop = await property_service.get_public_detail(session, id_or_slug, preview_token=preview)
     owner_names = await property_service._owner_names(session, [prop])
     data = property_service.serialize_detail(prop, owner_names)
     # Overlay the live, admin-configurable fee rates so the displayed platform &
@@ -145,24 +149,15 @@ async def upload_property_image(
     session: SessionDep,
     file: Annotated[UploadFile, File()],
 ):
-    """Owner uploads a property image (real storage seam — replaces the old 503).
-    Stores the file and appends its public URL to ``properties.images``."""
+    """Owner uploads a property image. Validated (real JPEG/PNG/WebP only), EXIF-rotated,
+    resized/compressed and appended to ``properties.images`` via listing_media_service."""
     prop = await property_service.get_owned_for_update(session, principal.user_id, prop_id)
     data = await file.read()
-    if not data:
-        raise AppError("EMPTY_FILE", "Uploaded file is empty.", status_code=422)
-    if len(data) > get_settings().storage_max_upload_bytes:
-        raise AppError(
-            "FILE_TOO_LARGE",
-            f"File exceeds the {get_settings().storage_max_upload_mb} MB limit.",
-            status_code=413,
-        )
-    import re as _re
-
-    safe = _re.sub(r"[^A-Za-z0-9._-]+", "_", (file.filename or "image").split("/")[-1])[:120]
-    key = f"property-images/{prop_id}/{uuid.uuid4().hex}-{safe}"
-    storage.save(key, data, file.content_type or "application/octet-stream")
-    url = storage.public_url(key)
-    prop.images = [*(prop.images or []), url]
+    urls = await listing_media_service.add_images(
+        session,
+        prop=prop,
+        files=[(file.filename or "image", data)],
+        actor_id=principal.user_id,
+    )
     await session.commit()
-    return {"images": prop.images}
+    return {"images": urls}

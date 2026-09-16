@@ -22,7 +22,9 @@ from sqladmin.authentication import AuthenticationBackend
 from sqlalchemy import func, select
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
+from wtforms import SelectField
 
+from app.admin_listing import ListingEditorView
 from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.db import get_engine, session_scope
@@ -72,11 +74,13 @@ from app.models import (
 )
 from app.models.base import InvestmentStatus
 from app.models.identity import RoleGrantRequest, User
+from app.schemas.property import OWNERSHIP_MODELS
 from app.services import (
     auth_service,
     distribution_service,
     document_service,
     kyc_service,
+    listing_media_service,
     manual_deposit_service,
     property_service,
     withdrawal_service,
@@ -113,6 +117,28 @@ def _back(request: Request) -> RedirectResponse:
     return RedirectResponse(request.headers.get("referer") or "/admin", status_code=302)
 
 
+PROPERTY_TYPES = (
+    "residential",
+    "apartment",
+    "villa",
+    "commercial",
+    "office",
+    "retail",
+    "mixed-use",
+    "industrial",
+    "hotel",
+    "land",
+)
+
+
+def _fmt_property_title(m: Property) -> Markup:
+    """Title + a direct link to the Listing Editor (media / documents / content / preview)."""
+    return Markup(
+        '{title} <a href="/admin/listing/{id}" title="Open Listing Editor" '
+        'style="font-size:12px;white-space:nowrap">&#9998; edit listing</a>'
+    ).format(title=m.title, id=m.id)
+
+
 class PropertyAdmin(ModelView, model=Property):
     name = "Property"
     name_plural = "Properties"
@@ -130,9 +156,18 @@ class PropertyAdmin(ModelView, model=Property):
     column_searchable_list = [Property.title, Property.slug]
     column_sortable_list = [Property.created_at, Property.status, Property.total_value]
     column_default_sort = [(Property.created_at, True)]
-    can_create = False
+    # Admins create listings here (status starts as draft; the Listing Editor adds media,
+    # documents and structured content; Approve publishes).
+    can_create = True
     can_edit = True
-    can_delete = False
+    can_delete = True  # guarded: refused while investors hold units; files cleaned up
+    form_overrides = {"model": SelectField, "property_type": SelectField}
+    form_args = {
+        "model": {"choices": [(m, m) for m in OWNERSHIP_MODELS]},
+        "property_type": {"choices": [(t, t) for t in PROPERTY_TYPES]},
+    }
+    column_formatters = {Property.title: lambda m, _a: _fmt_property_title(m)}
+    column_formatters_detail = {Property.title: lambda m, _a: _fmt_property_title(m)}
 
     # Only listing content is editable by hand. Server-authoritative counters
     # (funded_amount, funding_progress, investors_count, available_units) and the
@@ -277,6 +312,59 @@ class PropertyAdmin(ModelView, model=Property):
                 actor_id=uuid.UUID(actor) if actor else None,
                 before={k: before.get(k) for k in changed} if not is_created else None,
                 after=changed,
+            )
+
+    async def on_model_delete(self, model: Property, request: Request) -> None:
+        """Refuse to delete a property investors hold; otherwise collect its files.
+
+        The row delete cascades to documents/milestones in the database, but the stored
+        photos, developer logo and document files used to be orphaned. Keys are collected
+        here (before the row goes) and removed in ``after_model_delete`` (after the commit),
+        so a failed delete never loses files.
+        """
+        if await self._positions(model.id) > 0:
+            raise ValueError(
+                "This property has investor positions and cannot be deleted. Close it instead."
+            )
+        keys: list[str] = []
+        for url in list(model.images or []):
+            key = listing_media_service.url_to_key(url)
+            if key:
+                keys.append(key)
+        logo = ((model.content or {}).get("developer") or {}).get("logo")
+        if isinstance(logo, str):
+            key = listing_media_service.url_to_key(logo)
+            if key:
+                keys.append(key)
+        async with session_scope() as session:
+            doc_keys = await session.scalars(
+                select(Document.file_url).where(Document.property_id == model.id)
+            )
+            keys.extend(k for k in doc_keys if k)
+        request.state.property_delete_keys = keys
+        request.state.property_delete_before = {
+            "title": model.title,
+            "slug": model.slug,
+            "status": str(model.status),
+            "files": len(keys),
+        }
+
+    async def after_model_delete(self, model: Property, request: Request) -> None:
+        keys = getattr(request.state, "property_delete_keys", [])
+        for key in keys:
+            try:
+                storage.delete(key)
+            except Exception:  # noqa: BLE001 — best-effort cleanup, the row is already gone
+                pass
+        actor = request.session.get("admin_id")
+        async with session_scope() as session:
+            await write_audit(
+                session,
+                action="property.admin_delete",
+                entity_type="property",
+                entity_id=str(model.id),
+                actor_id=uuid.UUID(actor) if actor else None,
+                before=getattr(request.state, "property_delete_before", None),
             )
 
     async def _moderate(self, request: Request, what: str) -> RedirectResponse:
@@ -1269,6 +1357,20 @@ class DocumentAdmin(ModelView, model=Document):
     can_edit = False
     can_delete = True  # allow removing a stale/incorrect document row
 
+    async def on_model_delete(self, model: Document, request: Request) -> None:
+        """Deleting the row must also delete the stored file (it used to orphan it)."""
+        actor = request.session.get("admin_id")
+        async with session_scope() as session:
+            await write_audit(
+                session,
+                action="document.deleted",
+                entity_type="document",
+                entity_id=str(model.id),
+                actor_id=uuid.UUID(actor) if actor else None,
+                before={"title": model.title, "key": model.file_url},
+            )
+        storage.delete(model.file_url)
+
 
 class DeveloperUpdateAdmin(ModelView, model=DeveloperUpdate):
     name = "Investor Update"
@@ -1319,16 +1421,8 @@ class EmailOutboxAdmin(ModelView, model=EmailOutbox):
     can_delete = False
 
 
-_DOC_CATEGORIES = [
-    ("spv", "SPV Documents"),
-    ("valuation", "Valuation Reports"),
-    ("financial", "Financial & Investment Studies"),
-    ("agreement", "Agreements"),
-    ("legal", "Legal Documents"),
-    ("insurance", "Insurance Certificates"),
-    ("audit", "Smart Contract Audit Reports"),
-    ("other", "Other Documents"),
-]
+# Single source of truth lives in document_service (validated server-side on every upload).
+_DOC_CATEGORIES = list(document_service.DOC_CATEGORIES)
 
 _UPLOAD_PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <title>Upload Document - Capimax Admin</title>
@@ -1395,8 +1489,8 @@ class DocumentUploadView(BaseView):
                 if not prop_id or not title or upload is None or not hasattr(upload, "read"):
                     raise ValueError("Property, title and a file are all required.")
                 data = await upload.read()
-                if not data:
-                    raise ValueError("The uploaded file is empty.")
+                # size cap + allow-list + category are enforced inside the service (same
+                # rules as the owner API) — AppError is rendered as the form error below.
                 async with session_scope() as session:
                     await document_service.admin_create_property_document(
                         session,
@@ -1607,6 +1701,7 @@ def setup_admin(app) -> Admin:
         InstallmentPlanAdmin,
         InstallmentPaymentAdmin,
         DocumentUploadView,
+        ListingEditorView,
         RoleDocView,
     ):
         admin.add_view(view)

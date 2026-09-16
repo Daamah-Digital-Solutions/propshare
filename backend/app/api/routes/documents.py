@@ -50,7 +50,7 @@ async def upload_property_document(
     session: SessionDep,
     file: Annotated[UploadFile, File()],
     title: Annotated[str, Form(min_length=1, max_length=200)],
-    doc_type: Annotated[str, Form(max_length=60)] = "document",
+    doc_type: Annotated[str, Form(max_length=60)] = "other",
 ):
     data = await _read_capped(file)
     doc = await document_service.create_property_document(
@@ -66,14 +66,20 @@ async def upload_property_document(
 
 
 @router.get("/properties/{id_or_slug}/documents", response_model=list[DocumentOut])
-async def list_property_documents(id_or_slug: str, session: SessionDep):
-    docs = await document_service.list_property_documents(session, id_or_slug)
+async def list_property_documents(
+    id_or_slug: str, session: SessionDep, preview: str | None = None
+):
+    docs = await document_service.list_property_documents(
+        session, id_or_slug, preview_token=preview
+    )
     return [DocumentOut(**document_service.serialize(d)) for d in docs]
 
 
 @router.get("/documents/{doc_id}/download")
-async def download_document(doc_id: uuid.UUID, session: SessionDep):
-    doc, data, content_type = await document_service.get_for_download(session, doc_id)
+async def download_document(doc_id: uuid.UUID, session: SessionDep, preview: str | None = None):
+    doc, data, content_type = await document_service.get_for_download(
+        session, doc_id, preview_token=preview
+    )
     filename = doc.file_url.rsplit("/", 1)[-1]
     return Response(
         content=data,

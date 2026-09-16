@@ -105,6 +105,10 @@ export async function apiRequest<T = unknown>(path: string, opts: RequestOptions
 /** Absolute URL for a backend-relative path (e.g. a public file/download link). */
 export const apiUrl = (path: string): string => `${API_BASE}${path}`;
 
+/** Stored media URLs are backend-relative (`/api/v1/files/...`); absolute/data URLs pass through. */
+export const assetUrl = (url: string): string =>
+  url.startsWith("/api/") ? `${API_BASE}${url}` : url;
+
 /** Authenticated binary fetch (e.g. a generated PDF certificate). One-shot refresh on 401. */
 export async function fetchBlob(path: string, _retried = false): Promise<Blob> {
   const headers: Record<string, string> = {};
@@ -424,8 +428,11 @@ export const propertyApi = {
       { auth: false },
     );
   },
-  get(idOrSlug: string): Promise<PropertyDetail> {
-    return apiRequest<PropertyDetail>(`/api/v1/properties/${encodeURIComponent(idOrSlug)}`, {
+  /** Public detail. `preview` = a signed 24h token from the admin Listing Editor that lets
+   * a draft render exactly as investors will see it (that property only). */
+  get(idOrSlug: string, preview?: string | null): Promise<PropertyDetail> {
+    const q = preview ? `?preview=${encodeURIComponent(preview)}` : "";
+    return apiRequest<PropertyDetail>(`/api/v1/properties/${encodeURIComponent(idOrSlug)}${q}`, {
       auth: false,
     });
   },
@@ -752,9 +759,10 @@ export interface PropertyDocument {
 
 export const documentsApi = {
   /** Public list of a property's documents. */
-  listForProperty(idOrSlug: string): Promise<PropertyDocument[]> {
+  listForProperty(idOrSlug: string, preview?: string | null): Promise<PropertyDocument[]> {
+    const q = preview ? `?preview=${encodeURIComponent(preview)}` : "";
     return apiRequest<PropertyDocument[]>(
-      `/api/v1/properties/${encodeURIComponent(idOrSlug)}/documents`,
+      `/api/v1/properties/${encodeURIComponent(idOrSlug)}/documents${q}`,
       { auth: false },
     );
   },

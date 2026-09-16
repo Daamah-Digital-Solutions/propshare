@@ -13,6 +13,7 @@ import PropertyDetails from "./PropertyDetails";
 const getMock = vi.fn();
 vi.mock("@/lib/api", () => ({
   propertyApi: { get: (...a: unknown[]) => getMock(...a) },
+  assetUrl: (u: string) => u,
 }));
 vi.mock("@/components/property/PropertyGallery", () => ({ default: () => <div data-testid="gallery" /> }));
 vi.mock("@/components/property/InvestmentCalculator", () => ({ default: () => <div data-testid="invest-calc" /> }));
@@ -73,6 +74,27 @@ function renderIt() {
     </QueryClientProvider>,
   );
 }
+
+describe("PropertyDetails — admin preview of an unpublished listing", () => {
+  beforeEach(() => getMock.mockReset());
+
+  it("passes the ?preview token to the API and shows the preview banner for a draft", async () => {
+    getMock.mockResolvedValue({ ...base, status: "draft" });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/property/p1?preview=tok123"]}>
+          <Routes>
+            <Route path="/property/:id" element={<PropertyDetails />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("heading", { level: 1, name: "Bare Listing" });
+    expect(getMock).toHaveBeenCalledWith("p1", "tok123");
+    expect(screen.getByTestId("preview-banner").textContent).toMatch(/not visible to investors/);
+  });
+});
 
 describe("PropertyDetails — no invented content", () => {
   beforeEach(() => getMock.mockReset());

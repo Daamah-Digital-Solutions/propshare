@@ -3,7 +3,7 @@
 // `SampleProperty`). This keeps the big render files almost unchanged — only
 // their DATA SOURCE switches from hardcoded arrays to live `/properties` data.
 
-import type { PropertyDetail, PropertyMilestone, PropertySummary } from "@/lib/api";
+import { assetUrl, type PropertyDetail, type PropertyMilestone, type PropertySummary } from "@/lib/api";
 import type { Property, OwnershipModel } from "@/pages/Marketplace";
 import type { SampleProperty, SampleOwnershipModel } from "@/data/sampleProperties";
 
@@ -61,7 +61,7 @@ export const toMarketplaceProperty = (s: PropertySummary): Property => ({
   location: s.location,
   country: s.country ?? "",
   city: s.city ?? "",
-  image: s.image ?? "",
+  image: assetUrl(s.image ?? ""),
   price: s.total_value,
   minInvestment: s.minimum_investment,
   yield: s.expected_yield ?? s.target_yield ?? 0,
@@ -96,8 +96,8 @@ export const toSampleProperty = (d: PropertyDetail): SampleProperty => {
     location: d.location,
     country: d.country ?? "",
     city: d.city ?? "",
-    image: d.image ?? d.images[0] ?? "",
-    gallery: d.images.length ? d.images : d.image ? [d.image] : [],
+    image: assetUrl(d.image ?? d.images[0] ?? ""),
+    gallery: (d.images.length ? d.images : d.image ? [d.image] : []).map(assetUrl),
     description: d.description ?? "",
     propertyValue: d.total_value,
     minInvestment: d.minimum_investment,

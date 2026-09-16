@@ -9,14 +9,23 @@ rejects non-public prefixes.
 
 from __future__ import annotations
 
+import io
 import uuid
 
 import pytest
+from PIL import Image
 
 from app.services.integrations import storage
 
 PW = "Passw0rd!23"
-PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+def _real_png(w: int = 4, h: int = 4) -> bytes:
+    """A real (decodable) PNG — uploads are validated by decoding since Step 2."""
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (30, 120, 60)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+PNG = _real_png()
 
 
 @pytest.fixture(autouse=True)
@@ -137,8 +146,8 @@ async def test_draft_property_document_not_publicly_downloadable(client, db):
     pid = _seed_property(db, oid, status="draft")
     up = await client.post(
         f"/api/v1/properties/{pid}/documents",
-        files={"file": ("x.pdf", b"secret", "application/pdf")},
-        data={"title": "Draft Doc", "doc_type": "doc"},
+        files={"file": ("x.pdf", b"%PDF-1.4 secret", "application/pdf")},
+        data={"title": "Draft Doc", "doc_type": "legal"},
         headers=_h(tok),
     )
     assert up.status_code == 201
@@ -280,10 +289,11 @@ async def test_property_image_upload_appends_and_serves(client, db):
     assert up.status_code == 201, up.text
     images = up.json()["images"]
     assert len(images) == 1 and "/api/v1/files/property-images/" in images[0]
-    # the public file route serves the stored bytes inline
+    # the public file route serves the (normalised: opaque PNG -> JPEG) bytes inline
     served = await client.get(images[0])
-    assert served.status_code == 200 and served.content == PNG
-    assert served.headers["content-type"] == "image/png"
+    assert served.status_code == 200
+    assert served.headers["content-type"] == "image/jpeg"
+    assert Image.open(io.BytesIO(served.content)).size == (4, 4)
 
 
 async def test_avatar_upload_sets_profile_url(client, db):

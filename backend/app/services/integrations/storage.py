@@ -85,6 +85,14 @@ def delete(key: str) -> None:
     p = _local_path(key)
     if p.is_file():
         p.unlink()
+        # prune the now-empty per-property folder (never the storage root itself)
+        root = Path(get_settings().storage_dir).resolve()
+        parent = p.parent
+        try:
+            if parent.resolve() != root and not any(parent.iterdir()):
+                parent.rmdir()
+        except OSError:
+            pass
 
 
 def public_url(key: str) -> str:

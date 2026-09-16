@@ -123,7 +123,7 @@ def _override_session(_test_db):
         prev_admin_makers.append((admin, admin.session_maker))
         for v, _ in prev_admin_makers:
             v.session_maker = sessionmaker
-    yield
+    yield engine, sessionmaker
     for v, maker in prev_admin_makers:
         v.session_maker = maker
     dbmod._engine, dbmod._sessionmaker = prev_engine, prev_maker
@@ -175,6 +175,14 @@ def _clear_provider_secrets(monkeypatch):
 
 @pytest_asyncio.fixture
 async def client(_override_session, _clean) -> AsyncIterator[AsyncClient]:
+    # The *_wired tests run the app lifespan through `TestClient(app)`; its shutdown calls
+    # `dispose_engine()`, which nulls app.core.db's module engine. Without re-binding here,
+    # every later `session_scope()` caller (SQLAdmin login, moderation actions) would silently
+    # reconnect to the DEV database and the admin-panel tests would fail order-dependently.
+    import app.core.db as dbmod
+
+    engine, sessionmaker = _override_session
+    dbmod._engine, dbmod._sessionmaker = engine, sessionmaker
     # raise_app_exceptions=False -> an unhandled app error becomes a 500 response
     # (as a real HTTP client sees it) instead of propagating into the test.
     transport = ASGITransport(app=app, raise_app_exceptions=False)

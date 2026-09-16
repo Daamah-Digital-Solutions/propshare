@@ -13,11 +13,13 @@ import re
 import uuid
 from decimal import Decimal
 
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.audit import write_audit
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import Property
 from app.models.base import PropertyStatus
@@ -185,9 +187,39 @@ async def list_public(
     return rows, int(total)
 
 
-async def get_public_detail(session: AsyncSession, id_or_slug: str) -> Property:
+# --- Preview-before-publish ------------------------------------------------- #
+# A draft/under-review listing is invisible publicly. The admin Listing Editor mints a
+# signed, property-scoped, 24-hour token so the owner can open the real public page
+# ("as investors will see it") before approving it. The token grants READ of that one
+# property (+ its documents) and nothing else.
+PREVIEW_TTL_SECONDS = 24 * 3600
+
+
+def _preview_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(get_settings().jwt_secret, salt="property-preview")
+
+
+def make_preview_token(prop_id: uuid.UUID) -> str:
+    return _preview_serializer().dumps(str(prop_id))
+
+
+def verify_preview_token(token: str | None, prop_id: uuid.UUID) -> bool:
+    if not token:
+        return False
+    try:
+        value = _preview_serializer().loads(token, max_age=PREVIEW_TTL_SECONDS)
+    except (BadSignature, SignatureExpired):
+        return False
+    return value == str(prop_id)
+
+
+async def get_public_detail(
+    session: AsyncSession, id_or_slug: str, *, preview_token: str | None = None
+) -> Property:
     prop = await _resolve(session, id_or_slug)
-    if prop is None or prop.status not in PUBLIC_STATUSES:
+    if prop is None:
+        raise AppError("NOT_FOUND", "Property not found", status_code=404)
+    if prop.status not in PUBLIC_STATUSES and not verify_preview_token(preview_token, prop.id):
         raise AppError("NOT_FOUND", "Property not found", status_code=404)
     return prop
 

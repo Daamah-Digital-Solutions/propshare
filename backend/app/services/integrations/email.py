@@ -161,7 +161,8 @@ def render_email_html(
           </p>
           <p style="margin:0;color:{_MUTED};font-size:12px;line-height:1.7;">
             This is an automated message from Capimax PropShare — please do not reply.<br>
-            &copy; {year} Capimax PropShare · Fractional real-estate ownership across global markets.
+            &copy; {year} Capimax PropShare ·
+            Fractional real-estate ownership across global markets.
           </p>
         </td></tr>
       </table>

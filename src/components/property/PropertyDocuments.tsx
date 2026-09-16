@@ -6,12 +6,21 @@ import { apiUrl, documentsApi } from "@/lib/api";
 // Group 2: real property documents from the storage seam (replaces the hardcoded mock
 // list). Downloads hit the public document route. DELETE NOTHING — component kept, the
 // data source is now live; honest empty state when an owner hasn't uploaded any yet.
-const PropertyDocuments = ({ propertyId }: { propertyId?: string }) => {
+const PropertyDocuments = ({
+  propertyId,
+  preview,
+}: {
+  propertyId?: string;
+  /** Admin preview token for an unpublished listing (passed through to list + downloads). */
+  preview?: string | null;
+}) => {
   const { data: docs, isLoading } = useQuery({
-    queryKey: ["property-documents", propertyId],
-    queryFn: () => documentsApi.listForProperty(propertyId as string),
+    queryKey: ["property-documents", propertyId, preview ?? null],
+    queryFn: () => documentsApi.listForProperty(propertyId as string, preview),
     enabled: !!propertyId,
   });
+  const withPreview = (path: string) =>
+    preview ? `${path}${path.includes("?") ? "&" : "?"}preview=${encodeURIComponent(preview)}` : path;
 
   const rows = docs ?? [];
 
@@ -56,7 +65,7 @@ const PropertyDocuments = ({ propertyId }: { propertyId?: string }) => {
                     </div>
                   </div>
                 </div>
-                <a href={apiUrl(doc.download_url)} target="_blank" rel="noopener noreferrer" download>
+                <a href={apiUrl(withPreview(doc.download_url))} target="_blank" rel="noopener noreferrer" download>
                   <Button variant="ghost" size="sm">
                     <Download size={16} className="mr-1" />
                     Download
