@@ -320,6 +320,16 @@ async def test_old_raw_create_form_redirects_to_new_listing_form(client, db):
     # the Properties list no longer offers a create button; raw edit still works for admins
     listing = await client.get("/admin/property/list")
     assert listing.status_code == 200 and "/admin/property/create" not in listing.text
+    # ...and instead links to the Listing Editor from its header
+    assert (
+        '<a href="/admin/listing/new" class="btn btn-primary" data-new-listing>+ New listing</a>'
+        in listing.text
+    )
+    assert (
+        '<a href="/admin/listing/" class="btn btn-secondary" data-listing-index>All listings</a>'
+        in listing.text
+    )
+    assert "Export" in listing.text  # the standard header buttons are still there
     pid = _seed_property(db)
     assert (await client.get(f"/admin/property/edit/{pid}")).status_code == 200
 

@@ -1,0 +1,11 @@
+{% extends "sqladmin/list.html" %}
+{#- Properties list: listings are created in the Listing Editor, so the header links there. -#}
+{% block model_menu_bar %}
+<div class="ms-3 d-inline-block">
+  <a href="/admin/listing/" class="btn btn-secondary" data-listing-index>All listings</a>
+</div>
+<div class="ms-3 d-inline-block">
+  <a href="/admin/listing/new" class="btn btn-primary" data-new-listing>+ New listing</a>
+</div>
+{{ super() }}
+{% endblock %}

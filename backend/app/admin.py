@@ -15,6 +15,7 @@ from __future__ import annotations
 import decimal
 import html as _html
 import uuid
+from pathlib import Path
 
 from markupsafe import Markup
 from sqladmin import Admin, BaseView, ModelView, action, expose
@@ -87,6 +88,7 @@ from app.services import (
 from app.services.integrations import storage
 
 PANEL_ROLES = frozenset({"admin", "content_editor"})
+ADMIN_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 # The raw SQLAdmin create page for properties, replaced by /admin/listing/new.
 LEGACY_PROPERTY_CREATE = "/property/create"
 
@@ -207,6 +209,8 @@ class PropertyAdmin(AdminOnlyModelView, model=Property):
     # the model rules, calculated units and the consistency checks. The raw create page is
     # hidden here and redirected in AdminAuth.authenticate. Raw edit stays for admin fixes.
     can_create = False
+    # header buttons: "+ New listing" (Listing Editor) and "All listings"
+    list_template = "admin/property_list.html"
     can_edit = True
     can_delete = True  # guarded: refused while investors hold units; files cleaned up
     form_overrides = {"model": SelectField, "property_type": SelectField}
@@ -1767,6 +1771,8 @@ def setup_admin(app) -> Admin:
         authentication_backend=backend,
         base_url="/admin",
         title="Capimax Admin",
+        # absolute path: our template overrides must load whatever the server's working dir is
+        templates_dir=str(ADMIN_TEMPLATES_DIR),
     )
     for view in (
         PropertyAdmin,
