@@ -192,10 +192,11 @@ async def test_hidden_models_never_appear_in_admin_dropdowns(client, db):
     """Fails if option / future / shared-development is offered anywhere in the admin."""
     await _panel(client, db)
     pid = _seed(db, model="ready-income", completion=None)
+    # the old raw create page no longer renders a form: it redirects to New listing
+    assert (await client.get("/admin/property/create")).headers["location"] == "/admin/listing/new"
     pages = {
         "new listing": (await client.get("/admin/listing/new")).text,
         "listing editor": (await client.get(f"/admin/listing/{pid}")).text,
-        "raw create form": (await client.get("/admin/property/create")).text,
         "raw edit form": (await client.get(f"/admin/property/edit/{pid}")).text,
     }
     for page, html in pages.items():

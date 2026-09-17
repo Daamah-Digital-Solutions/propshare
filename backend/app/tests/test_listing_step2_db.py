@@ -8,7 +8,8 @@ Each test reproduces the audited gap first:
   * documents accepted any category and any file type; no delete/replace -> validated,
     delete removes the file, replace swaps it;
   * drafts were invisible with no way to preview -> signed 24h preview token;
-  * admins could not create a property -> /admin/property/create works, draft + slug;
+  * admins could not create a property -> one place to create: the old raw create page
+    redirects to the Listing Editor's New listing form;
   * content JSON was raw -> structured editors write validated sections.
 """
 
@@ -29,7 +30,9 @@ ADMIN_EMAIL = "step2-admin@x.com"
 
 
 def _png(w: int, h: int, alpha: bool = False) -> bytes:
-    im = Image.new("RGBA" if alpha else "RGB", (w, h), (30, 120, 80, 128) if alpha else (30, 120, 80))
+    im = Image.new(
+        "RGBA" if alpha else "RGB", (w, h), (30, 120, 80, 128) if alpha else (30, 120, 80)
+    )
     out = io.BytesIO()
     im.save(out, format="PNG")
     return out.getvalue()
@@ -203,7 +206,9 @@ async def test_listing_editor_documents_validate_delete_replace(client, db):
     with pytest.raises(storage.StorageNotFound):
         storage.load(key)
     # delete removes row + file
-    r = await client.post(f"/admin/listing/{pid}", data={"action": "doc_delete", "doc_id": str(doc_id)})
+    r = await client.post(
+        f"/admin/listing/{pid}", data={"action": "doc_delete", "doc_id": str(doc_id)}
+    )
     assert "deleted" in r.text
     assert db("SELECT count(*) FROM documents WHERE id=:i", i=doc_id)[0][0] == 0
     with pytest.raises(storage.StorageNotFound):
@@ -269,7 +274,9 @@ async def test_preview_token_shows_draft_only_with_valid_token(client, db):
     token = r.text.split("?preview=", 1)[1].split('"', 1)[0]
     ok = await client.get(f"/api/v1/properties/draft-preview?preview={token}")
     assert ok.status_code == 200 and ok.json()["status"] == "draft"
-    assert (await client.get(f"/api/v1/properties/draft-preview/documents?preview={token}")).status_code == 200
+    assert (
+        await client.get(f"/api/v1/properties/draft-preview/documents?preview={token}")
+    ).status_code == 200
     # token is property-scoped and tamper-proof
     assert (await client.get(f"/api/v1/properties/{other}?preview={token}")).status_code == 404
     assert (await client.get(f"/api/v1/properties/{pid}?preview={token}x")).status_code == 404
@@ -279,8 +286,16 @@ async def test_preview_token_shows_draft_only_with_valid_token(client, db):
 
 
 @pytest.mark.asyncio
-async def test_admin_can_create_property_as_draft_with_slug(client, db):
+async def test_old_raw_create_form_redirects_to_new_listing_form(client, db):
+    """There used to be two places to add a property. The raw SQLAdmin create page skipped the
+    listing rules (typed units, unchecked minimum, no returns), so it now redirects to the
+    Listing Editor's New listing form, and a POST to it creates nothing."""
     await _admin_session(client, db)
+    r = await client.get("/admin/property/create", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/admin/listing/new"
+    # trailing slash: Starlette strips it first, then the same redirect applies
+    slash = await client.get("/admin/property/create/", follow_redirects=True)
+    assert str(slash.url).endswith("/admin/listing/new") and slash.status_code == 200
     r = await client.post(
         "/admin/property/create",
         data={
@@ -295,24 +310,18 @@ async def test_admin_can_create_property_as_draft_with_slug(client, db):
             "content": "{}",
             "fees": "{}",
         },
+        follow_redirects=False,
     )
-    assert r.status_code in (200, 302, 303), r.text[:300]
-    row = db(
-        "SELECT status, slug, model, available_units FROM properties WHERE title='Admin Created Tower'"
-    )
-    assert row, "property not created"
-    status, slug, model, available = row[0]
-    assert status == "draft" and slug.startswith("admin-created-tower-") and model == "installment"
-    assert available == 17000
-    assert db("SELECT count(*) FROM audit_log WHERE action='property.admin_create'")[0][0] == 1
-    # invalid model is rejected by the dropdown validation (400 form error)
-    r = await client.post(
-        "/admin/property/create",
-        data={"title": "X", "model": "tokenized", "property_type": "residential", "location": "L",
-              "total_value": "1", "unit_price": "1", "total_units": "1", "minimum_investment": "1",
-              "content": "{}", "fees": "{}"},
-    )
-    assert r.status_code == 400
+    assert r.status_code == 303 and r.headers["location"] == "/admin/listing/new"
+    assert db("SELECT count(*) FROM properties WHERE title='Admin Created Tower'")[0][0] == 0
+    # the redirect lands on the working New listing form
+    landing = await client.get("/admin/property/create", follow_redirects=True)
+    assert landing.status_code == 200 and "Create draft listing" in landing.text
+    # the Properties list no longer offers a create button; raw edit still works for admins
+    listing = await client.get("/admin/property/list")
+    assert listing.status_code == 200 and "/admin/property/create" not in listing.text
+    pid = _seed_property(db)
+    assert (await client.get(f"/admin/property/edit/{pid}")).status_code == 200
 
 
 @pytest.mark.asyncio
@@ -321,35 +330,68 @@ async def test_listing_editor_structured_content_sections(client, db):
     pid = _seed_property(db)
     r = await client.post(
         f"/admin/listing/{pid}",
-        data={"action": "save_facts", "bedrooms": "2", "bathrooms": "2", "area": "1235", "parking": "1",
-              "max_investment": "", "amenities": "Concierge\nSpa\nConcierge\n"},
+        data={
+            "action": "save_facts",
+            "bedrooms": "2",
+            "bathrooms": "2",
+            "area": "1235",
+            "parking": "1",
+            "max_investment": "",
+            "amenities": "Concierge\nSpa\nConcierge\n",
+        },
     )
     assert "Key facts saved" in r.text
     r = await client.post(
         f"/admin/listing/{pid}",
-        data={"action": "save_terms", "distribution_frequency": "Monthly", "investment_term": "7–10 years",
-              "exit_options": "", "performance_fee": "8", "exit_fee": ""},
+        data={
+            "action": "save_terms",
+            "distribution_frequency": "Monthly",
+            "investment_term": "7–10 years",
+            "exit_options": "",
+            "performance_fee": "8",
+            "exit_fee": "",
+        },
     )
     assert "Terms saved" in r.text
     r = await client.post(
         f"/admin/listing/{pid}",
-        data={"action": "save_developer", "name": "Crestmark Estates", "rating": "4.8", "projects_completed": "184"},
+        data={
+            "action": "save_developer",
+            "name": "Crestmark Estates",
+            "rating": "4.8",
+            "projects_completed": "184",
+        },
     )
     assert "Developer saved" in r.text
     content = db("SELECT content FROM properties WHERE id=:i", i=pid)[0][0]
-    assert content["details"] == {"bedrooms": 2, "bathrooms": 2, "area": 1235.0, "parking": 1, "amenities": ["Concierge", "Spa"]}
+    assert content["details"] == {
+        "bedrooms": 2,
+        "bathrooms": 2,
+        "area": 1235.0,
+        "parking": 1,
+        "amenities": ["Concierge", "Spa"],
+    }
     assert content["terms"] == {"distributionFrequency": "Monthly", "investmentTerm": "7–10 years"}
     assert content["fees"] == {"performance": 8.0}
-    assert content["developer"] == {"name": "Crestmark Estates", "rating": 4.8, "projectsCompleted": 184}
+    assert content["developer"] == {
+        "name": "Crestmark Estates",
+        "rating": 4.8,
+        "projectsCompleted": 184,
+    }
     # validation: rating out of range -> error, nothing changed
     r = await client.post(
         f"/admin/listing/{pid}", data={"action": "save_developer", "name": "X", "rating": "7"}
     )
     assert "between 0 and 5" in r.text
-    assert db("SELECT content->'developer'->>'name' FROM properties WHERE id=:i", i=pid)[0][0] == "Crestmark Estates"
+    assert (
+        db("SELECT content->'developer'->>'name' FROM properties WHERE id=:i", i=pid)[0][0]
+        == "Crestmark Estates"
+    )
 
 
 def test_listing_service_pure_validators():
     assert listing_service.parse_amenities("a, b,, a\n c ") == ["a", "b", "c"]
-    c = listing_service.with_spv({"other": 1}, {"jurisdiction": " England  & Wales ", "trustee": "", "auditor": "KPMG"})
+    c = listing_service.with_spv(
+        {"other": 1}, {"jurisdiction": " England  & Wales ", "trustee": "", "auditor": "KPMG"}
+    )
     assert c == {"other": 1, "spv": {"jurisdiction": "England & Wales", "auditor": "KPMG"}}

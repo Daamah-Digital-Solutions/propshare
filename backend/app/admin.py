@@ -87,6 +87,8 @@ from app.services import (
 from app.services.integrations import storage
 
 PANEL_ROLES = frozenset({"admin", "content_editor"})
+# The raw SQLAdmin create page for properties, replaced by /admin/listing/new.
+LEGACY_PROPERTY_CREATE = "/property/create"
 
 
 class AdminOnlyModelView(ModelView):
@@ -153,6 +155,10 @@ class AdminAuth(AuthenticationBackend):
                 return True
             return RedirectResponse("/admin/change-password", status_code=302)
         if is_full_admin(request):
+            if rel.rstrip("/") == LEGACY_PROPERTY_CREATE:
+                # One place to add a property: the old raw create form sends admins to the
+                # Listing Editor's New listing form (303, so a POST here creates nothing).
+                return RedirectResponse("/admin/listing/new", status_code=303)
             return True
         if rel.startswith("/change-password"):
             return True
@@ -197,9 +203,10 @@ class PropertyAdmin(AdminOnlyModelView, model=Property):
     column_searchable_list = [Property.title, Property.slug]
     column_sortable_list = [Property.created_at, Property.status, Property.total_value]
     column_default_sort = [(Property.created_at, True)]
-    # Admins create listings here (status starts as draft; the Listing Editor adds media,
-    # documents and structured content; Approve publishes).
-    can_create = True
+    # Listings are created ONLY through the Listing Editor (/admin/listing/new), which applies
+    # the model rules, calculated units and the consistency checks. The raw create page is
+    # hidden here and redirected in AdminAuth.authenticate. Raw edit stays for admin fixes.
+    can_create = False
     can_edit = True
     can_delete = True  # guarded: refused while investors hold units; files cleaned up
     form_overrides = {"model": SelectField, "property_type": SelectField}
