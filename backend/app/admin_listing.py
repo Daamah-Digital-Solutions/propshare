@@ -319,6 +319,28 @@ _PAGE = _env.from_string(
 </div></body></html>"""
 )
 
+_INDEX_PAGE = _env.from_string(
+    """<!doctype html><html><head><meta charset="utf-8"><title>Listings</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><style>"""
+    + _STYLE
+    + """</style></head><body><div class="wrap">
+<div class="top"><div><div class="muted">{% if full_admin %}<a href="/admin/">&larr; Admin home</a>{% endif %}</div><h1>Listings</h1>
+<p class="lead">Every property on the platform. Open one to edit photos, documents, facts, milestones — or create a new draft.</p></div>
+<div class="actions"><a class="btn primary" href="/admin/listing/new">+ New listing</a></div></div>
+<div class="card">
+{% if rows %}<table><tr><th>Title</th><th>Model</th><th>Status</th><th>Location</th><th>Updated</th><th></th></tr>
+{% for p in rows %}<tr>
+ <td><a href="/admin/listing/{{ p.id }}">{{ p.title }}</a></td>
+ <td class="muted">{{ model_labels.get(p.model, p.model) }}</td>
+ <td><span class="badge {{ 'active' if p.status.value in ('active','funded') else ('closed' if p.status.value == 'closed' else 'draft') }}">{{ status_labels.get(p.status.value, p.status.value) }}</span></td>
+ <td class="muted">{{ p.location }}</td>
+ <td class="muted">{{ p.updated_at.strftime('%Y-%m-%d') if p.updated_at else '' }}</td>
+ <td><a class="btn mini" href="/admin/listing/{{ p.id }}">Edit</a></td>
+</tr>{% endfor %}</table>
+{% else %}<p class="muted">No listings yet. Press “+ New listing” to create the first draft.</p>{% endif %}
+</div></div></body></html>"""
+)
+
 _STATUS_LABELS = {
     "draft": "Draft — not visible",
     "under_review": "Under review",
@@ -338,10 +360,25 @@ def _actor(request: Request) -> uuid.UUID | None:
     return uuid.UUID(actor) if actor else None
 
 
+LISTING_ROLES = frozenset({"admin", "content_editor"})
+
+
+def _roles(request: Request) -> list[str] | None:
+    return request.session.get("admin_roles")
+
+
 def is_full_admin(request: Request) -> bool:
-    """Full admins see technical links (raw DB form). Content editors (Step 3) do not."""
-    roles = request.session.get("admin_roles")
+    """Full admins see everything. Content editors (Step 3) only reach the Listing Editor.
+    A session without a roles list predates Step 3 — only admins could log in then."""
+    roles = _roles(request)
     return roles is None or "admin" in roles
+
+
+def can_edit_listings(request: Request) -> bool:
+    if not request.session.get("admin_id"):
+        return False
+    roles = _roles(request)
+    return roles is None or bool(LISTING_ROLES & set(roles))
 
 
 async def _read_upload(upload) -> tuple[str, bytes] | None:
@@ -382,17 +419,52 @@ def _friendly(exc: Exception) -> str:
 
 
 class ListingEditorView(BaseView):
-    name = "New listing"
+    name = "Listings"
     icon = "fa-solid fa-pen-ruler"
 
     def is_accessible(self, request: Request) -> bool:
-        return bool(request.session.get("admin_id"))
+        return can_edit_listings(request)
+
+    def is_visible(self, request: Request) -> bool:
+        return self.is_accessible(request)
+
+    @staticmethod
+    def _gate(request: Request):
+        """Redirect anonymous visitors to login; refuse sessions without a listing role."""
+        if not request.session.get("admin_id"):
+            return RedirectResponse("/admin/login", status_code=302)
+        if not can_edit_listings(request):
+            return HTMLResponse("Forbidden", status_code=403)
+        return None
+
+    # ------------------------------------------------------------------- index #
+    @expose("/listing/", methods=["GET"])
+    async def index(self, request: Request):
+        if (resp := self._gate(request)) is not None:
+            return resp
+        async with session_scope() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(Property).order_by(Property.updated_at.desc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            html = _INDEX_PAGE.render(
+                rows=rows,
+                status_labels=_STATUS_LABELS,
+                model_labels=listing_service.MODEL_LABELS,
+                full_admin=is_full_admin(request),
+            )
+        return HTMLResponse(html)
 
     # ------------------------------------------------------------------ create #
     @expose("/listing/new", methods=["GET", "POST"])
     async def create(self, request: Request):
-        if not request.session.get("admin_id"):
-            return RedirectResponse("/admin/login", status_code=302)
+        if (resp := self._gate(request)) is not None:
+            return resp
         names = [f.name for f in listing_service.fields_in(*listing_service.CORE_FORM_GROUPS)]
         values: dict = {"model": "ready-income", "property_type": "apartment"}
         message, error = "", False
@@ -420,8 +492,8 @@ class ListingEditorView(BaseView):
     # ------------------------------------------------------------------ editor #
     @expose("/listing/{prop_id}", methods=["GET", "POST"])
     async def editor(self, request: Request):
-        if not request.session.get("admin_id"):
-            return RedirectResponse("/admin/login", status_code=302)
+        if (resp := self._gate(request)) is not None:
+            return resp
         if request.path_params["prop_id"] == "new":  # route order: {prop_id} shadows /new
             return await self.create(request)
         try:

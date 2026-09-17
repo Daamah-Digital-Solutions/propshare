@@ -6,7 +6,7 @@ liquidity_provider/admin require admin approval.
 
 from __future__ import annotations
 
-from app.core.config import APPROVAL_ROLES, SELF_SERVE_ROLES
+from app.core.config import ADMIN_GRANTED_ROLES, APPROVAL_ROLES, SELF_SERVE_ROLES
 from app.models.base import AppRole
 
 
@@ -20,8 +20,15 @@ def test_approval_roles() -> None:
 
 def test_every_app_role_has_a_policy_and_no_overlap() -> None:
     all_roles = {r.value for r in AppRole}
-    assert all_roles == SELF_SERVE_ROLES | APPROVAL_ROLES
+    assert all_roles == SELF_SERVE_ROLES | APPROVAL_ROLES | ADMIN_GRANTED_ROLES
     assert not (SELF_SERVE_ROLES & APPROVAL_ROLES)
+    assert not (ADMIN_GRANTED_ROLES & (SELF_SERVE_ROLES | APPROVAL_ROLES))
+
+
+def test_content_editor_is_admin_granted_only() -> None:
+    # Step 3: the listings-only panel role can never be self-served or requested.
+    assert ADMIN_GRANTED_ROLES == {"content_editor"}
+    assert "content_editor" not in SELF_SERVE_ROLES | APPROVAL_ROLES
 
 
 def test_admin_is_never_self_serve() -> None:

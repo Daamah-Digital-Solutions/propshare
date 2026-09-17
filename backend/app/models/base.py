@@ -24,6 +24,9 @@ class AppRole(enum.StrEnum):
     broker = "broker"
     liquidity_provider = "liquidity_provider"
     admin = "admin"
+    # Admin-panel role limited to listings (Listing Editor only): no money, users, KYC,
+    # roles, settings or audit. Granted by an admin only — never self-serve.
+    content_editor = "content_editor"
 
 
 class KycStatus(enum.StrEnum):

@@ -46,6 +46,7 @@ const ROLE_LABELS: Record<string, string> = {
   broker: "Broker",
   liquidity_provider: "Liquidity Provider",
   admin: "Admin",
+  content_editor: "Content Editor",
   guest: "Guest",
 };
 

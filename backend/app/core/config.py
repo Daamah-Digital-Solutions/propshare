@@ -16,6 +16,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 #   approval   -> creates a role_grant_request an admin must approve
 SELF_SERVE_ROLES: frozenset[str] = frozenset({"investor", "owner"})
 APPROVAL_ROLES: frozenset[str] = frozenset({"broker", "liquidity_provider", "admin"})
+# Granted only by an admin from the panel (User Roles); can never be requested by a user.
+ADMIN_GRANTED_ROLES: frozenset[str] = frozenset({"content_editor"})
 
 
 class Settings(BaseSettings):

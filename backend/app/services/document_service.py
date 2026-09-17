@@ -37,7 +37,7 @@ DOC_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("agreement", "Agreements"),
     ("legal", "Legal Documents"),
     ("insurance", "Insurance Certificates"),
-    ("audit", "Smart Contract Audit Reports"),
+    ("audit", "Audit Reports"),  # label renamed (Step 3); key kept for stored rows
     ("other", "Other Documents"),
 )
 DOC_CATEGORY_VALUES = frozenset(v for v, _ in DOC_CATEGORIES)

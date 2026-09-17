@@ -7,6 +7,7 @@ export type UserRole =
   | "owner"
   | "broker"
   | "liquidity_provider"
+  | "content_editor"
   | "admin";
 
 interface AuthContextType {

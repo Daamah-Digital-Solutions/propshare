@@ -15,7 +15,7 @@ export const DOC_CATEGORIES: DocCategory[] = [
   { value: "agreement", label: "Agreements" },
   { value: "legal", label: "Legal Documents" },
   { value: "insurance", label: "Insurance Certificates" },
-  { value: "audit", label: "Smart Contract Audit Reports" },
+  { value: "audit", label: "Audit Reports" }, // label renamed (Step 3); key kept
   { value: "other", label: "Other Documents" },
 ];
 

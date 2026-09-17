@@ -24,7 +24,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from wtforms import SelectField
 
-from app.admin_listing import ListingEditorView
+from app.admin_listing import ListingEditorView, is_full_admin
 from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.db import get_engine, session_scope
@@ -85,6 +85,23 @@ from app.services import (
 )
 from app.services.integrations import storage
 
+PANEL_ROLES = frozenset({"admin", "content_editor"})
+
+
+class AdminOnlyModelView(ModelView):
+    """Base for EVERY data view: full admins only.
+
+    Content editors (Step 3) log into the panel but see and reach nothing except the
+    Listing Editor. SQLAdmin consults ``is_accessible`` on list / details / create / edit /
+    delete / export / actions, so this one gate covers all of them.
+    """
+
+    def is_accessible(self, request: Request) -> bool:
+        return bool(request.session.get("admin_id")) and is_full_admin(request)
+
+    def is_visible(self, request: Request) -> bool:
+        return self.is_accessible(request)
+
 
 class AdminAuth(AuthenticationBackend):
     """Form login that only admits users holding the ``admin`` role."""
@@ -98,17 +115,41 @@ class AdminAuth(AuthenticationBackend):
                 user = await auth_service.authenticate(session, email=email, password=password)
             except Exception:
                 return False
-            if not await auth_service.has_role(session, user.id, "admin"):
+            roles = await auth_service.get_roles(session, user.id)
+            if not (PANEL_ROLES & set(roles)):
                 return False
-            request.session.update({"admin_id": str(user.id), "admin_email": user.email})
+            # Roles are stored in the signed session cookie; every view / action re-checks
+            # them (see AdminOnlyModelView + the Listing Editor), so a content editor can
+            # never reach money, users, KYC, roles, settings or audit screens.
+            request.session.update(
+                {"admin_id": str(user.id), "admin_email": user.email, "admin_roles": roles}
+            )
         return True
 
     async def logout(self, request: Request) -> bool:
         request.session.clear()
         return True
 
-    async def authenticate(self, request: Request) -> bool:
-        return "admin_id" in request.session
+    # Paths a content editor may open (relative to /admin). Everything else — every data
+    # view, every @action (SQLAdmin does NOT run is_accessible for actions), the upload and
+    # role-document pages — answers 403 for a non-admin session.
+    _EDITOR_PATHS = ("/listing", "/statics", "/login", "/logout")
+
+    async def authenticate(self, request: Request) -> bool | Response:
+        if "admin_id" not in request.session:
+            return False
+        if is_full_admin(request):
+            return True
+        rel = request.url.path
+        if rel.startswith("/admin"):
+            rel = rel[len("/admin") :]
+        if rel in ("", "/") or rel.startswith(self._EDITOR_PATHS):
+            return True
+        return Response(
+            "Forbidden: this area is for platform admins.",
+            status_code=403,
+            media_type="text/plain; charset=utf-8",
+        )
 
 
 def _back(request: Request) -> RedirectResponse:
@@ -126,7 +167,7 @@ def _fmt_property_title(m: Property) -> Markup:
     ).format(title=m.title, id=m.id)
 
 
-class PropertyAdmin(ModelView, model=Property):
+class PropertyAdmin(AdminOnlyModelView, model=Property):
     name = "Property"
     name_plural = "Properties"
     icon = "fa-solid fa-building"
@@ -384,7 +425,7 @@ class PropertyAdmin(ModelView, model=Property):
         return await self._moderate(request, "close")
 
 
-class PropertyMilestoneAdmin(ModelView, model=PropertyMilestone):
+class PropertyMilestoneAdmin(AdminOnlyModelView, model=PropertyMilestone):
     name = "Property Milestone"
     icon = "fa-solid fa-flag-checkered"
     # Content table (Phase 15b) — editable here for hands-on correction; the same
@@ -421,7 +462,7 @@ class PropertyMilestoneAdmin(ModelView, model=PropertyMilestone):
     can_delete = True
 
 
-class UserAdmin(ModelView, model=User):
+class UserAdmin(AdminOnlyModelView, model=User):
     name = "User"
     icon = "fa-solid fa-user"
     column_list = [
@@ -478,7 +519,7 @@ class UserAdmin(ModelView, model=User):
         return await self._kyc_decide(request, False)
 
 
-class UserRoleAdmin(ModelView, model=UserRole):
+class UserRoleAdmin(AdminOnlyModelView, model=UserRole):
     name = "User Role"
     icon = "fa-solid fa-user-shield"
     column_list = [UserRole.user, UserRole.role, UserRole.created_at]
@@ -489,7 +530,7 @@ class UserRoleAdmin(ModelView, model=UserRole):
     can_delete = True  # revoke a role
 
 
-class KycAdmin(ModelView, model=KycVerification):
+class KycAdmin(AdminOnlyModelView, model=KycVerification):
     name = "KYC Verification"
     icon = "fa-solid fa-id-card"
     # Show the user (email) instead of a bare user_id so rows are identifiable.
@@ -546,7 +587,7 @@ class KycAdmin(ModelView, model=KycVerification):
         return await self._decide(request, False)
 
 
-class InvestmentAdmin(ModelView, model=Investment):
+class InvestmentAdmin(AdminOnlyModelView, model=Investment):
     name = "Investment"
     icon = "fa-solid fa-coins"
     column_list = [
@@ -564,7 +605,7 @@ class InvestmentAdmin(ModelView, model=Investment):
     can_delete = False  # money — read-only; changes go through the audited service layer
 
 
-class WalletAdmin(ModelView, model=Wallet):
+class WalletAdmin(AdminOnlyModelView, model=Wallet):
     name = "Wallet"
     icon = "fa-solid fa-wallet"
     column_list = [
@@ -581,7 +622,7 @@ class WalletAdmin(ModelView, model=Wallet):
     can_delete = False  # money — read-only
 
 
-class TransactionAdmin(ModelView, model=Transaction):
+class TransactionAdmin(AdminOnlyModelView, model=Transaction):
     name = "Transaction"
     icon = "fa-solid fa-receipt"
     column_list = [
@@ -598,7 +639,7 @@ class TransactionAdmin(ModelView, model=Transaction):
     can_delete = False  # ledger — append-only, read-only here
 
 
-class PlatformSettingAdmin(ModelView, model=PlatformSetting):
+class PlatformSettingAdmin(AdminOnlyModelView, model=PlatformSetting):
     name = "Platform Setting"
     icon = "fa-solid fa-sliders"
     # The owner edits fee rates here (e.g. platform_fee_pct, management_fee_pct) —
@@ -629,7 +670,7 @@ class PlatformSettingAdmin(ModelView, model=PlatformSetting):
             raise ValueError(exc.message) from exc
 
 
-class OwnershipLedgerAdmin(ModelView, model=OwnershipLedger):
+class OwnershipLedgerAdmin(AdminOnlyModelView, model=OwnershipLedger):
     name = "Ownership Ledger"
     icon = "fa-solid fa-list-check"
     column_list = [
@@ -645,7 +686,7 @@ class OwnershipLedgerAdmin(ModelView, model=OwnershipLedger):
     can_delete = False  # append-only — units are issued only by the audited service layer
 
 
-class DistributionAdmin(ModelView, model=Distribution):
+class DistributionAdmin(AdminOnlyModelView, model=Distribution):
     name = "Distribution"
     name_plural = "Distributions"
     icon = "fa-solid fa-money-bill-trend-up"
@@ -701,7 +742,7 @@ class DistributionAdmin(ModelView, model=Distribution):
             return await session.get(Distribution, result["distribution_id"])
 
 
-class DistributionItemAdmin(ModelView, model=DistributionItem):
+class DistributionItemAdmin(AdminOnlyModelView, model=DistributionItem):
     name = "Distribution Item"
     icon = "fa-solid fa-list-ol"
     column_list = [
@@ -718,7 +759,7 @@ class DistributionItemAdmin(ModelView, model=DistributionItem):
     can_delete = False  # audit of who got paid what — read-only
 
 
-class WithdrawalAdmin(ModelView, model=Withdrawal):
+class WithdrawalAdmin(AdminOnlyModelView, model=Withdrawal):
     name = "Withdrawal"
     icon = "fa-solid fa-money-bill-transfer"
     column_list = [
@@ -804,7 +845,7 @@ class WithdrawalAdmin(ModelView, model=Withdrawal):
         return await self._decide(request, False)
 
 
-class PlatformBankAccountAdmin(ModelView, model=PlatformBankAccount):
+class PlatformBankAccountAdmin(AdminOnlyModelView, model=PlatformBankAccount):
     name = "Platform Bank Account"
     icon = "fa-solid fa-building-columns"
     # The RECEIVING accounts users transfer to for bank-transfer deposits. The owner
@@ -837,7 +878,7 @@ class PlatformBankAccountAdmin(ModelView, model=PlatformBankAccount):
     can_delete = True
 
 
-class BankDepositClaimAdmin(ModelView, model=Payment):
+class BankDepositClaimAdmin(AdminOnlyModelView, model=Payment):
     name = "Bank Deposit Claim"
     icon = "fa-solid fa-money-check-dollar"
     # Manual bank-transfer deposit CLAIMS (provider='manual_bank'). Confirm → the wallet is
@@ -909,7 +950,7 @@ class BankDepositClaimAdmin(ModelView, model=Payment):
         return _back(request)
 
 
-class UserBankAccountAdmin(ModelView, model=UserBankAccount):
+class UserBankAccountAdmin(AdminOnlyModelView, model=UserBankAccount):
     name = "User Bank Account"
     icon = "fa-solid fa-piggy-bank"
     column_list = [
@@ -925,7 +966,7 @@ class UserBankAccountAdmin(ModelView, model=UserBankAccount):
     can_delete = False
 
 
-class UserCryptoWalletAdmin(ModelView, model=UserCryptoWallet):
+class UserCryptoWalletAdmin(AdminOnlyModelView, model=UserCryptoWallet):
     name = "User Crypto Wallet"
     icon = "fa-solid fa-wallet"
     column_list = [
@@ -940,7 +981,7 @@ class UserCryptoWalletAdmin(ModelView, model=UserCryptoWallet):
     can_delete = False
 
 
-class SecondaryListingAdmin(ModelView, model=SecondaryListing):
+class SecondaryListingAdmin(AdminOnlyModelView, model=SecondaryListing):
     name = "Secondary Listing"
     icon = "fa-solid fa-tags"
     column_list = [
@@ -961,7 +1002,7 @@ class SecondaryListingAdmin(ModelView, model=SecondaryListing):
     can_delete = False
 
 
-class SecondaryTradeAdmin(ModelView, model=SecondaryTrade):
+class SecondaryTradeAdmin(AdminOnlyModelView, model=SecondaryTrade):
     name = "Secondary Trade"
     icon = "fa-solid fa-right-left"
     column_list = [
@@ -982,7 +1023,7 @@ class SecondaryTradeAdmin(ModelView, model=SecondaryTrade):
     can_delete = False  # executed trades — append-only audit
 
 
-class LpPoolTierAdmin(ModelView, model=LpPoolTier):
+class LpPoolTierAdmin(AdminOnlyModelView, model=LpPoolTier):
     name = "LP Pool Tier"
     icon = "fa-solid fa-layer-group"
     # PASSIVE config — admin-editable term/APY/minimum (the real, single source).
@@ -997,7 +1038,7 @@ class LpPoolTierAdmin(ModelView, model=LpPoolTier):
     can_delete = False
 
 
-class LpExitRequestAdmin(ModelView, model=LpExitRequest):
+class LpExitRequestAdmin(AdminOnlyModelView, model=LpExitRequest):
     name = "LP Exit Request"
     icon = "fa-solid fa-right-from-bracket"
     column_list = [
@@ -1019,7 +1060,7 @@ class LpExitRequestAdmin(ModelView, model=LpExitRequest):
     can_delete = False
 
 
-class LpPositionAdmin(ModelView, model=LpPosition):
+class LpPositionAdmin(AdminOnlyModelView, model=LpPosition):
     name = "LP Position"
     icon = "fa-solid fa-droplet"
     # Append-only audit of committed LP capital; holdings live in ownership_ledger.
@@ -1040,7 +1081,7 @@ class LpPositionAdmin(ModelView, model=LpPosition):
     can_delete = False
 
 
-class ConnectAccountAdmin(ModelView, model=ConnectAccount):
+class ConnectAccountAdmin(AdminOnlyModelView, model=ConnectAccount):
     name = "Connect Account"
     icon = "fa-solid fa-building-columns"
     column_list = [
@@ -1056,7 +1097,7 @@ class ConnectAccountAdmin(ModelView, model=ConnectAccount):
     can_delete = False
 
 
-class FamilyGroupAdmin(ModelView, model=FamilyGroup):
+class FamilyGroupAdmin(AdminOnlyModelView, model=FamilyGroup):
     name = "Family Group"
     icon = "fa-solid fa-people-roof"
     column_list = [
@@ -1070,7 +1111,7 @@ class FamilyGroupAdmin(ModelView, model=FamilyGroup):
     can_delete = False
 
 
-class FamilyMemberAdmin(ModelView, model=FamilyMember):
+class FamilyMemberAdmin(AdminOnlyModelView, model=FamilyMember):
     name = "Family Member"
     icon = "fa-solid fa-user-group"
     column_list = [
@@ -1087,7 +1128,7 @@ class FamilyMemberAdmin(ModelView, model=FamilyMember):
     can_delete = False
 
 
-class FamilyTransferAdmin(ModelView, model=FamilyTransfer):
+class FamilyTransferAdmin(AdminOnlyModelView, model=FamilyTransfer):
     name = "Family Transfer"
     icon = "fa-solid fa-arrow-right-arrow-left"
     column_list = [
@@ -1105,7 +1146,7 @@ class FamilyTransferAdmin(ModelView, model=FamilyTransfer):
     can_delete = False
 
 
-class BrokerCodeAdmin(ModelView, model=BrokerCode):
+class BrokerCodeAdmin(AdminOnlyModelView, model=BrokerCode):
     name = "Broker Code"
     icon = "fa-solid fa-ticket"
     column_list = [BrokerCode.broker_id, BrokerCode.code, BrokerCode.created_at]
@@ -1114,7 +1155,7 @@ class BrokerCodeAdmin(ModelView, model=BrokerCode):
     can_delete = False
 
 
-class BrokerReferralAdmin(ModelView, model=BrokerReferral):
+class BrokerReferralAdmin(AdminOnlyModelView, model=BrokerReferral):
     name = "Broker Referral"
     icon = "fa-solid fa-user-plus"
     column_list = [
@@ -1129,7 +1170,7 @@ class BrokerReferralAdmin(ModelView, model=BrokerReferral):
     can_delete = False
 
 
-class BrokerCommissionAdmin(ModelView, model=BrokerCommission):
+class BrokerCommissionAdmin(AdminOnlyModelView, model=BrokerCommission):
     name = "Broker Commission"
     icon = "fa-solid fa-hand-holding-dollar"
     column_list = [
@@ -1147,7 +1188,7 @@ class BrokerCommissionAdmin(ModelView, model=BrokerCommission):
     can_delete = False
 
 
-class NotificationPreferenceAdmin(ModelView, model=NotificationPreference):
+class NotificationPreferenceAdmin(AdminOnlyModelView, model=NotificationPreference):
     name = "Notification Preference"
     icon = "fa-solid fa-sliders"
     column_list = [
@@ -1162,7 +1203,7 @@ class NotificationPreferenceAdmin(ModelView, model=NotificationPreference):
     can_delete = False
 
 
-class SavedPaymentMethodAdmin(ModelView, model=SavedPaymentMethod):
+class SavedPaymentMethodAdmin(AdminOnlyModelView, model=SavedPaymentMethod):
     name = "Saved Payment Method"
     icon = "fa-solid fa-credit-card"
     # PCI-safe: tokens + safe display metadata only (never card data). Read-only here —
@@ -1183,7 +1224,7 @@ class SavedPaymentMethodAdmin(ModelView, model=SavedPaymentMethod):
     can_delete = False
 
 
-class PaymentCustomerAdmin(ModelView, model=PaymentCustomer):
+class PaymentCustomerAdmin(AdminOnlyModelView, model=PaymentCustomer):
     name = "Payment Customer"
     icon = "fa-solid fa-id-card-clip"
     column_list = [
@@ -1197,7 +1238,7 @@ class PaymentCustomerAdmin(ModelView, model=PaymentCustomer):
     can_delete = False
 
 
-class EstateBeneficiaryAdmin(ModelView, model=EstateBeneficiary):
+class EstateBeneficiaryAdmin(AdminOnlyModelView, model=EstateBeneficiary):
     name = "Estate Beneficiary"
     icon = "fa-solid fa-people-arrows"
     column_list = [
@@ -1214,7 +1255,7 @@ class EstateBeneficiaryAdmin(ModelView, model=EstateBeneficiary):
     can_delete = False
 
 
-class EstateEventAdmin(ModelView, model=EstateEvent):
+class EstateEventAdmin(AdminOnlyModelView, model=EstateEvent):
     name = "Estate Event (Death)"
     icon = "fa-solid fa-file-shield"
     # Audit of admin-verified deaths + execution status (manual-admin only).
@@ -1232,7 +1273,7 @@ class EstateEventAdmin(ModelView, model=EstateEvent):
     can_delete = False
 
 
-class EstateTransferAdmin(ModelView, model=EstateTransfer):
+class EstateTransferAdmin(AdminOnlyModelView, model=EstateTransfer):
     name = "Estate Transfer"
     icon = "fa-solid fa-right-left"
     column_list = [
@@ -1249,7 +1290,7 @@ class EstateTransferAdmin(ModelView, model=EstateTransfer):
     can_delete = False
 
 
-class ScheduledGiftAdmin(ModelView, model=ScheduledGift):
+class ScheduledGiftAdmin(AdminOnlyModelView, model=ScheduledGift):
     name = "Scheduled Gift"
     icon = "fa-solid fa-gift"
     # Inter-vivos gifts (Group 5) — append-only-ish audit of scheduled/executed transfers.
@@ -1271,7 +1312,7 @@ class ScheduledGiftAdmin(ModelView, model=ScheduledGift):
     can_delete = False
 
 
-class InstallmentPlanAdmin(ModelView, model=InstallmentPlan):
+class InstallmentPlanAdmin(AdminOnlyModelView, model=InstallmentPlan):
     name = "Installment Plan"
     icon = "fa-solid fa-calendar-days"
     column_list = [
@@ -1292,7 +1333,7 @@ class InstallmentPlanAdmin(ModelView, model=InstallmentPlan):
     can_delete = False
 
 
-class InstallmentPaymentAdmin(ModelView, model=InstallmentPayment):
+class InstallmentPaymentAdmin(AdminOnlyModelView, model=InstallmentPayment):
     name = "Installment Payment"
     icon = "fa-solid fa-money-check-dollar"
     column_list = [
@@ -1311,7 +1352,7 @@ class InstallmentPaymentAdmin(ModelView, model=InstallmentPayment):
     can_delete = False
 
 
-class DocumentAdmin(ModelView, model=Document):
+class DocumentAdmin(AdminOnlyModelView, model=Document):
     name = "Document"
     icon = "fa-solid fa-file-lines"
     # Property/user documents (storage seam). Read-only here — files live in the
@@ -1344,7 +1385,7 @@ class DocumentAdmin(ModelView, model=Document):
         storage.delete(model.file_url)
 
 
-class DeveloperUpdateAdmin(ModelView, model=DeveloperUpdate):
+class DeveloperUpdateAdmin(AdminOnlyModelView, model=DeveloperUpdate):
     name = "Investor Update"
     icon = "fa-solid fa-bullhorn"
     # Sent investor communications (Phase 15c) — append-only audit of what went out.
@@ -1361,7 +1402,7 @@ class DeveloperUpdateAdmin(ModelView, model=DeveloperUpdate):
     can_delete = False
 
 
-class DeveloperUpdateRecipientAdmin(ModelView, model=DeveloperUpdateRecipient):
+class DeveloperUpdateRecipientAdmin(AdminOnlyModelView, model=DeveloperUpdateRecipient):
     name = "Investor Update Recipient"
     icon = "fa-solid fa-users-line"
     column_list = [
@@ -1375,7 +1416,7 @@ class DeveloperUpdateRecipientAdmin(ModelView, model=DeveloperUpdateRecipient):
     can_delete = False
 
 
-class EmailOutboxAdmin(ModelView, model=EmailOutbox):
+class EmailOutboxAdmin(AdminOnlyModelView, model=EmailOutbox):
     name = "Email Outbox"
     icon = "fa-solid fa-envelope"
     column_list = [
@@ -1446,10 +1487,18 @@ class DocumentUploadView(BaseView):
     name = "Upload Document"
     icon = "fa-solid fa-file-arrow-up"
 
+    def is_visible(self, request: Request) -> bool:
+        return self.is_accessible(request)
+
+    def is_accessible(self, request: Request) -> bool:
+        return bool(request.session.get("admin_id")) and is_full_admin(request)
+
     @expose("/upload-document", methods=["GET", "POST"])
     async def upload(self, request: Request):
         if not request.session.get("admin_id"):
             return RedirectResponse("/admin/login", status_code=302)
+        if not is_full_admin(request):
+            return HTMLResponse("Forbidden", status_code=403)
         message = ""
         if request.method == "POST":
             form = await request.form()
@@ -1520,7 +1569,7 @@ def _fmt_application_detail(model, _attr) -> Markup:
     return Markup("".join(parts) or "—")
 
 
-class RoleGrantRequestAdmin(ModelView, model=RoleGrantRequest):
+class RoleGrantRequestAdmin(AdminOnlyModelView, model=RoleGrantRequest):
     name = "Role Application"
     name_plural = "Role Applications"
     icon = "fa-solid fa-user-shield"
@@ -1590,12 +1639,14 @@ class RoleDocView(BaseView):
         return False
 
     def is_accessible(self, request: Request) -> bool:
-        return bool(request.session.get("admin_id"))
+        return bool(request.session.get("admin_id")) and is_full_admin(request)
 
     @expose("/role-application-doc", methods=["GET"])
     async def download(self, request: Request):
         if not request.session.get("admin_id"):
             return RedirectResponse("/admin/login", status_code=302)
+        if not is_full_admin(request):
+            return HTMLResponse("Forbidden", status_code=403)
         try:
             rid = uuid.UUID(request.query_params.get("req", ""))
             i = int(request.query_params.get("i", "0"))
