@@ -57,7 +57,8 @@ interface PropertyData {
   fundingProgress: number;
   fundedAmount: number;
   investorsCount: number;
-  daysLeft: number;
+  // Optional: real listings carry no countdown, so the pill is hidden unless it is > 0.
+  daysLeft?: number;
   expectedCompletion?: string;
   constructionProgress?: number;
   // Backend-supplied, admin-configurable installment fee rate (percent). The client
@@ -323,10 +324,12 @@ const InstallmentCalculator = ({
             <Users size={14} />
             <span>{propertyData.investorsCount} investors</span>
           </div>
-          <div className="flex items-center gap-1">
-            <Clock size={14} />
-            <span>{propertyData.daysLeft} days left</span>
-          </div>
+          {propertyData.daysLeft != null && propertyData.daysLeft > 0 && (
+            <div className="flex items-center gap-1">
+              <Clock size={14} />
+              <span>{propertyData.daysLeft} days left</span>
+            </div>
+          )}
         </div>
       </div>
 

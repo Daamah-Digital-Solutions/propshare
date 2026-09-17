@@ -19,7 +19,7 @@ import uuid
 from markupsafe import Markup
 from sqladmin import Admin, BaseView, ModelView, action, expose
 from sqladmin.authentication import AuthenticationBackend
-from sqlalchemy import func, select
+from sqlalchemy import select
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from wtforms import SelectField
@@ -72,15 +72,13 @@ from app.models import (
     Wallet,
     Withdrawal,
 )
-from app.models.base import InvestmentStatus
 from app.models.identity import RoleGrantRequest, User
-from app.schemas.property import OWNERSHIP_MODELS
 from app.services import (
     auth_service,
     distribution_service,
     document_service,
     kyc_service,
-    listing_media_service,
+    listing_service,
     manual_deposit_service,
     property_service,
     withdrawal_service,
@@ -117,18 +115,7 @@ def _back(request: Request) -> RedirectResponse:
     return RedirectResponse(request.headers.get("referer") or "/admin", status_code=302)
 
 
-PROPERTY_TYPES = (
-    "residential",
-    "apartment",
-    "villa",
-    "commercial",
-    "office",
-    "retail",
-    "mixed-use",
-    "industrial",
-    "hotel",
-    "land",
-)
+PROPERTY_TYPES = listing_service.PROPERTY_TYPE_VALUES  # shared with the Listing Editor
 
 
 def _fmt_property_title(m: Property) -> Markup:
@@ -162,9 +149,31 @@ class PropertyAdmin(ModelView, model=Property):
     can_edit = True
     can_delete = True  # guarded: refused while investors hold units; files cleaned up
     form_overrides = {"model": SelectField, "property_type": SelectField}
-    form_args = {
-        "model": {"choices": [(m, m) for m in OWNERSHIP_MODELS]},
-        "property_type": {"choices": [(t, t) for t in PROPERTY_TYPES]},
+    # Labels + help text come from the same spec the Listing Editor renders, so the raw
+    # form reads the same way for a non-technical owner.
+    column_labels = {getattr(Property, f.name): f.label for f in listing_service.CORE_FIELDS} | {
+        Property.slug: "Web address (slug)",
+        Property.images: "Photo URLs (managed in the Listing Editor)",
+        Property.content: "Structured content JSON (managed in the Listing Editor)",
+        Property.fees: "Per-listing fee overrides JSON (technical)",
+        Property.owner_id: "Owner user id (blank = platform-listed)",
+    }
+    form_args = {f.name: {"description": f.description} for f in listing_service.CORE_FIELDS} | {
+        "model": {
+            "choices": list(listing_service.MODEL_LABELS.items()),
+            "description": listing_service.CORE_BY_NAME["model"].description,
+        },
+        "property_type": {
+            "choices": list(listing_service.PROPERTY_TYPES),
+            "description": listing_service.CORE_BY_NAME["property_type"].description,
+        },
+        "slug": {
+            "description": "Auto-generated from the title; change only if you know why. "
+            "Letters, digits and dashes. Example: marina-bay-residences-2br"
+        },
+    }
+    form_widget_args = {
+        f.name: {"placeholder": f.example} for f in listing_service.CORE_FIELDS if f.example
     }
     column_formatters = {Property.title: lambda m, _a: _fmt_property_title(m)}
     column_formatters_detail = {Property.title: lambda m, _a: _fmt_property_title(m)}
@@ -207,34 +216,8 @@ class PropertyAdmin(ModelView, model=Property):
 
     @staticmethod
     async def _positions(prop_id: uuid.UUID) -> int:
-        """Open investor positions on a property: live investments + ledger rows + plans."""
         async with session_scope() as session:
-            inv = await session.scalar(
-                select(func.count())
-                .select_from(Investment)
-                .where(
-                    Investment.property_id == prop_id,
-                    Investment.status.in_(
-                        (
-                            InvestmentStatus.pending,
-                            InvestmentStatus.confirmed,
-                            InvestmentStatus.active,
-                            InvestmentStatus.completed,
-                        )
-                    ),
-                )
-            )
-            led = await session.scalar(
-                select(func.count())
-                .select_from(OwnershipLedger)
-                .where(OwnershipLedger.property_id == prop_id)
-            )
-            plans = await session.scalar(
-                select(func.count())
-                .select_from(InstallmentPlan)
-                .where(InstallmentPlan.property_id == prop_id)
-            )
-        return int(inv or 0) + int(led or 0) + int(plans or 0)
+            return await listing_service.count_positions(session, prop_id)
 
     @staticmethod
     def _same(a: object, b: object) -> bool:
@@ -322,25 +305,14 @@ class PropertyAdmin(ModelView, model=Property):
         here (before the row goes) and removed in ``after_model_delete`` (after the commit),
         so a failed delete never loses files.
         """
-        if await self._positions(model.id) > 0:
-            raise ValueError(
-                "This property has investor positions and cannot be deleted. Close it instead."
-            )
-        keys: list[str] = []
-        for url in list(model.images or []):
-            key = listing_media_service.url_to_key(url)
-            if key:
-                keys.append(key)
-        logo = ((model.content or {}).get("developer") or {}).get("logo")
-        if isinstance(logo, str):
-            key = listing_media_service.url_to_key(logo)
-            if key:
-                keys.append(key)
         async with session_scope() as session:
-            doc_keys = await session.scalars(
-                select(Document.file_url).where(Document.property_id == model.id)
-            )
-            keys.extend(k for k in doc_keys if k)
+            positions = await listing_service.count_positions(session, model.id)
+            if positions > 0:
+                raise ValueError(
+                    f"This property has {positions} investor position(s) and cannot be "
+                    "deleted. Close it instead."
+                )
+            keys = await listing_service.collect_file_keys(session, model)
         request.state.property_delete_keys = keys
         request.state.property_delete_before = {
             "title": model.title,

@@ -136,7 +136,7 @@ async def test_listing_editor_media_reorder_cover_delete_cleans_storage(client, 
             ("files", ("c.png", _png(400, 300), "image/png")),
         ],
     )
-    assert r.status_code == 200 and "Added 3 image(s)" in r.text
+    assert r.status_code == 200 and "Added 3 photo(s)" in r.text
     imgs = db("SELECT images FROM properties WHERE id=:i", i=pid)[0][0]
     assert len(imgs) == 3
     a, b, c = imgs
@@ -168,7 +168,7 @@ async def test_listing_editor_documents_validate_delete_replace(client, db):
         data={"action": "upload_doc", "title": "DD", "doc_type": "due_diligence"},
         files={"file": ("dd.pdf", b"%PDF-1.4 x", "application/pdf")},
     )
-    assert r.status_code == 200 and "category must be one of" in r.text
+    assert r.status_code == 400 and "category must be one of" in r.text
     # disallowed type (extension) and spoofed type (magic bytes)
     r = await client.post(
         f"/admin/listing/{pid}",
@@ -221,7 +221,7 @@ async def test_admin_property_delete_cleans_storage_and_refuses_with_positions(c
         data={"action": "upload_images"},
         files=[("files", ("a.png", _png(200, 100), "image/png"))],
     )
-    assert "Added 1 image(s)" in r.text
+    assert "Added 1 photo(s)" in r.text
     r = await client.post(
         f"/admin/listing/{pid}",
         data={"action": "upload_doc", "title": "Deed", "doc_type": "legal"},
