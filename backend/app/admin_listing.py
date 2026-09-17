@@ -213,7 +213,7 @@ _PAGE = _env.from_string(
 <div class="top">
   <div>
     <div class="muted"><a href="/admin/property/list">&larr; Properties</a> · <a href="/admin/listing/new">+ New listing</a></div>
-    <h1>{{ p.title }} <span class="badge {{ 'active' if p.status.value in ('active','funded') else ('closed' if p.status.value == 'closed' else 'draft') }}">{{ status_label }}</span></h1>
+    <h1>{{ p.title }} <span class="badge {{ 'active' if p.status.value in ('active','funded') else ('closed' if p.status.value == 'closed' else 'draft') }}">{{ status_label }}</span>{% if is_sample %} <span class="badge draft" data-sample-badge title="Investments are refused on this listing">Sample listing, not open for investment</span>{% endif %}</h1>
     <div class="muted">{{ model_label }} · {{ p.location }} · web address <code>/property/{{ p.slug or p.id }}</code></div>
   </div>
   <div class="actions">
@@ -712,6 +712,7 @@ class ListingEditorView(BaseView):
             html = _PAGE.render(
                 p=prop,
                 status_label=_STATUS_LABELS.get(prop.status.value, prop.status.value),
+                is_sample=bool((prop.content or {}).get("sample")),
                 model_label=listing_service.MODEL_LABELS.get(prop.model, prop.model),
                 full_admin=is_full_admin(request),
                 core_groups=_groups(listing_service.CORE_FORM_GROUPS),

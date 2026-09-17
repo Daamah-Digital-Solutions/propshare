@@ -49,6 +49,22 @@ def _usd(value: decimal.Decimal) -> str:
     return f"${d:,.0f}" if d == d.to_integral_value() else f"${d:,.2f}"
 
 
+SAMPLE_MESSAGE = (
+    "This is a sample listing shown for demonstration only. It is not open for investment."
+)
+
+
+def is_sample(prop: Property) -> bool:
+    """Demo listings (content.sample = true) are visible like any listing but can never take
+    money: every way to acquire units refuses them."""
+    return bool((prop.content or {}).get("sample"))
+
+
+def refuse_sample(prop: Property) -> None:
+    if is_sample(prop):
+        raise AppError("SAMPLE_LISTING", SAMPLE_MESSAGE, status_code=409)
+
+
 def below_minimum(prop: Property, units: int) -> bool:
     """Whole units only: an amount is rounded DOWN to whole units, and those units must be
     worth at least the listing's minimum investment (and at least one unit)."""
@@ -155,6 +171,7 @@ async def create_investment(
         raise AppError(
             "PROPERTY_NOT_OPEN", "This property is not open for investment.", status_code=409
         )
+    refuse_sample(prop)
 
     amount_dec = decimal.Decimal(str(amount))
     rates = await settings_service.get_fee_rates(session)
@@ -572,6 +589,7 @@ async def reinvest_from_wallet(
         raise AppError(
             "PROPERTY_NOT_OPEN", "This property is not open for investment.", status_code=409
         )
+    refuse_sample(prop)
     if prop.unit_price <= 0:
         raise AppError("INVALID_PROPERTY", "Property has no unit price.", status_code=409)
 

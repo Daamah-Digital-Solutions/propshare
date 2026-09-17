@@ -50,6 +50,7 @@ from app.services.investment_service import (
     _recompute_progress,
     below_minimum,
     minimum_error,
+    refuse_sample,
 )
 
 _CENTS = decimal.Decimal("0.01")
@@ -187,6 +188,7 @@ async def create_plan(
         raise AppError(
             "PROPERTY_NOT_OPEN", "This property is not open for funding.", status_code=409
         )
+    refuse_sample(prop)
     if prop.unit_price <= 0:
         raise AppError("INVALID_PROPERTY", "Property has no unit price.", status_code=409)
 
