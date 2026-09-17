@@ -123,6 +123,13 @@ async def register(body: RegisterIn, request: Request, response: Response, sessi
 @limiter.limit(LOGIN_LIMIT)
 async def login(body: LoginIn, request: Request, response: Response, session: SessionDep):
     user = await auth_service.authenticate(session, email=str(body.email), password=body.password)
+    if user.must_change_password:
+        raise AppError(
+            "PASSWORD_CHANGE_REQUIRED",
+            "This account was given a one-time password. Sign in to the admin panel once to "
+            "choose your own password, then sign in here.",
+            status_code=403,
+        )
     access, raw_refresh, _exp = await auth_service.issue_tokens(
         session,
         user,

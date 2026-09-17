@@ -45,6 +45,11 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(Text)
     phone: Mapped[str | None] = mapped_column(Text)
     email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    # Set when staff provisions the account with a shared one-time password: the holder
+    # must choose their own password before doing anything (admin panel + API login).
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     # Current active role (∈ the user's user_roles set). NULL until first role granted.
     active_role: Mapped[AppRole | None] = mapped_column(_app_role)
     # Referral attribution captured at signup (broker commissions land in Phase 11).

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import secrets
+import string
 import uuid
 
 from sqlalchemy import func, select
@@ -405,8 +407,7 @@ async def issue_email_token(session: AsyncSession, user: User, *, kind: str) -> 
         cta_label = "Verify email address"
         expiry = "24 hours"
         footnote = (
-            "If you didn't create a Capimax PropShare account, "
-            "you can safely ignore this email."
+            "If you didn't create a Capimax PropShare account, you can safely ignore this email."
         )
     else:
         subject = "Reset your Capimax PropShare password"
@@ -459,6 +460,7 @@ async def start_password_reset(session: AsyncSession, *, email: str) -> None:
 async def reset_password(session: AsyncSession, *, raw: str, new_password: str) -> None:
     user = await _consume_email_token(session, raw=raw, kind="reset")
     user.password_hash = hash_password(new_password)
+    user.must_change_password = False  # they just chose their own password
     await revoke_all_refresh(session, user_id=user.id)  # force re-login everywhere
 
 
@@ -469,6 +471,129 @@ async def change_password(
     if not user.password_hash or not verify_password(current_password, user.password_hash):
         raise AppError("INVALID_CREDENTIALS", "Current password is incorrect.", status_code=400)
     user.password_hash = hash_password(new_password)
+    user.must_change_password = False
+
+
+# --------------------------------------------------------------------------- #
+# Staff-provisioned panel accounts (one-time password, forced change)
+# --------------------------------------------------------------------------- #
+PANEL_PASSWORD_MIN = 12
+_SYMBOLS = "!@#$%^&*()-_=+[]{}:,.?"
+
+
+def generate_password(length: int = 20) -> str:
+    """Random password with letters, digits and symbols (cryptographic RNG)."""
+    alphabet = string.ascii_letters + string.digits + _SYMBOLS
+    while True:
+        pw = "".join(secrets.choice(alphabet) for _ in range(length))
+        if (
+            any(c.islower() for c in pw)
+            and any(c.isupper() for c in pw)
+            and any(c.isdigit() for c in pw)
+            and any(c in _SYMBOLS for c in pw)
+        ):
+            return pw
+
+
+def validate_strong_password(password: str) -> None:
+    """Rule for the forced first-login change: plain sentences, no codes shown to users."""
+    if len(password) < PANEL_PASSWORD_MIN:
+        raise AppError(
+            "WEAK_PASSWORD",
+            f"New password: use at least {PANEL_PASSWORD_MIN} characters.",
+            status_code=422,
+        )
+    if len(password) > 128:
+        raise AppError(
+            "WEAK_PASSWORD", "New password: use at most 128 characters.", status_code=422
+        )
+    if not (any(c.isalpha() for c in password) and any(c.isdigit() for c in password)):
+        raise AppError(
+            "WEAK_PASSWORD",
+            "New password: include at least one letter and one digit.",
+            status_code=422,
+        )
+
+
+async def force_change_password(
+    session: AsyncSession, *, user: User, current_password: str, new_password: str
+) -> None:
+    """First-login change for a provisioned account: the shared password stops working,
+    every other session is revoked, and an audit row (without any secret) is written."""
+    from app.core.audit import write_audit
+
+    if not user.password_hash or not verify_password(current_password, user.password_hash):
+        raise AppError("INVALID_CREDENTIALS", "Current password is incorrect.", status_code=400)
+    validate_strong_password(new_password)
+    if verify_password(new_password, user.password_hash):
+        raise AppError(
+            "WEAK_PASSWORD",
+            "New password: choose a password different from the one you were given.",
+            status_code=422,
+        )
+    user.password_hash = hash_password(new_password)
+    user.must_change_password = False
+    await revoke_all_refresh(session, user_id=user.id)
+    await write_audit(
+        session,
+        action="auth.password_changed_first_login",
+        entity_type="user",
+        entity_id=str(user.id),
+        actor_id=user.id,
+    )
+
+
+async def provision_panel_user(
+    session: AsyncSession, *, email: str, role: str, full_name: str | None = None
+) -> str:
+    """Create (or re-issue) a staff-provisioned panel account and return its ONE-TIME
+    password. The password exists only in the return value: it is never logged, audited or
+    stored (only its hash is). ``must_change_password`` forces the holder to replace it at
+    first login. Refuses to touch an account that holds the ``admin`` role — demoting or
+    re-keying a platform admin must be a deliberate, separate action."""
+    from app.core.audit import write_audit
+
+    email = email.strip().lower()
+    target = AppRole(role)
+    if target is AppRole.admin:
+        raise AppError("INVALID_ROLE", "Admins are seeded with seed_admin.py.", status_code=422)
+    password = generate_password()
+    user = await get_user_by_email(session, email)
+    created = user is None
+    if user is None:
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            full_name=full_name,
+            active_role=AppRole.investor,
+            email_verified=True,  # staff-provisioned: the address is known to the operator
+        )
+        session.add(user)
+        await session.flush()
+        await _provision_new_user(session, user)
+        session.add(UserRole(user_id=user.id, role=AppRole.investor))
+    else:
+        if await has_role(session, user.id, "admin"):
+            raise AppError(
+                "ADMIN_ACCOUNT",
+                f"{email} is a platform admin. Refusing to re-key or re-role it; use another "
+                "email for the panel account or demote the admin deliberately first.",
+                status_code=409,
+            )
+        user.password_hash = hash_password(password)
+        await revoke_all_refresh(session, user_id=user.id)
+    if not await has_role(session, user.id, target.value):
+        session.add(UserRole(user_id=user.id, role=target))
+    user.must_change_password = True
+    await session.flush()
+    await write_audit(
+        session,
+        action="auth.panel_user_provisioned",
+        entity_type="user",
+        entity_id=str(user.id),
+        after={"email": email, "role": target.value, "created": created},
+    )
+    return password
 
 
 # --------------------------------------------------------------------------- #

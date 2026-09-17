@@ -25,6 +25,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from wtforms import SelectField
 
 from app.admin_listing import ListingEditorView, is_full_admin
+from app.admin_pages import PW_PAGE
 from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.db import get_engine, session_scope
@@ -122,7 +123,13 @@ class AdminAuth(AuthenticationBackend):
             # them (see AdminOnlyModelView + the Listing Editor), so a content editor can
             # never reach money, users, KYC, roles, settings or audit screens.
             request.session.update(
-                {"admin_id": str(user.id), "admin_email": user.email, "admin_roles": roles}
+                {
+                    "admin_id": str(user.id),
+                    "admin_email": user.email,
+                    "admin_roles": roles,
+                    # one-time password: nothing but the change-password page until replaced
+                    "admin_must_change": bool(user.must_change_password),
+                }
             )
         return True
 
@@ -138,11 +145,17 @@ class AdminAuth(AuthenticationBackend):
     async def authenticate(self, request: Request) -> bool | Response:
         if "admin_id" not in request.session:
             return False
-        if is_full_admin(request):
-            return True
         rel = request.url.path
         if rel.startswith("/admin"):
             rel = rel[len("/admin") :]
+        if request.session.get("admin_must_change"):
+            if rel.startswith(("/change-password", "/statics", "/logout")):
+                return True
+            return RedirectResponse("/admin/change-password", status_code=302)
+        if is_full_admin(request):
+            return True
+        if rel.startswith("/change-password"):
+            return True
         if rel in ("", "/") or rel.startswith(self._EDITOR_PATHS):
             return True
         return Response(
@@ -1479,6 +1492,58 @@ _UPLOAD_PAGE = """<!doctype html><html><head><meta charset="utf-8">
 </div></body></html>"""
 
 
+class PasswordChangeView(BaseView):
+    """Change the signed-in panel user's password. Mandatory (nothing else opens) while the
+    account still carries a staff-issued one-time password."""
+
+    name = "Change password"
+    icon = "fa-solid fa-key"
+
+    def is_visible(self, request: Request) -> bool:
+        return bool(request.session.get("admin_id"))
+
+    def is_accessible(self, request: Request) -> bool:
+        return bool(request.session.get("admin_id"))
+
+    @expose("/change-password", methods=["GET", "POST"])
+    async def change(self, request: Request):
+        actor = request.session.get("admin_id")
+        if not actor:
+            return RedirectResponse("/admin/login", status_code=302)
+        forced = bool(request.session.get("admin_must_change"))
+        error = ""
+        if request.method == "POST":
+            form = await request.form()
+            new = str(form.get("new_password") or "")
+            try:
+                if new != str(form.get("confirm_password") or ""):
+                    raise ValueError("Repeat new password: the two new passwords do not match.")
+                async with session_scope() as session:
+                    user = await session.get(User, uuid.UUID(actor))
+                    if user is None:
+                        return RedirectResponse("/admin/logout", status_code=302)
+                    await auth_service.force_change_password(
+                        session,
+                        user=user,
+                        current_password=str(form.get("current_password") or ""),
+                        new_password=new,
+                    )
+                request.session["admin_must_change"] = False
+                return RedirectResponse("/admin/", status_code=303)
+            except (AppError, ValueError) as exc:
+                error = getattr(exc, "message", None) or str(exc)
+        lead = (
+            "You signed in with a one-time password. Choose your own now — the one-time "
+            "password stops working immediately."
+            if forced
+            else "Enter your current password, then the new one."
+        )
+        page = PW_PAGE.replace("__LEAD__", _html.escape(lead)).replace(
+            "__ERR__", f'<div class="err">{_html.escape(error)}</div>' if error else ""
+        )
+        return HTMLResponse(page, status_code=400 if error else 200)
+
+
 class DocumentUploadView(BaseView):
     """Upload a property document (SPV, valuation, agreement, insurance, audit, …) for ANY
     property, straight from the admin panel — no owner account needed. Admin-gated like the
@@ -1725,6 +1790,7 @@ def setup_admin(app) -> Admin:
         InstallmentPaymentAdmin,
         DocumentUploadView,
         ListingEditorView,
+        PasswordChangeView,
         RoleDocView,
     ):
         admin.add_view(view)
