@@ -47,8 +47,10 @@ def _seed_property(db, slug="ce-tower") -> str:
     pid = str(uuid.uuid4())
     db(
         "INSERT INTO properties (id,title,slug,location,property_type,model,status,"
-        "total_value,unit_price,total_units,available_units,minimum_investment) VALUES "
-        "(:id,'CE Tower',:s,'London','residential','future','draft',1000000,100,100,100,100)",
+        "total_value,unit_price,total_units,available_units,minimum_investment,expected_yield,"
+        "capital_appreciation,total_return,expected_completion) VALUES "
+        "(:id,'CE Tower',:s,'London','residential','installment','draft',1000000,100,10000,"
+        "10000,100,7,3,10,'2027-06-30')",
         id=pid,
         s=slug,
     )

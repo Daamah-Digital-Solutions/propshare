@@ -35,14 +35,18 @@ def _slugify(title: str) -> str:
     return f"{base}-{uuid.uuid4().hex[:6]}"
 
 
-def _validate_model(model: str) -> str:
+def _validate_model(model: str, *, current: str | None = None) -> str:
+    """Known key AND available: option / future / shared-development are hidden until their
+    mechanics exist (a listing that already has one may keep it, nobody can pick one)."""
     if model not in OWNERSHIP_MODELS:
         raise AppError(
             "INVALID_MODEL",
             f"model must be one of {list(OWNERSHIP_MODELS)}",
             status_code=422,
         )
-    return model
+    from app.services import listing_service  # local: listing_service imports this module
+
+    return listing_service.validate_model_choice(model, current=current)
 
 
 def _num(value: Decimal | float | int | None) -> float | None:
@@ -319,7 +323,7 @@ async def update(
             status_code=409,
         )
     if "model" in data and data["model"] is not None:
-        prop.model = _validate_model(data["model"])
+        prop.model = _validate_model(data["model"], current=prop.model)
     if data.get("total_units") is not None:
         # available stays in lock-step with total while no units are sold yet (pre-Phase-5).
         prop.total_units = data["total_units"]
@@ -381,6 +385,24 @@ async def admin_moderate(
         raise AppError("NOT_FOUND", "Property not found", status_code=404)
     before = {"status": str(prop.status)}
     if action == "approve":
+        # Publish checklist — the ONE gate every publish path goes through (Listing Editor,
+        # SQLAdmin action, admin API). Blocks anything the public page would render as 0% or
+        # empty for this model, inconsistent units/minimum, and unavailable models.
+        from app.services import listing_service
+
+        positions = await listing_service.count_positions(session, prop.id)
+        milestones = await listing_service.list_milestones(session, prop.id)
+        check = listing_service.publish_checklist(
+            prop, milestones=len(milestones), has_positions=positions > 0
+        )
+        if check["blockers"]:
+            raise AppError(
+                "PUBLISH_BLOCKED",
+                "This listing cannot be published yet. Fix these first:\n- "
+                + "\n- ".join(check["blockers"]),
+                status_code=409,
+                details={"blockers": check["blockers"]},
+            )
         prop.status = PropertyStatus.active
     elif action == "reject":
         prop.status = PropertyStatus.draft

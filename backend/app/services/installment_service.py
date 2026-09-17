@@ -46,7 +46,11 @@ from app.services import (
     wallet_service,
 )
 from app.services.distribution_service import hamilton
-from app.services.investment_service import _recompute_progress
+from app.services.investment_service import (
+    _recompute_progress,
+    below_minimum,
+    minimum_error,
+)
 
 _CENTS = decimal.Decimal("0.01")
 _HUNDRED = decimal.Decimal(100)
@@ -187,12 +191,9 @@ async def create_plan(
         raise AppError("INVALID_PROPERTY", "Property has no unit price.", status_code=409)
 
     units_total = int(amount_dec // prop.unit_price)  # floor to whole units at the locked price
-    if units_total < 1:
-        raise AppError(
-            "AMOUNT_TOO_LOW",
-            f"Minimum is one unit (${prop.unit_price}).",
-            status_code=422,
-        )
+    # Same rule as a direct purchase: whole units worth at least the listing's minimum.
+    if below_minimum(prop, units_total):
+        raise minimum_error(prop)
     if units_total > prop.available_units:
         raise AppError(
             "INSUFFICIENT_UNITS",
@@ -513,13 +514,9 @@ async def build_schedule_pdf(
     contract = sum((p.base_amount for p in payments), decimal.Decimal("0"))
     fees = sum((p.fee_amount for p in payments), decimal.Decimal("0"))
     grand = contract + fees
-    paid = sum(
-        (p.total_amount for p in payments if p.status == "paid"), decimal.Decimal("0")
-    )
+    paid = sum((p.total_amount for p in payments if p.status == "paid"), decimal.Decimal("0"))
     remaining = grand - paid
-    unpaid = sorted(
-        (p for p in payments if p.status != "paid"), key=lambda x: x.due_date
-    )
+    unpaid = sorted((p for p in payments if p.status != "paid"), key=lambda x: x.due_date)
     if unpaid:
         next_due = unpaid[0].due_date.strftime("%b %d, %Y")
     else:

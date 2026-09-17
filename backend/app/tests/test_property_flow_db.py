@@ -13,6 +13,12 @@ PROP = {
     "location": "Dubai, UAE",
     "total_value": 1000000,
     "unit_price": 100,
+    # publish checklist: whole units, and every return the public page shows is filled
+    "total_units": 10000,
+    "minimum_investment": 500,
+    "expected_yield": 7,
+    "capital_appreciation": 3,
+    "total_return": 10,
 }
 
 

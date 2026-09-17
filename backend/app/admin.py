@@ -214,7 +214,10 @@ class PropertyAdmin(AdminOnlyModelView, model=Property):
     }
     form_args = {f.name: {"description": f.description} for f in listing_service.CORE_FIELDS} | {
         "model": {
-            "choices": list(listing_service.MODEL_LABELS.items()),
+            # available models only; a legacy hidden model is edited in the Listing Editor
+            "choices": [
+                (m, listing_service.MODEL_LABELS[m]) for m in listing_service.ENABLED_MODELS
+            ],
             "description": listing_service.CORE_BY_NAME["model"].description,
         },
         "property_type": {
@@ -293,7 +296,9 @@ class PropertyAdmin(AdminOnlyModelView, model=Property):
             raise ValueError("Title is required.")
         if data.get("model"):
             try:
-                property_service.validate_model(str(data["model"]))
+                property_service.validate_model(
+                    str(data["model"]), current=None if is_created else model.model
+                )
             except AppError as exc:
                 raise ValueError(exc.message) from exc
         slug = str(data.get("slug") or "").strip()
@@ -393,18 +398,30 @@ class PropertyAdmin(AdminOnlyModelView, model=Property):
                 before=getattr(request.state, "property_delete_before", None),
             )
 
-    async def _moderate(self, request: Request, what: str) -> RedirectResponse:
+    async def _moderate(self, request: Request, what: str) -> Response:
         pks = [p for p in request.query_params.get("pks", "").split(",") if p]
         actor = request.session.get("admin_id")
         actor_uuid = uuid.UUID(actor) if actor else None
-        async with session_scope() as session:
-            for pk in pks:
-                await property_service.admin_moderate(
-                    session,
-                    actor_id=actor_uuid,
-                    prop_id=uuid.UUID(pk),
-                    action=what,
-                )
+        try:
+            async with session_scope() as session:
+                for pk in pks:
+                    await property_service.admin_moderate(
+                        session,
+                        actor_id=actor_uuid,
+                        prop_id=uuid.UUID(pk),
+                        action=what,
+                    )
+        except AppError as exc:  # e.g. the publish checklist: show it, change nothing
+            links = "".join(
+                f'<li><a href="/admin/listing/{_html.escape(pk)}">Open the listing</a></li>'
+                for pk in pks
+            )
+            return HTMLResponse(
+                '<div style="font-family:sans-serif;max-width:640px;margin:40px auto">'
+                f'<h2>Nothing was changed</h2><p style="white-space:pre-line">'
+                f"{_html.escape(exc.message)}</p><ul>{links}</ul></div>",
+                status_code=exc.status_code,
+            )
         return _back(request)
 
     @action(

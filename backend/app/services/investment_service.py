@@ -42,6 +42,40 @@ from app.services import (
 )
 
 _CENTS = decimal.Decimal("0.01")
+
+
+def _usd(value: decimal.Decimal) -> str:
+    d = decimal.Decimal(value).quantize(_CENTS)
+    return f"${d:,.0f}" if d == d.to_integral_value() else f"${d:,.2f}"
+
+
+def below_minimum(prop: Property, units: int) -> bool:
+    """Whole units only: an amount is rounded DOWN to whole units, and those units must be
+    worth at least the listing's minimum investment (and at least one unit)."""
+    return units < 1 or prop.unit_price * units < prop.minimum_investment
+
+
+def minimum_error(prop: Property) -> AppError:
+    """Same rule and message for direct purchases and installment plans."""
+    unit = decimal.Decimal(prop.unit_price)
+    minimum = max(decimal.Decimal(prop.minimum_investment or 0), unit)
+    # the smallest whole number of units worth at least the minimum
+    min_units = int((minimum / unit).to_integral_value(rounding=decimal.ROUND_CEILING))
+    min_amount = unit * min_units
+    return AppError(
+        "AMOUNT_TOO_LOW",
+        f"The minimum investment for this property is {_usd(min_amount)} "
+        f"({min_units} whole unit{'' if min_units == 1 else 's'} at {_usd(unit)} each). "
+        "Amounts are rounded down to whole units.",
+        status_code=422,
+        details={
+            "minimum_investment": str(prop.minimum_investment),
+            "unit_price": str(prop.unit_price),
+            "minimum_amount": f"{min_amount.normalize():f}",
+        },
+    )
+
+
 _HUNDRED = decimal.Decimal(100)
 RESERVATION_TTL = dt.timedelta(minutes=30)
 # Direct-pay rails (reserve units -> hosted checkout -> webhook confirms). "pronova" is a
@@ -125,13 +159,8 @@ async def create_investment(
     amount_dec = decimal.Decimal(str(amount))
     rates = await settings_service.get_fee_rates(session)
     quote = _quote(prop.unit_price, amount_dec, rates)
-    if quote["units"] < 1 or quote["subtotal"] < prop.minimum_investment:
-        raise AppError(
-            "AMOUNT_TOO_LOW",
-            f"Minimum investment is {prop.minimum_investment} (1 unit = {prop.unit_price}).",
-            status_code=422,
-            details={"minimum_investment": str(prop.minimum_investment)},
-        )
+    if below_minimum(prop, quote["units"]):
+        raise minimum_error(prop)
     if quote["units"] > prop.available_units:
         raise AppError(
             "INSUFFICIENT_UNITS",

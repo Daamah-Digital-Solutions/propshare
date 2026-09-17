@@ -43,18 +43,104 @@ from app.services import property_service
 MAX_AMENITIES = 40
 
 # --------------------------------------------------------------------------- #
-# Human labels (the admin is used by a non-technical owner)
+# Ownership models, profiles and human labels (the admin is used by a non-technical owner)
 # --------------------------------------------------------------------------- #
 MODEL_LABELS: dict[str, str] = {
-    "ready-income": "Ready property — rental income",
-    "installment": "Ready property — paid in installments",
-    "future": "Under construction — future property",
-    "option": "Option position — right to buy at a fixed price",
-    "shared-development": "Shared development — co-fund a build",
-    "ready-portfolio": "Portfolio — several ready income properties",
-    "construction-portfolio": "Portfolio — several off-plan projects",
+    "ready-income": "Ready property, rental income",
+    "ready-portfolio": "Ready portfolio, several income properties",
+    "installment": "Off-plan, paid in installments",
+    "construction-portfolio": "Off-plan portfolio, several projects",
+    "future": "Future property (not available)",
+    "option": "Option position (not available)",
+    "shared-development": "Shared development (not available)",
 }
 assert set(MODEL_LABELS) == set(OWNERSHIP_MODELS)
+
+# Models investors can actually get today. The other keys stay in code so they can be
+# enabled once their mechanics exist; until then nobody can create or switch to them.
+ENABLED_MODELS: tuple[str, ...] = (
+    "ready-income",
+    "ready-portfolio",
+    "installment",
+    "construction-portfolio",
+)
+HIDDEN_MODELS: tuple[str, ...] = tuple(m for m in OWNERSHIP_MODELS if m not in ENABLED_MODELS)
+HIDDEN_MODEL_REASONS: dict[str, str] = {
+    "future": "forward purchase and settlement at delivery are not built",
+    "option": "option premiums, strike prices and expiry are not built",
+    "shared-development": "developer partnerships and profit sharing are not built",
+}
+assert set(HIDDEN_MODEL_REASONS) == set(HIDDEN_MODELS)
+
+PROFILE_READY = "ready_single"
+PROFILE_READY_PORTFOLIO = "ready_portfolio"
+PROFILE_OFFPLAN = "offplan_single"
+PROFILE_OFFPLAN_PORTFOLIO = "offplan_portfolio"
+ALL_PROFILES = (PROFILE_READY, PROFILE_READY_PORTFOLIO, PROFILE_OFFPLAN, PROFILE_OFFPLAN_PORTFOLIO)
+READY_PROFILES = (PROFILE_READY, PROFILE_READY_PORTFOLIO)
+OFFPLAN_PROFILES = (PROFILE_OFFPLAN, PROFILE_OFFPLAN_PORTFOLIO)
+SINGLE_PROFILES = (PROFILE_READY, PROFILE_OFFPLAN)
+PORTFOLIO_PROFILES = (PROFILE_READY_PORTFOLIO, PROFILE_OFFPLAN_PORTFOLIO)
+
+# Mirrors the public site: only ready-income / ready-portfolio get the "Ready" page; every
+# other key renders the under-construction page with the installment calculator.
+MODEL_PROFILE: dict[str, str] = {
+    "ready-income": PROFILE_READY,
+    "ready-portfolio": PROFILE_READY_PORTFOLIO,
+    "installment": PROFILE_OFFPLAN,
+    "future": PROFILE_OFFPLAN,
+    "option": PROFILE_OFFPLAN,
+    "shared-development": PROFILE_OFFPLAN,
+    "construction-portfolio": PROFILE_OFFPLAN_PORTFOLIO,
+}
+assert set(MODEL_PROFILE) == set(OWNERSHIP_MODELS)
+
+MODEL_EXPLAIN: dict[str, str] = {
+    "ready-income": (
+        "A completed property. Investors buy whole units outright and receive their share "
+        "of the rental income."
+    ),
+    "ready-portfolio": (
+        "Several completed income properties offered together. Investors buy whole units "
+        "in the whole portfolio and share its rental income."
+    ),
+    "installment": (
+        "A property under construction. Investors lock today's unit price and pay through "
+        "the platform's standard installment plan; rental income starts after handover."
+    ),
+    "construction-portfolio": (
+        "Several projects under construction offered together, bought through the "
+        "platform's standard installment plan; rental income starts after handover."
+    ),
+    "future": "Not available: " + HIDDEN_MODEL_REASONS["future"] + ".",
+    "option": "Not available: " + HIDDEN_MODEL_REASONS["option"] + ".",
+    "shared-development": "Not available: " + HIDDEN_MODEL_REASONS["shared-development"] + ".",
+}
+
+
+def profile_of(model: str | None) -> str:
+    return MODEL_PROFILE.get(model or "", PROFILE_READY)
+
+
+def validate_model_choice(model: str, *, current: str | None = None) -> str:
+    """A listing may keep a legacy hidden model it already has, but nobody can create a
+    listing with one or switch a listing to one."""
+    if model not in OWNERSHIP_MODELS:
+        raise AppError(
+            "INVALID_MODEL",
+            "Ownership model: choose one of the options in the list.",
+            status_code=422,
+        )
+    if model in HIDDEN_MODELS and model != current:
+        raise AppError(
+            "MODEL_NOT_AVAILABLE",
+            f"The '{model}' ownership model is not available: {HIDDEN_MODEL_REASONS[model]}. "
+            "Choose ready property, ready portfolio, off-plan paid in installments or "
+            "off-plan portfolio.",
+            status_code=422,
+        )
+    return model
+
 
 PROPERTY_TYPES: tuple[tuple[str, str], ...] = (
     ("apartment", "Apartment"),
@@ -80,7 +166,11 @@ assert set(MILESTONE_STATUS_LABELS) == set(MILESTONE_STATUSES)
 
 @dataclass(frozen=True)
 class FieldSpec:
-    """One editable listing column: label, help and example shown in the admin."""
+    """One editable listing column: label, help and example shown in the admin.
+
+    ``show_in`` / ``required_in`` / ``profile_labels`` make the same field adapt to the
+    ownership model's profile; ``computed`` fields are calculated by the server and shown
+    read-only; ``positive`` rejects 0 because the public page would show "0%"."""
 
     name: str
     label: str
@@ -91,26 +181,58 @@ class FieldSpec:
     group: str = ""
     options: tuple[tuple[str, str], ...] = ()
     max_len: int = 200
+    show_in: tuple[str, ...] = ALL_PROFILES
+    required_in: tuple[str, ...] = ()
+    profile_labels: tuple[tuple[str, str], ...] = ()
+    profile_help: tuple[tuple[str, str], ...] = ()
+    computed: bool = False
+    positive: bool = False
 
     @property
     def description(self) -> str:
         """Help + example as one sentence (used by the raw SQLAdmin form as well)."""
         return f"{self.help} Example: {self.example}" if self.example else self.help
 
+    def shown(self, profile: str) -> bool:
+        return profile in self.show_in
+
+    def is_required(self, profile: str) -> bool:
+        return self.required or profile in self.required_in
+
+    def label_for(self, profile: str) -> str:
+        return dict(self.profile_labels).get(profile, self.label)
+
+    def help_for(self, profile: str) -> str:
+        return dict(self.profile_help).get(profile, self.help)
+
+    def rules(self) -> dict[str, dict[str, Any]]:
+        """Per-profile rules, embedded as JSON so the form adapts live when the model changes."""
+        return {
+            p: {
+                "show": self.shown(p),
+                "required": self.is_required(p) and not self.computed,
+                "label": self.label_for(p),
+                "help": self.help_for(p),
+            }
+            for p in ALL_PROFILES
+        }
+
 
 GROUP_IDENTITY = "Listing identity"
 GROUP_LOCATION = "Location"
-GROUP_OFFERING = "Offering — units & price"
+GROUP_OFFERING = "Offering, units and price"
 GROUP_RETURNS = "Returns shown to investors"
-GROUP_SPV = "SPV & legal structure"
-GROUP_CONSTRUCTION = "Construction & timeline"
+GROUP_SPV = "SPV and legal structure"
+GROUP_CONSTRUCTION = "Construction and timeline"
+
+_OFFPLAN_YIELD_LABEL = "Expected rental yield after handover (% per year)"
 
 CORE_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec(
         "title",
         "Listing title",
         "The headline investors see everywhere (cards, page, emails).",
-        "Marina Bay Residences — 2BR Sea View",
+        "Marina Bay Residences 2BR Sea View",
         required=True,
         group=GROUP_IDENTITY,
     ),
@@ -124,12 +246,12 @@ CORE_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec(
         "model",
         "Ownership model",
-        "Decides the page layout, calculator and badges. Cannot change once investors hold units.",
+        "Decides the page layout and how investors buy. Cannot change once investors hold units.",
         "",
         kind="select",
         required=True,
         group=GROUP_IDENTITY,
-        options=tuple((m, MODEL_LABELS[m]) for m in OWNERSHIP_MODELS),
+        options=tuple((m, MODEL_LABELS[m]) for m in ENABLED_MODELS),
     ),
     FieldSpec(
         "property_type",
@@ -144,13 +266,26 @@ CORE_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec(
         "description",
         "Description",
-        "Shown in the Overview tab. Describe the asset, the tenant/lease situation and why it "
-        "is a good investment. Plain text; blank lines make paragraphs.",
+        "Shown in the Overview tab. Describe the asset, the tenant or lease situation and why "
+        "it is a good investment. Plain text; blank lines make paragraphs.",
         "A 1,350 sq ft two-bedroom apartment on the 18th floor, let to a corporate tenant "
-        "until 2028…",
+        "until 2028.",
         kind="textarea",
         group=GROUP_IDENTITY,
         max_len=8000,
+        profile_help=(
+            (
+                PROFILE_READY_PORTFOLIO,
+                "Shown in the Overview tab. List the properties in the portfolio, their "
+                "locations and tenancy. Plain text; blank lines make paragraphs.",
+            ),
+            (
+                PROFILE_OFFPLAN_PORTFOLIO,
+                "Shown in the Overview tab. List the projects in the portfolio, their "
+                "developers and expected handover dates. Plain text; blank lines make "
+                "paragraphs.",
+            ),
+        ),
     ),
     FieldSpec(
         "location",
@@ -177,7 +312,8 @@ CORE_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec(
         "total_value",
         "Total property value (USD)",
-        "The full value of the asset. Funding goal = this amount. Digits only, no commas.",
+        "The full value of the offering. The funding goal equals this amount. Digits only, "
+        "no commas.",
         "1200000",
         kind="money",
         required=True,
@@ -186,7 +322,7 @@ CORE_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec(
         "unit_price",
         "Price per unit (USD)",
-        "What one unit costs. Locked once investors hold units.",
+        "What one unit costs. Investors buy whole units only. Locked once investors hold units.",
         "100",
         kind="money",
         required=True,
@@ -194,51 +330,75 @@ CORE_FIELDS: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         "total_units",
-        "Total units",
-        "Number of units on offer — normally total value ÷ unit price. Locked once investors "
-        "hold units.",
+        "Total units (calculated)",
+        "Calculated automatically: total property value divided by price per unit.",
         "12000",
         kind="int",
-        required=True,
         group=GROUP_OFFERING,
+        computed=True,
     ),
     FieldSpec(
         "minimum_investment",
         "Minimum investment (USD)",
-        "Smallest amount an investor may put in.",
+        "Smallest amount an investor may put in. Must be a whole number of units: at least "
+        "one unit price and a multiple of it.",
         "500",
         kind="money",
         required=True,
         group=GROUP_OFFERING,
     ),
     FieldSpec(
-        "target_yield",
-        "Target rental yield (% per year)",
-        "Shown on the marketplace card. Leave blank if not applicable.",
+        "expected_yield",
+        "Expected annual rental yield (%)",
+        "Shown on the marketplace card, in the Financials tab and in the calculator. Must be "
+        "greater than 0, otherwise the page would show 0%.",
         "7.5",
         kind="percent",
+        required=True,
+        positive=True,
         group=GROUP_RETURNS,
+        profile_labels=(
+            (PROFILE_OFFPLAN, _OFFPLAN_YIELD_LABEL),
+            (PROFILE_OFFPLAN_PORTFOLIO, _OFFPLAN_YIELD_LABEL),
+        ),
+        profile_help=(
+            (
+                PROFILE_OFFPLAN,
+                "The rental yield expected once the property is handed over. The property "
+                "page labels it Expected Rental Yield, so it must be greater than 0.",
+            ),
+            (
+                PROFILE_OFFPLAN_PORTFOLIO,
+                "The rental yield expected once the projects are handed over. The property "
+                "page labels it Expected Rental Yield, so it must be greater than 0.",
+            ),
+        ),
     ),
     FieldSpec(
-        "expected_yield",
-        "Expected annual yield (%)",
-        "Drives the “Expected return” and the calculator on the property page.",
-        "7.5",
+        "target_yield",
+        "Target yield (%)",
+        "Kept equal to the expected rental yield automatically.",
+        "",
         kind="percent",
         group=GROUP_RETURNS,
+        show_in=(),
+        computed=True,
     ),
     FieldSpec(
         "capital_appreciation",
         "Expected capital appreciation (% per year)",
-        "Shown in the Financials tab.",
+        "Shown in the Financials tab. Must be greater than 0, otherwise the page would show 0%.",
         "3",
         kind="percent",
+        required=True,
+        positive=True,
         group=GROUP_RETURNS,
     ),
     FieldSpec(
         "total_return",
         "Total expected return (%)",
-        "Yield + appreciation, as one headline number.",
+        "Leave blank to calculate it as rental yield plus capital appreciation. If you enter "
+        "a different figure you will see a warning.",
         "10.5",
         kind="percent",
         group=GROUP_RETURNS,
@@ -261,83 +421,330 @@ CORE_FIELDS: tuple[FieldSpec, ...] = (
         "legal_structure",
         "Legal structure",
         "One line investors can understand.",
-        "Special purpose vehicle (SPV) — investors hold units in the SPV that owns the property",
+        "Special purpose vehicle: investors hold units in the SPV that owns the property",
         group=GROUP_SPV,
         max_len=300,
     ),
     FieldSpec(
         "expected_completion",
         "Expected completion date",
-        "Under-construction listings only; shown in the Timeline tab.",
+        "When the property is expected to be handed over. Shown in the investment sidebar. "
+        "Required before an off-plan listing can be published.",
         "2027-06-30",
         kind="date",
         group=GROUP_CONSTRUCTION,
+        show_in=OFFPLAN_PROFILES,
     ),
 )
 CORE_BY_NAME = {f.name: f for f in CORE_FIELDS}
 # Groups rendered by the editor's main "Listing details" form (SPV/construction have own cards)
 CORE_FORM_GROUPS = (GROUP_IDENTITY, GROUP_LOCATION, GROUP_OFFERING, GROUP_RETURNS)
+# The New listing form also asks for the completion date (shown for off-plan models only).
+CREATE_FORM_GROUPS = (*CORE_FORM_GROUPS, GROUP_CONSTRUCTION)
 # Fields an investor's purchase is defined by — frozen once anyone holds units.
 LOCKED_WITH_POSITIONS = ("unit_price", "total_units", "model")
+
+# Editor-only content fields that depend on the profile (key facts card).
+FACT_RULES: dict[str, dict[str, Any]] = {
+    "bedrooms": {"show_in": SINGLE_PROFILES},
+    "bathrooms": {"show_in": SINGLE_PROFILES},
+    "parking": {"show_in": SINGLE_PROFILES},
+    "amenities": {"show_in": SINGLE_PROFILES},
+    "area": {"show_in": ALL_PROFILES},
+    "max_investment": {"show_in": ALL_PROFILES},
+}
+AREA_LABELS = {
+    PROFILE_READY: "Area (sq ft)",
+    PROFILE_OFFPLAN: "Area (sq ft)",
+    PROFILE_READY_PORTFOLIO: "Total area across all properties (sq ft)",
+    PROFILE_OFFPLAN_PORTFOLIO: "Total area across all projects (sq ft)",
+}
 
 
 def fields_in(*groups: str) -> list[FieldSpec]:
     return [f for f in CORE_FIELDS if f.group in groups]
 
 
-def _bad_field(spec: FieldSpec, what: str) -> AppError:
+def form_rules_json() -> dict[str, Any]:
+    """Everything the admin page script needs to adapt the form without a round trip."""
+    return {
+        "profiles": MODEL_PROFILE,
+        "explain": MODEL_EXPLAIN,
+        "fields": {f.name: f.rules() for f in CORE_FIELDS},
+        "facts": {k: {p: p in v["show_in"] for p in ALL_PROFILES} for k, v in FACT_RULES.items()},
+        "area_labels": AREA_LABELS,
+    }
+
+
+def _bad_field(spec: FieldSpec, what: str, profile: str | None = None) -> AppError:
     eg = f" Example: {spec.example}." if spec.example else ""
-    return AppError("INVALID_INPUT", f"{spec.label}: {what}.{eg}", status_code=422)
+    label = spec.label_for(profile) if profile else spec.label
+    return AppError("INVALID_INPUT", f"{label}: {what}.{eg}", status_code=422)
 
 
-def parse_core_value(spec: FieldSpec, raw: Any) -> Any:
+def parse_core_value(spec: FieldSpec, raw: Any, profile: str | None = None) -> Any:
     """Coerce one submitted value to its column type with a human-readable error."""
     s = " ".join(str(raw or "").split()) if spec.kind != "textarea" else str(raw or "").strip()
+    required = spec.is_required(profile) if profile else spec.required
     if not s:
-        if spec.required:
-            raise _bad_field(spec, "this field is required")
+        if required:
+            raise _bad_field(spec, "this field is required", profile)
         return None
     if spec.kind in ("text", "textarea"):
         if len(s) > spec.max_len:
-            raise _bad_field(spec, f"must be at most {spec.max_len} characters")
+            raise _bad_field(spec, f"must be at most {spec.max_len} characters", profile)
         return s
     if spec.kind == "select":
         allowed = {v for v, _ in spec.options}
         if s not in allowed:
-            raise _bad_field(spec, "choose one of the options in the list")
+            raise _bad_field(spec, "choose one of the options in the list", profile)
         return s
     if spec.kind == "date":
         try:
             return dt.date.fromisoformat(s)
         except ValueError as exc:
-            raise _bad_field(spec, "enter a date as YYYY-MM-DD") from exc
+            raise _bad_field(spec, "enter a date as YYYY-MM-DD", profile) from exc
     s = s.replace(",", "").replace("$", "").replace("%", "")
     try:
         num = decimal.Decimal(s)
     except decimal.InvalidOperation as exc:
-        raise _bad_field(spec, "enter a number using digits only") from exc
+        raise _bad_field(spec, "enter a number using digits only", profile) from exc
     if num < 0:
-        raise _bad_field(spec, "cannot be negative")
+        raise _bad_field(spec, "cannot be negative", profile)
     if spec.kind == "int":
         if num != num.to_integral_value():
-            raise _bad_field(spec, "must be a whole number")
-        if spec.required and num == 0:
-            raise _bad_field(spec, "must be at least 1")
+            raise _bad_field(spec, "must be a whole number", profile)
+        if required and num == 0:
+            raise _bad_field(spec, "must be at least 1", profile)
         return int(num)
     if spec.kind == "percent" and num > 100:
-        raise _bad_field(spec, "must be between 0 and 100")
-    if spec.kind == "money" and spec.required and num == 0:
-        raise _bad_field(spec, "must be greater than zero")
+        raise _bad_field(spec, "must be between 0 and 100", profile)
+    if spec.kind == "percent" and spec.positive and num == 0:
+        raise AppError(
+            "INVALID_INPUT",
+            f"{spec.label_for(profile) if profile else spec.label}: must be greater than 0. "
+            "The property page would show 0%.",
+            status_code=422,
+        )
+    if spec.kind == "money" and required and num == 0:
+        raise _bad_field(spec, "must be greater than zero", profile)
     return num.quantize(decimal.Decimal("0.01"))
 
 
-def parse_core(form: Any, names: list[str]) -> dict[str, Any]:
-    """Parse the submitted core fields (only ``names``); errors name the field label."""
+def parse_core(form: Any, names: list[str], *, model: str | None = None) -> dict[str, Any]:
+    """Parse the submitted core fields for the listing's model profile.
+
+    Fields hidden for the profile and computed fields are skipped (their stored values are
+    kept, so switching model back loses nothing). Errors name the field label."""
+    profile = profile_of(model)
     out: dict[str, Any] = {}
     for name in names:
         spec = CORE_BY_NAME[name]
-        out[name] = parse_core_value(spec, form.get(name))
+        if spec.computed or not spec.shown(profile):
+            continue
+        out[name] = parse_core_value(spec, form.get(name), profile)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Consistency checks (units, minimum, total return) and the publish checklist
+# --------------------------------------------------------------------------- #
+_CENT = decimal.Decimal("0.01")
+_RETURN_TOLERANCE = decimal.Decimal("0.05")
+
+
+def usd(value: Any) -> str:
+    d = decimal.Decimal(str(value)).quantize(_CENT)
+    return f"${d:,.0f}" if d == d.to_integral_value() else f"${d:,.2f}"
+
+
+def pct(value: Any) -> str:
+    d = decimal.Decimal(str(value)).quantize(_CENT).normalize()
+    return f"{d:f}%"
+
+
+def _dec(value: Any) -> decimal.Decimal | None:
+    return None if value is None else decimal.Decimal(str(value))
+
+
+def units_problem(total_value: Any, unit_price: Any) -> str | None:
+    tv, up = _dec(total_value), _dec(unit_price)
+    if tv is None or up is None or up <= 0:
+        return None
+    if tv % up == 0:
+        return None
+    lower = (tv // up) * up
+    upper = lower + up
+    exact = (tv / up).quantize(decimal.Decimal("0.01"))
+    return (
+        f"Total units: {usd(tv)} ÷ {usd(up)} is not a whole number of units ({exact:f}). "
+        f"Use {usd(lower)} or {usd(upper)} as the total property value, or change the price "
+        "per unit."
+    )
+
+
+def minimum_problem(minimum: Any, unit_price: Any, total_value: Any = None) -> str | None:
+    mn, up = _dec(minimum), _dec(unit_price)
+    if mn is None or up is None or up <= 0:
+        return None
+    if mn < up:
+        return (
+            f"Minimum investment: {usd(mn)} is less than one unit ({usd(up)}). "
+            f"Use {usd(up)} or a multiple of {usd(up)}."
+        )
+    if mn % up != 0:
+        whole = int(mn // up)
+        lower = up * whole
+        upper = lower + up
+        return (
+            f"Minimum investment: {usd(mn)} buys only {whole} whole unit"
+            f"{'' if whole == 1 else 's'} at {usd(up)} each. Use {usd(lower)} or {usd(upper)}."
+        )
+    tv = _dec(total_value)
+    if tv is not None and mn > tv:
+        return f"Minimum investment: {usd(mn)} is more than the total property value ({usd(tv)})."
+    return None
+
+
+def total_return_warning(yield_: Any, appreciation: Any, total: Any) -> str | None:
+    y, a, t = _dec(yield_), _dec(appreciation), _dec(total)
+    if y is None or a is None or t is None:
+        return None
+    if abs((y + a) - t) <= _RETURN_TOLERANCE:
+        return None
+    return (
+        f"Total expected return is {pct(t)} but expected rental yield ({pct(y)}) plus capital "
+        f"appreciation ({pct(a)}) is {pct(y + a)}. Check the figures: the property page shows "
+        "all three side by side."
+    )
+
+
+def apply_offering_rules(
+    data: dict[str, Any], *, current: Property | None = None, positions: int = 0
+) -> tuple[dict[str, Any], list[str]]:
+    """Derive calculated fields and enforce the offering consistency rules.
+
+    Raises AppError (plain sentence) for inconsistent units or minimum; returns the
+    completed data plus non-blocking warnings. On a listing investors already hold, the
+    offering is frozen: unchanged legacy figures are left alone so content stays editable
+    (an actual change to units or price is refused by the offering lock)."""
+
+    def val(key: str) -> Any:
+        if key in data:
+            return data[key]
+        return getattr(current, key, None) if current is not None else None
+
+    def changed(key: str) -> bool:
+        return key in data and (current is None or not _same(data[key], getattr(current, key)))
+
+    has_positions = positions > 0
+    tv, up = val("total_value"), val("unit_price")
+    offering_changed = changed("total_value") or changed("unit_price")
+    if has_positions and offering_changed:
+        # investors bought a defined offering: say so before any other consistency message
+        raise AppError("OFFERING_LOCKED", locked_message(positions), status_code=409)
+    if ("total_value" in data or "unit_price" in data) and (offering_changed or not has_positions):
+        problem = units_problem(tv, up)
+        if problem:
+            raise AppError("UNITS_MISMATCH", problem, status_code=422)
+        if tv is not None and up:
+            data["total_units"] = int(_dec(tv) / _dec(up))
+    minimum_changed = offering_changed or changed("minimum_investment")
+    if {"minimum_investment", "unit_price", "total_value"} & set(data) and (
+        minimum_changed or not has_positions
+    ):
+        problem = minimum_problem(val("minimum_investment"), up, tv)
+        if problem:
+            raise AppError("MINIMUM_NOT_WHOLE_UNITS", problem, status_code=422)
+    warnings: list[str] = []
+    if "expected_yield" in data:
+        data["target_yield"] = data["expected_yield"]
+    if {"expected_yield", "capital_appreciation", "total_return"} & set(data):
+        y, a = val("expected_yield"), val("capital_appreciation")
+        if (
+            "total_return" in data
+            and data["total_return"] is None
+            and y is not None
+            and a is not None
+        ):
+            data["total_return"] = (_dec(y) + _dec(a)).quantize(_CENT)
+        warning = total_return_warning(y, a, val("total_return"))
+        if warning:
+            warnings.append(warning)
+    return data, warnings
+
+
+def _effective_yield(prop: Property) -> Any:
+    return prop.expected_yield if prop.expected_yield is not None else prop.target_yield
+
+
+def publish_checklist(
+    prop: Property, *, milestones: int, has_positions: bool = False
+) -> dict[str, list[str]]:
+    """What must be fixed before publishing (blockers) and what is worth adding.
+
+    Return fields are blocking for EVERY model because the public property page renders
+    expected rental yield, capital appreciation and total return unconditionally (blank shows
+    "0%"), and the marketplace card shows the yield."""
+    blockers: list[str] = []
+    recommended: list[str] = []
+    warnings: list[str] = []
+    profile = profile_of(prop.model)
+    if prop.model in HIDDEN_MODELS:
+        blockers.append(
+            f"Ownership model: '{prop.model}' is not available "
+            f"({HIDDEN_MODEL_REASONS[prop.model]}). "
+            "Choose an available model under Listing details."
+        )
+    if not has_positions:
+        units_msg = units_problem(prop.total_value, prop.unit_price)
+        if units_msg:
+            blockers.append(units_msg)
+        elif prop.unit_price:
+            expected = int(_dec(prop.total_value) / _dec(prop.unit_price))
+            if prop.total_units != expected:
+                blockers.append(
+                    f"Total units: the listing has {prop.total_units:,} units but "
+                    f"{usd(prop.total_value)} ÷ {usd(prop.unit_price)} = {expected:,}. "
+                    "Open Listing details and press Save to recalculate."
+                )
+        minimum_msg = minimum_problem(prop.minimum_investment, prop.unit_price, prop.total_value)
+        if minimum_msg:
+            blockers.append(minimum_msg)
+    yield_label = CORE_BY_NAME["expected_yield"].label_for(profile)
+    for label, value in (
+        (yield_label, _effective_yield(prop)),
+        ("Expected capital appreciation", prop.capital_appreciation),
+        ("Total expected return", prop.total_return),
+    ):
+        if value is None or _dec(value) == 0:
+            state = "empty" if value is None else "0"
+            blockers.append(
+                f"{label}: is {state}. The property page would show 0%. Enter a figure "
+                "greater than 0 under Listing details."
+            )
+    if profile in OFFPLAN_PROFILES and prop.expected_completion is None:
+        blockers.append(
+            "Expected completion date: is empty. Off-plan listings must show when the "
+            "property is expected to be handed over. Set it under Construction and timeline."
+        )
+    warning = total_return_warning(
+        _effective_yield(prop), prop.capital_appreciation, prop.total_return
+    )
+    if warning:
+        warnings.append(warning)
+    content = prop.content or {}
+    if not (prop.description or "").strip():
+        recommended.append("Description: the Overview tab would show an empty description.")
+    if not (prop.images or []):
+        recommended.append("Photos: the page would show a 'Photos coming soon' placeholder.")
+    if not ((content.get("developer") or {}).get("name")):
+        recommended.append("Developer: the developer card would show '—' instead of a name.")
+    if profile in OFFPLAN_PROFILES and milestones == 0:
+        recommended.append(
+            "Milestones: the Timeline tab would say no milestones have been published yet."
+        )
+    return {"blockers": blockers, "recommended": recommended, "warnings": warnings}
 
 
 async def count_positions(session: AsyncSession, prop_id: uuid.UUID) -> int:

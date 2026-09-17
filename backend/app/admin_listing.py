@@ -74,27 +74,116 @@ _STYLE = """
  .ms{border:1px solid #e8e6e1;border-radius:10px;padding:10px 12px;margin-bottom:10px;background:#fafaf8}
  .ms .cols{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
  .ms label{margin-top:4px;font-size:12px}
+ .explain{background:#eef6f1;border:1px solid #cfe6d8;color:#0f5b39;padding:8px 12px;border-radius:8px;font-size:13px;margin:6px 0 4px}
+ .warn{background:#fff7e6;border:1px solid #f1d49a;color:#7a5200;padding:10px 12px;border-radius:8px;margin-bottom:14px}
+ .calc{font-size:12px;margin-top:3px;color:#0f5b39} .calc.bad{color:#b00}
+ .checklist ul{margin:6px 0 10px 18px;padding:0} .checklist li{margin:3px 0;font-size:13px}
+ .err,.ok,.warn{white-space:pre-line}
+ [hidden]{display:none!important}
 """
 
 # One macro renders every listing field from its FieldSpec: label, required mark, the
 # right input type, and help text with an example. Tests assert this for each field.
 _FIELD_MACRO = """
-{% macro field(f, val) -%}
-<div class="f" data-field="{{ f.name }}">
- <label for="f_{{ f.name }}">{{ f.label }}{% if f.required %} <span class="req" title="Required">*</span>{% endif %}</label>
- {% if f.kind == 'textarea' -%}
-  <textarea id="f_{{ f.name }}" name="{{ f.name }}" placeholder="{{ f.example }}" {{ 'required' if f.required }}>{{ val if val is not none else '' }}</textarea>
+{% macro field(f, val, profile, model_locked=False) -%}
+{%- set shown = f.shown(profile) -%}
+{%- set req = f.is_required(profile) and not f.computed -%}
+<div class="f" data-field="{{ f.name }}"{% if not shown %} hidden{% endif %}>
+ <label for="f_{{ f.name }}"><span class="txt">{{ f.label_for(profile) }}</span>{% if req %}<span class="req" title="Required"> *</span>{% endif %}</label>
+ {% if f.name == 'model' and model_locked -%}
+  <input type="hidden" name="model" value="{{ val }}">
+  <input type="text" id="f_model" value="{{ model_labels.get(val, val) }}" readonly>
+ {%- elif f.computed -%}
+  <input type="text" id="f_{{ f.name }}" value="{{ val if val is not none else '' }}" readonly tabindex="-1" style="background:#f4f5f3">
+ {%- elif f.kind == 'textarea' -%}
+  <textarea id="f_{{ f.name }}" name="{{ f.name }}" placeholder="{{ f.example }}" {{ 'required' if req and shown }} {{ 'disabled' if not shown }}>{{ val if val is not none else '' }}</textarea>
  {%- elif f.kind == 'select' -%}
-  <select id="f_{{ f.name }}" name="{{ f.name }}" {{ 'required' if f.required }}>{% for v, l in f.options %}<option value="{{ v }}" {{ 'selected' if v == val }}>{{ l }}</option>{% endfor %}</select>
+  <select id="f_{{ f.name }}" name="{{ f.name }}" {{ 'required' if req and shown }} {{ 'disabled' if not shown }}>{% if f.name == 'model' and val not in f.options|map('first')|list %}<option value="" selected>Choose an available model</option>{% endif %}{% for v, l in f.options %}<option value="{{ v }}" {{ 'selected' if v == val }}>{{ l }}</option>{% endfor %}</select>
  {%- elif f.kind == 'date' -%}
-  <input type="date" id="f_{{ f.name }}" name="{{ f.name }}" value="{{ val if val is not none else '' }}" placeholder="{{ f.example }}" {{ 'required' if f.required }}>
+  <input type="date" id="f_{{ f.name }}" name="{{ f.name }}" value="{{ val if val is not none else '' }}" placeholder="{{ f.example }}" {{ 'required' if req and shown }} {{ 'disabled' if not shown }}>
  {%- elif f.kind in ('money', 'percent', 'int') -%}
-  <input type="number" id="f_{{ f.name }}" name="{{ f.name }}" min="0" {{ 'max=100' if f.kind == 'percent' }} step="{{ '1' if f.kind == 'int' else '0.01' }}" value="{{ val if val is not none else '' }}" placeholder="{{ f.example }}" {{ 'required' if f.required }}>
+  <input type="number" id="f_{{ f.name }}" name="{{ f.name }}" min="0" {{ 'max=100' if f.kind == 'percent' }} step="{{ '1' if f.kind == 'int' else '0.01' }}" value="{{ val if val is not none else '' }}" placeholder="{{ f.example }}" {{ 'required' if req and shown }} {{ 'disabled' if not shown }}>
  {%- else -%}
-  <input type="text" id="f_{{ f.name }}" name="{{ f.name }}" value="{{ val if val is not none else '' }}" placeholder="{{ f.example }}" maxlength="{{ f.max_len }}" {{ 'required' if f.required }}>
+  <input type="text" id="f_{{ f.name }}" name="{{ f.name }}" value="{{ val if val is not none else '' }}" placeholder="{{ f.example }}" maxlength="{{ f.max_len }}" {{ 'required' if req and shown }} {{ 'disabled' if not shown }}>
  {%- endif %}
- <div class="help">{{ f.help }}{% if f.example and f.kind != 'select' %} <span class="eg">Example: {{ f.example }}</span>{% endif %}</div>
+ <div class="help"><span class="txt">{{ f.help_for(profile) }}</span>{% if f.example and f.kind != 'select' and not f.computed %} <span class="eg">Example: {{ f.example }}</span>{% endif %}</div>
+ {% if f.name == 'model' %}<div class="explain" data-explain>{{ model_explain.get(val, '') }}</div>{% if model_locked %}<div class="warn">This listing uses an ownership model that is no longer offered. Investors already hold units, so the model stays as it is.</div>{% endif %}{% endif %}
+ {% if f.name in ('total_units', 'minimum_investment', 'total_return') %}<div class="calc" data-calc="{{ f.name }}"></div>{% endif %}
 </div>
+{%- endmacro %}
+
+{% macro installment_notice(terms, profile) -%}
+<div class="note" data-profiles="offplan_single offplan_portfolio"{% if profile not in ('offplan_single', 'offplan_portfolio') %} hidden{% endif %}>
+ <b>Standard installment plan (same for every off-plan listing).</b> Custom terms per property are not available yet.
+ Investors lock today's unit price and choose {% for t in terms.plans %}{{ t.months }}{{ ', ' if not loop.last else '' }}{% endfor %} months,
+ with a down payment of {% for t in terms.plans %}{{ t.down }}%{{ ', ' if not loop.last else '' }}{% endfor %} respectively.
+ An installment fee of {{ terms.fee }}% applies to the down payment and to each installment. Units vest as payments are made.
+ A missed payment gets reminders, with no late fee and no automatic forfeit.
+</div>
+{%- endmacro %}
+
+{% macro adapt_script(rules) -%}
+<script id="listing-rules" type="application/json">{{ rules|tojson }}</script>
+<script>
+(function () {
+  var R = JSON.parse(document.getElementById("listing-rules").textContent);
+  var sel = document.querySelector("select[name=model]") || document.querySelector("input[name=model]");
+  if (!sel) return;
+  function num(name) { var e = document.getElementById("f_" + name); if (!e || e.value === "") return null; var v = Number(e.value); return isNaN(v) ? null : v; }
+  function usd(v) { return "$" + v.toLocaleString("en-US", { maximumFractionDigits: 2 }); }
+  function say(name, text, bad) { var e = document.querySelector('[data-calc="' + name + '"]'); if (e) { e.textContent = text || ""; e.className = "calc" + (bad ? " bad" : ""); } }
+  function calc() {
+    var tv = num("total_value"), up = num("unit_price"), mn = num("minimum_investment");
+    var units = document.getElementById("f_total_units");
+    if (tv !== null && up) {
+      var u = tv / up;
+      if (Number.isInteger(u)) { if (units) units.value = u; say("total_units", usd(tv) + " \u00f7 " + usd(up) + " = " + u.toLocaleString("en-US") + " units", false); }
+      else { if (units) units.value = ""; var lo = Math.floor(u) * up; say("total_units", usd(tv) + " \u00f7 " + usd(up) + " is not a whole number of units. Use " + usd(lo) + " or " + usd(lo + up) + ".", true); }
+    }
+    if (mn !== null && up) {
+      if (mn < up) say("minimum_investment", usd(mn) + " is less than one unit (" + usd(up) + "). Use " + usd(up) + " or a multiple of it.", true);
+      else if (mn % up !== 0) { var w = Math.floor(mn / up); say("minimum_investment", usd(mn) + " buys only " + w + " whole unit" + (w === 1 ? "" : "s") + ". Use " + usd(w * up) + " or " + usd((w + 1) * up) + ".", true); }
+      else say("minimum_investment", "= " + (mn / up) + " whole unit" + (mn / up === 1 ? "" : "s"), false);
+    }
+    var y = num("expected_yield"), a = num("capital_appreciation"), t = num("total_return"), tr = document.getElementById("f_total_return");
+    if (y !== null && a !== null) {
+      var sum = Math.round((y + a) * 100) / 100;
+      if (tr) tr.placeholder = String(sum);
+      if (t === null) say("total_return", "Will be saved as " + sum + "% (yield + appreciation).", false);
+      else if (Math.abs(t - sum) > 0.05) say("total_return", "Differs from yield + appreciation (" + sum + "%). You can save, but check the figures.", true);
+      else say("total_return", "", false);
+    }
+  }
+  function apply() {
+    var model = sel.value, p = R.profiles[model] || "ready_single";
+    document.querySelectorAll("[data-explain]").forEach(function (e) { e.textContent = R.explain[model] || ""; });
+    Object.keys(R.fields).forEach(function (name) {
+      var r = R.fields[name][p], w = document.querySelector('.f[data-field="' + name + '"]');
+      if (!w) return;
+      w.hidden = !r.show;
+      var lab = w.querySelector("label .txt"); if (lab) lab.textContent = r.label;
+      var help = w.querySelector(".help .txt"); if (help) help.textContent = r.help;
+      var star = w.querySelector("label .req"), label = w.querySelector("label");
+      if (r.required && r.show && !star) { star = document.createElement("span"); star.className = "req"; star.title = "Required"; star.textContent = " *"; label.appendChild(star); }
+      if (!(r.required && r.show) && star) star.remove();
+      var input = w.querySelector("input[name],select[name],textarea[name]");
+      if (input && input.type !== "hidden") { input.required = r.required && r.show; input.disabled = !r.show; }
+    });
+    document.querySelectorAll("[data-profiles]").forEach(function (e) {
+      var on = e.getAttribute("data-profiles").split(" ").indexOf(p) >= 0;
+      e.hidden = !on;
+      e.querySelectorAll("input[name],select[name],textarea[name]").forEach(function (i) { if (i.type !== "hidden") i.disabled = !on; });
+    });
+    var area = document.querySelector("label[for=f_area] .txt"); if (area) area.textContent = R.area_labels[p];
+    calc();
+  }
+  sel.addEventListener("change", apply);
+  ["total_value", "unit_price", "minimum_investment", "expected_yield", "capital_appreciation", "total_return"].forEach(function (n) {
+    var e = document.getElementById("f_" + n); if (e) e.addEventListener("input", calc);
+  });
+  calc();
+})();
+</script>
 {%- endmacro %}
 """
 
@@ -104,13 +193,13 @@ _CREATE_PAGE = _env.from_string(
 <meta name="viewport" content="width=device-width,initial-scale=1"><style>"""
     + _STYLE
     + """</style></head><body><div class="wrap">
-<div class="top"><div><div class="muted"><a href="/admin/property/list">&larr; Properties</a></div><h1>New listing</h1>
+<div class="top"><div><div class="muted"><a href="/admin/listing/">&larr; Listings</a></div><h1>New listing</h1>
 <p class="lead">Fill the basics to create a <b>draft</b>. Nothing is visible to investors until you press Publish. Photos, documents, facts and the rest are added on the next screen. Fields marked <span class="req">*</span> are required.</p></div></div>
 {% if message %}<div class="{{ 'err' if error else 'ok' }}">{{ message }}</div>{% endif %}
 <form method="post" class="card">
-{% for group, fields in groups %}<h3>{{ group }}</h3><div class="cols">{% for f in fields %}{{ field(f, values.get(f.name)) }}{% endfor %}</div>{% endfor %}
-<div class="actions" style="margin-top:16px"><button class="primary" type="submit">Create draft listing</button><a class="btn" href="/admin/property/list">Cancel</a></div>
-</form></div></body></html>"""
+{% for group, fields in groups %}<h3{% if group == construction_group %} data-profiles="offplan_single offplan_portfolio"{% if profile not in ('offplan_single', 'offplan_portfolio') %} hidden{% endif %}{% endif %}>{{ group }}</h3><div class="cols">{% for f in fields %}{{ field(f, values.get(f.name), profile) }}{% endfor %}</div>{% if loop.first %}{{ installment_notice(installment_terms, profile) }}{% endif %}{% endfor %}
+<div class="actions" style="margin-top:16px"><button class="primary" type="submit">Create draft listing</button><a class="btn" href="/admin/listing/">Cancel</a></div>
+</form>{{ adapt_script(rules) }}</div></body></html>"""
 )
 
 _PAGE = _env.from_string(
@@ -140,12 +229,24 @@ _PAGE = _env.from_string(
 </div>
 {% if message %}<div class="{{ 'err' if error else 'ok' }}">{{ message }}</div>{% endif %}
 {% if preview_url %}<div class="ok">Preview link (valid 24 hours, shows the page exactly as investors will see it): <a href="{{ preview_url }}" target="_blank" rel="noopener">{{ preview_url }}</a></div>{% endif %}
+{% for w in save_warnings %}<div class="warn">{{ w }}</div>{% endfor %}
+
+<div class="card checklist" data-checklist>
+ <h2>{% if p.status.value in ('active', 'funded') %}Listing check{% else %}Before you publish{% endif %}</h2>
+ {% if checklist.blockers %}
+  <div class="err" data-blockers><b>Publishing is blocked until these are fixed:</b><ul>{% for b in checklist.blockers %}<li>{{ b }}</li>{% endfor %}</ul></div>
+ {% else %}
+  <div class="ok" data-ready>Everything required is in place{% if p.status.value not in ('active', 'funded') %}: this listing can be published{% endif %}.</div>
+ {% endif %}
+ {% if checklist.warnings %}<div class="warn" data-warnings><b>Please check:</b><ul>{% for w in checklist.warnings %}<li>{{ w }}</li>{% endfor %}</ul></div>{% endif %}
+ {% if checklist.recommended %}<div class="note" data-recommended><b>Recommended (not blocking):</b><ul>{% for r in checklist.recommended %}<li>{{ r }}</li>{% endfor %}</ul></div>{% endif %}
+</div>
 
 <div class="card">
  <h2>Listing details</h2>
- <p class="lead">The core of the listing. Fields marked <span class="req">*</span> are required. Units, price and model lock automatically once an investor holds units.</p>
+ <p class="lead">The core of the listing. Fields marked <span class="req">*</span> are required. The form changes with the ownership model. Units, price and model lock automatically once an investor holds units.</p>
  <form method="post"><input type="hidden" name="action" value="save_core">
- {% for group, fields in core_groups %}<h3>{{ group }}</h3><div class="cols">{% for f in fields %}{{ field(f, core_values.get(f.name)) }}{% endfor %}</div>{% endfor %}
+ {% for group, fields in core_groups %}<h3>{{ group }}</h3><div class="cols">{% for f in fields %}{{ field(f, core_values.get(f.name), profile, model_locked) }}{% endfor %}</div>{% if loop.first %}{{ installment_notice(installment_terms, profile) }}{% endif %}{% endfor %}
  <button class="primary" type="submit" style="margin-top:14px">Save listing details</button>
  </form>
 </div>
@@ -211,13 +312,13 @@ _PAGE = _env.from_string(
  <p class="lead">Shown in the facts strip under the title and in the Overview tab. Leave a fact blank to hide it.</p>
  <form method="post"><input type="hidden" name="action" value="save_facts">
   <div class="cols">
-   <div data-field="bedrooms"><label for="f_bedrooms">Bedrooms</label><input id="f_bedrooms" type="number" name="bedrooms" min="0" max="50" placeholder="2" value="{{ details.bedrooms if details.bedrooms is not none }}"><div class="help">Whole number. <span class="eg">Example: 2</span></div></div>
-   <div data-field="bathrooms"><label for="f_bathrooms">Bathrooms</label><input id="f_bathrooms" type="number" name="bathrooms" min="0" max="50" placeholder="2" value="{{ details.bathrooms if details.bathrooms is not none }}"><div class="help">Whole number. <span class="eg">Example: 2</span></div></div>
-   <div data-field="area"><label for="f_area">Area (sq ft)</label><input id="f_area" type="number" name="area" min="0" step="0.1" placeholder="1350" value="{{ details.area if details.area is not none }}"><div class="help">Built-up area in square feet. <span class="eg">Example: 1350</span></div></div>
-   <div data-field="parking"><label for="f_parking">Parking spaces</label><input id="f_parking" type="number" name="parking" min="0" max="100" placeholder="1" value="{{ details.parking if details.parking is not none }}"><div class="help">Whole number. <span class="eg">Example: 1</span></div></div>
+   <div data-profiles="ready_single offplan_single"{% if profile not in ('ready_single', 'offplan_single') %} hidden{% endif %} data-field="bedrooms"><label for="f_bedrooms">Bedrooms</label><input id="f_bedrooms" type="number" name="bedrooms" min="0" max="50" placeholder="2" value="{{ details.bedrooms if details.bedrooms is not none }}"><div class="help">Whole number. <span class="eg">Example: 2</span></div></div>
+   <div data-profiles="ready_single offplan_single"{% if profile not in ('ready_single', 'offplan_single') %} hidden{% endif %} data-field="bathrooms"><label for="f_bathrooms">Bathrooms</label><input id="f_bathrooms" type="number" name="bathrooms" min="0" max="50" placeholder="2" value="{{ details.bathrooms if details.bathrooms is not none }}"><div class="help">Whole number. <span class="eg">Example: 2</span></div></div>
+   <div data-field="area"><label for="f_area"><span class="txt">{{ area_label }}</span></label><input id="f_area" type="number" name="area" min="0" step="0.1" placeholder="1350" value="{{ details.area if details.area is not none }}"><div class="help">Built-up area in square feet. <span class="eg">Example: 1350</span></div></div>
+   <div data-profiles="ready_single offplan_single"{% if profile not in ('ready_single', 'offplan_single') %} hidden{% endif %} data-field="parking"><label for="f_parking">Parking spaces</label><input id="f_parking" type="number" name="parking" min="0" max="100" placeholder="1" value="{{ details.parking if details.parking is not none }}"><div class="help">Whole number. <span class="eg">Example: 1</span></div></div>
    <div data-field="max_investment"><label for="f_max_investment">Maximum investment per investor (USD)</label><input id="f_max_investment" type="number" name="max_investment" min="0" step="0.01" placeholder="250000" value="{{ details.maxInvestment if details.maxInvestment is not none }}"><div class="help">Caps the calculator. Blank = up to the full property value. <span class="eg">Example: 250000</span></div></div>
   </div>
-  <div data-field="amenities"><label for="f_amenities">Amenities</label>
+  <div data-profiles="ready_single offplan_single"{% if profile not in ('ready_single', 'offplan_single') %} hidden{% endif %} data-field="amenities"><label for="f_amenities">Amenities</label>
   <textarea id="f_amenities" name="amenities" placeholder="Sea view&#10;Gym&#10;Pool&#10;24-hour security">{{ amenities_text }}</textarea>
   <div class="help">One per line (or comma-separated), up to 40. Shown as a tick list. <span class="eg">Example: Sea view, Gym, Pool, 24-hour security</span></div></div>
   <button class="primary" type="submit" style="margin-top:8px">Save facts</button>
@@ -245,7 +346,7 @@ _PAGE = _env.from_string(
  <h2>SPV &amp; legal structure</h2>
  <p class="lead">The SPV Structure tab. Rows are shown only when filled.</p>
  <form method="post"><input type="hidden" name="action" value="save_spv">
-  <div class="cols">{% for f in spv_fields %}{{ field(f, core_values.get(f.name)) }}{% endfor %}
+  <div class="cols">{% for f in spv_fields %}{{ field(f, core_values.get(f.name), profile) }}{% endfor %}
    <div data-field="jurisdiction"><label for="f_jurisdiction">Jurisdiction</label><input id="f_jurisdiction" type="text" name="jurisdiction" maxlength="200" value="{{ spv.jurisdiction or '' }}" placeholder="DIFC, Dubai"><div class="help">Where the SPV is registered. <span class="eg">Example: DIFC, Dubai</span></div></div>
    <div data-field="trustee"><label for="f_trustee">Trustee</label><input id="f_trustee" type="text" name="trustee" maxlength="200" value="{{ spv.trustee or '' }}" placeholder="Gulf Corporate Trustees LLC"><div class="help">Blank hides the row. <span class="eg">Example: Gulf Corporate Trustees LLC</span></div></div>
    <div data-field="auditor"><label for="f_auditor">Auditor</label><input id="f_auditor" type="text" name="auditor" maxlength="200" value="{{ spv.auditor or '' }}" placeholder="KPMG Lower Gulf"><div class="help">Blank hides the row. <span class="eg">Example: KPMG Lower Gulf</span></div></div>
@@ -269,11 +370,11 @@ _PAGE = _env.from_string(
  </form>
 </div>
 
-<div class="card">
+<div class="card" data-profiles="offplan_single offplan_portfolio"{% if profile not in ('offplan_single', 'offplan_portfolio') %} hidden{% endif %}>
  <h2>Construction &amp; timeline</h2>
- <p class="lead">The Timeline tab (under-construction models only: future, option, shared development, installment, off-plan portfolio). Ready-income listings do not show it.</p>
+ <p class="lead">For off-plan listings: the expected completion date appears in the investment sidebar and the milestones in the Timeline tab.</p>
  <form method="post"><input type="hidden" name="action" value="save_construction">
-  <div class="cols">{% for f in construction_fields %}{{ field(f, core_values.get(f.name)) }}{% endfor %}</div>
+  <div class="cols">{% for f in construction_fields %}{{ field(f, core_values.get(f.name), profile) }}{% endfor %}</div>
   <button class="primary" type="submit" style="margin-top:8px">Save completion date</button>
  </form>
  <div class="note"><b>Construction progress shown to investors: {{ construction_progress }}%.</b> It is taken from the milestone marked <i>In progress</i> (its Progress %). Mark finished milestones <i>Completed</i>, the current one <i>In progress</i> with its percentage, and the rest <i>Planned</i>.</div>
@@ -316,6 +417,7 @@ _PAGE = _env.from_string(
  <p class="lead">Removes the listing, its photos, documents and milestones permanently. Not possible once investors hold units — unpublish instead.</p>
  <form method="post" onsubmit="return confirm('Delete this listing and all its files? This cannot be undone.')"><input type="hidden" name="action" value="delete_listing"><button class="danger" type="submit">Delete this listing</button></form>
 </div>
+{{ adapt_script(rules) }}
 </div></body></html>"""
 )
 
@@ -406,6 +508,45 @@ def _groups(names: tuple[str, ...]) -> list[tuple[str, list]]:
     return [(g, listing_service.fields_in(g)) for g in names]
 
 
+async def _installment_terms(session) -> dict:
+    """The platform's single installment plan, read live (no per-property terms exist)."""
+    from app.services import installment_service, settings_service
+
+    fee = await settings_service.get_installment_fee_pct(session)
+    return {
+        "plans": [
+            {"months": m, "down": d} for m, d in sorted(installment_service._DOWN_PCT.items())
+        ],
+        "fee": f"{fee.normalize():f}",
+    }
+
+
+def _common_context() -> dict:
+    return {
+        "rules": listing_service.form_rules_json(),
+        "model_labels": listing_service.MODEL_LABELS,
+        "model_explain": listing_service.MODEL_EXPLAIN,
+        "construction_group": listing_service.GROUP_CONSTRUCTION,
+    }
+
+
+def _form_with_kept_facts(form, prop: Property):
+    """Hidden key facts (e.g. bedrooms on a portfolio) keep their stored values."""
+    profile = listing_service.profile_of(prop.model)
+    details = (prop.content or {}).get("details") or {}
+    merged = {k: form.get(k) for k in form.keys()}
+    stored = {
+        "bedrooms": details.get("bedrooms"),
+        "bathrooms": details.get("bathrooms"),
+        "parking": details.get("parking"),
+        "amenities": "\n".join(details.get("amenities") or []),
+    }
+    for key, value in stored.items():
+        if profile not in listing_service.FACT_RULES[key]["show_in"]:
+            merged[key] = "" if value is None else str(value)
+    return merged
+
+
 def _friendly(exc: Exception) -> str:
     """Never leak codes or tracebacks: AppError/ValueError carry a sentence; anything else
     is logged and replaced by a generic message with a support reference."""
@@ -444,11 +585,7 @@ class ListingEditorView(BaseView):
             return resp
         async with session_scope() as session:
             rows = (
-                (
-                    await session.execute(
-                        select(Property).order_by(Property.updated_at.desc())
-                    )
-                )
+                (await session.execute(select(Property).order_by(Property.updated_at.desc())))
                 .scalars()
                 .all()
             )
@@ -465,14 +602,20 @@ class ListingEditorView(BaseView):
     async def create(self, request: Request):
         if (resp := self._gate(request)) is not None:
             return resp
-        names = [f.name for f in listing_service.fields_in(*listing_service.CORE_FORM_GROUPS)]
-        values: dict = {"model": "ready-income", "property_type": "apartment"}
+        names = [f.name for f in listing_service.fields_in(*listing_service.CREATE_FORM_GROUPS)]
+        start_model = request.query_params.get("model", "ready-income")
+        if start_model not in listing_service.ENABLED_MODELS:
+            start_model = "ready-income"
+        values: dict = {"model": start_model, "property_type": "apartment"}
         message, error = "", False
         if request.method == "POST":
             form = await request.form()
             values = {n: form.get(n) for n in names}
             try:
-                data = listing_service.parse_core(form, names)
+                model = str(form.get("model") or "")
+                listing_service.validate_model_choice(model)
+                data = listing_service.parse_core(form, names, model=model)
+                data, _warnings = listing_service.apply_offering_rules(data)
                 async with session_scope() as session:
                     prop = await listing_service.create_listing(
                         session, data=data, actor_id=_actor(request)
@@ -481,11 +624,16 @@ class ListingEditorView(BaseView):
                 return RedirectResponse(f"/admin/listing/{new_id}?created=1", status_code=303)
             except Exception as exc:  # noqa: BLE001 — every error becomes a sentence
                 message, error = _friendly(exc), True
+        async with session_scope() as session:
+            terms = await _installment_terms(session)
         html = _CREATE_PAGE.render(
-            groups=_groups(listing_service.CORE_FORM_GROUPS),
+            groups=_groups(listing_service.CREATE_FORM_GROUPS),
             values=values,
+            profile=listing_service.profile_of(values.get("model")),
+            installment_terms=terms,
             message=message,
             error=error,
+            **_common_context(),
         )
         return HTMLResponse(html, status_code=400 if error else 200)
 
@@ -502,6 +650,7 @@ class ListingEditorView(BaseView):
             return HTMLResponse("Invalid property id", status_code=404)
 
         message, error, preview_url, preview_token = "", False, "", ""
+        request.state.listing_warnings = []
         if request.query_params.get("created"):
             message = (
                 "Draft created. Add photos, documents and details below, then Preview and Publish."
@@ -549,6 +698,12 @@ class ListingEditorView(BaseView):
                 .all()
             )
             milestones = await listing_service.list_milestones(session, prop.id)
+            positions = await listing_service.count_positions(session, prop.id)
+            checklist = listing_service.publish_checklist(
+                prop, milestones=len(milestones), has_positions=positions > 0
+            )
+            profile = listing_service.profile_of(prop.model)
+            terms = await _installment_terms(session)
             content = dict(prop.content or {})
             base = get_settings().app_base_url.rstrip("/")
             ref = prop.slug or str(prop.id)
@@ -560,6 +715,13 @@ class ListingEditorView(BaseView):
                 model_label=listing_service.MODEL_LABELS.get(prop.model, prop.model),
                 full_admin=is_full_admin(request),
                 core_groups=_groups(listing_service.CORE_FORM_GROUPS),
+                profile=profile,
+                model_locked=prop.model in listing_service.HIDDEN_MODELS and positions > 0,
+                checklist=checklist,
+                save_warnings=[] if error else list(request.state.listing_warnings),
+                installment_terms=terms,
+                area_label=listing_service.AREA_LABELS[profile],
+                **_common_context(),
                 spv_fields=listing_service.fields_in(listing_service.GROUP_SPV),
                 construction_fields=listing_service.fields_in(listing_service.GROUP_CONSTRUCTION),
                 core_values=_core_values(prop),
@@ -610,7 +772,14 @@ class ListingEditorView(BaseView):
                 else (listing_service.GROUP_CONSTRUCTION,)
             )
             names = [f.name for f in listing_service.fields_in(*groups)]
-            data = listing_service.parse_core(form, names)
+            model = str(form.get("model") or prop.model) if action == "save_core" else prop.model
+            listing_service.validate_model_choice(model, current=prop.model)
+            data = listing_service.parse_core(form, names, model=model)
+            positions = await listing_service.count_positions(session, prop.id)
+            data, warnings = listing_service.apply_offering_rules(
+                data, current=prop, positions=positions
+            )
+            request.state.listing_warnings = warnings
             changed = await listing_service.update_core(
                 session, prop=prop, data=data, actor_id=actor
             )
@@ -683,7 +852,9 @@ class ListingEditorView(BaseView):
             return "Document file replaced.", preview_token
         # --- structured content ----------------------------------------------------- #
         if action == "save_facts":
-            new = listing_service.with_details(prop.content or {}, form)
+            new = listing_service.with_details(
+                prop.content or {}, _form_with_kept_facts(form, prop)
+            )
             await listing_service.apply_content(
                 session, prop=prop, new_content=new, section="details", actor_id=actor
             )
@@ -703,7 +874,7 @@ class ListingEditorView(BaseView):
             return "Developer saved.", preview_token
         if action == "save_spv":
             names = [f.name for f in listing_service.fields_in(listing_service.GROUP_SPV)]
-            data = listing_service.parse_core(form, names)
+            data = listing_service.parse_core(form, names, model=prop.model)
             await listing_service.update_core(session, prop=prop, data=data, actor_id=actor)
             new = listing_service.with_spv(prop.content or {}, form)
             await listing_service.apply_content(

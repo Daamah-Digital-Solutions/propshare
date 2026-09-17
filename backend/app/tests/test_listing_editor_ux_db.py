@@ -16,6 +16,7 @@ Each test pins a gap the owner named:
 # ruff: noqa: E501
 from __future__ import annotations
 
+import html as _html
 import re
 import uuid
 
@@ -54,7 +55,7 @@ async def _admin_session(client, db) -> str:
 CREATE_FORM = {
     "title": "UX Tower — Phase 1",
     "subtitle": "Off-plan tower in Business Bay",
-    "model": "future",
+    "model": "installment",
     "property_type": "apartment",
     "description": "Two towers, 40 floors.",
     "location": "Business Bay, Dubai",
@@ -124,28 +125,57 @@ async def test_editor_covers_every_optional_page_block_with_labels_help_and_exam
     assert not missing, f"page blocks with no editor control: {missing}"
     # every core column field: label, required mark where required, help + example
     for f in listing_service.CORE_FIELDS:
+        profile = listing_service.profile_of("installment")
         wrapper = re.search(
-            rf'<div class="f" data-field="{f.name}">(.*?)<div class="help">(.*?)</div>\s*</div>',
+            rf'<div class="f" data-field="{f.name}"(?: hidden)?>(.*?)<div class="help">(.*?)</div>',
             html,
             re.S,
         )
         assert wrapper, f"{f.name}: no field wrapper rendered"
         body, help_text = wrapper.group(1), wrapper.group(2)
-        assert f.label in body, f"{f.name}: label missing"
-        assert (('class="req"' in body) == f.required), f"{f.name}: required marker wrong"
-        assert f.help in help_text, f"{f.name}: help text missing"
-        if f.example and f.kind != "select":
+        assert _html.escape(f.label_for(profile)) in body, f"{f.name}: label missing"
+        required = f.is_required(profile) and not f.computed
+        assert ('class="req"' in body) == required, f"{f.name}: required marker wrong"
+        assert _html.escape(f.help_for(profile), quote=False) in help_text.replace(
+            "&#39;", "'"
+        ).replace("'", "'"), f"{f.name}: help text missing"
+        if f.example and f.kind != "select" and not f.computed:
             assert "Example:" in help_text, f"{f.name}: example missing"
     # every content / milestone / upload control also carries help text
     for name in (
-        "bedrooms", "bathrooms", "area", "parking", "max_investment", "amenities",
-        "name", "rating", "projects_completed", "logo", "jurisdiction", "trustee", "auditor",
-        "distribution_frequency", "investment_term", "exit_options", "performance_fee", "exit_fee",
-        "files", "title", "doc_type", "file", "ms_title", "ms_status", "ms_progress", "ms_date", "ms_description",
+        "bedrooms",
+        "bathrooms",
+        "area",
+        "parking",
+        "max_investment",
+        "amenities",
+        "name",
+        "rating",
+        "projects_completed",
+        "logo",
+        "jurisdiction",
+        "trustee",
+        "auditor",
+        "distribution_frequency",
+        "investment_term",
+        "exit_options",
+        "performance_fee",
+        "exit_fee",
+        "files",
+        "title",
+        "doc_type",
+        "file",
+        "ms_title",
+        "ms_status",
+        "ms_progress",
+        "ms_date",
+        "ms_description",
     ):
-        assert re.search(rf'data-field="{name}">.*?<div class="help">', html, re.S), f"{name}: no help text"
+        assert re.search(rf'data-field="{name}"(?: hidden)?>.*?<div class="help">', html, re.S), (
+            f"{name}: no help text"
+        )
     # model + property type are dropdowns with human labels, not raw codes only
-    assert "Under construction — future property" in html and "Apartment" in html
+    assert "Off-plan, paid in installments" in html and "Apartment" in html
 
 
 # --- under-construction: milestones + progress + completion date -------------------------- #
@@ -155,24 +185,58 @@ async def test_editor_milestones_progress_and_completion_reach_public_page(clien
     pid = await _create(client, db)
     ed = f"/admin/listing/{pid}"
     # expected completion date via the Construction card
-    r = await client.post(ed, data={"action": "save_construction", "expected_completion": "2027-06-30"})
+    r = await client.post(
+        ed, data={"action": "save_construction", "expected_completion": "2027-06-30"}
+    )
     assert r.status_code == 200 and "Completion date saved" in r.text
     # add three milestones (add appends in order)
-    for title, status, pct in (("Foundation", "completed", ""), ("Structure", "in_progress", "40"), ("Handover", "planned", "")):
-        r = await client.post(ed, data={"action": "ms_add", "title": title, "status": status, "progress_pct": pct, "target_date": "2027-01-31" if title == "Handover" else ""})
+    for title, status, pct in (
+        ("Foundation", "completed", ""),
+        ("Structure", "in_progress", "40"),
+        ("Handover", "planned", ""),
+    ):
+        r = await client.post(
+            ed,
+            data={
+                "action": "ms_add",
+                "title": title,
+                "status": status,
+                "progress_pct": pct,
+                "target_date": "2027-01-31" if title == "Handover" else "",
+            },
+        )
         assert r.status_code == 200 and "Milestone added" in r.text, r.text[:300]
-    rows = db("SELECT id, title, status, sort_index, progress_pct FROM property_milestones WHERE property_id=:p ORDER BY sort_index", p=pid)
+    rows = db(
+        "SELECT id, title, status, sort_index, progress_pct FROM property_milestones WHERE property_id=:p ORDER BY sort_index",
+        p=pid,
+    )
     assert [r[1] for r in rows] == ["Foundation", "Structure", "Handover"]
     assert "Construction progress shown to investors: 40%" in (await client.get(ed)).text
     # edit: status/progress/date of the current one
     ms_id = str(rows[1][0])
-    r = await client.post(ed, data={"action": "ms_save", "ms_id": ms_id, "title": "Structure to roof", "status": "in_progress", "progress_pct": "65", "target_date": "2026-12-15", "description": "Concrete frame"})
+    r = await client.post(
+        ed,
+        data={
+            "action": "ms_save",
+            "ms_id": ms_id,
+            "title": "Structure to roof",
+            "status": "in_progress",
+            "progress_pct": "65",
+            "target_date": "2026-12-15",
+            "description": "Concrete frame",
+        },
+    )
     assert r.status_code == 200 and "Milestone saved" in r.text, r.text[:300]
     # reorder: move Handover up one slot
     hand_id = str(rows[2][0])
     r = await client.post(ed, data={"action": "ms_up", "ms_id": hand_id})
     assert "Milestone order updated" in r.text
-    order = [r[0] for r in db("SELECT title FROM property_milestones WHERE property_id=:p ORDER BY sort_index", p=pid)]
+    order = [
+        r[0]
+        for r in db(
+            "SELECT title FROM property_milestones WHERE property_id=:p ORDER BY sort_index", p=pid
+        )
+    ]
     assert order == ["Foundation", "Handover", "Structure to roof"]
     # publish and read what investors get
     await client.post(ed, data={"action": "publish"})
@@ -191,7 +255,13 @@ async def test_editor_milestones_progress_and_completion_reach_public_page(clien
     assert "Milestone deleted" in r.text
     assert db("SELECT count(*) FROM property_milestones WHERE property_id=:p", p=pid)[0][0] == 2
     acts = {a[0] for a in db("SELECT action FROM audit_log WHERE entity_id=:i", i=pid)}
-    assert {"property.milestone.add", "property.milestone.update", "property.milestone.reorder", "property.milestone.delete", "property.approve"} <= acts
+    assert {
+        "property.milestone.add",
+        "property.milestone.update",
+        "property.milestone.reorder",
+        "property.milestone.delete",
+        "property.approve",
+    } <= acts
 
 
 # --- create + core edits + lock, all through the editor ------------------------------------ #
@@ -199,17 +269,32 @@ async def test_editor_milestones_progress_and_completion_reach_public_page(clien
 async def test_editor_create_and_core_edit_obey_offering_lock(client, db):
     uid = await _admin_session(client, db)
     pid = await _create(client, db)
-    status, slug, avail, model = db("SELECT status, slug, available_units, model FROM properties WHERE id=:i", i=pid)[0]
-    assert (status, avail, model) == ("draft", 32000, "future") and slug.startswith("ux-tower-phase-1-")
+    status, slug, avail, model = db(
+        "SELECT status, slug, available_units, model FROM properties WHERE id=:i", i=pid
+    )[0]
+    assert (status, avail, model) == ("draft", 32000, "installment") and slug.startswith(
+        "ux-tower-phase-1-"
+    )
     ed = f"/admin/listing/{pid}"
     # core edit while unsold: units follow
-    form = {**CREATE_FORM, "total_units": "16000", "unit_price": "200", "title": "UX Tower — Phase 1 (renamed)"}
+    form = {
+        **CREATE_FORM,
+        "unit_price": "200",
+        "minimum_investment": "1000",
+        "title": "UX Tower — Phase 1 (renamed)",
+    }
     r = await client.post(ed, data={"action": "save_core", **form})
     assert r.status_code == 200 and "Listing details saved" in r.text, r.text[:300]
-    assert db("SELECT total_units, available_units, unit_price, title FROM properties WHERE id=:i", i=pid)[0] == (16000, 16000, 200, "UX Tower — Phase 1 (renamed)")
+    assert db(
+        "SELECT total_units, available_units, unit_price, title FROM properties WHERE id=:i", i=pid
+    )[0] == (16000, 16000, 200, "UX Tower — Phase 1 (renamed)")
     # an investor holds units -> offering locked, content edits still fine
-    db("INSERT INTO ownership_ledger (user_id, property_id, units, unit_price, reason) VALUES (:u,:p,3,200,'purchase')", u=uid, p=pid)
-    r = await client.post(ed, data={"action": "save_core", **form, "total_units": "999"})
+    db(
+        "INSERT INTO ownership_ledger (user_id, property_id, units, unit_price, reason) VALUES (:u,:p,3,200,'purchase')",
+        u=uid,
+        p=pid,
+    )
+    r = await client.post(ed, data={"action": "save_core", **form, "unit_price": "400"})
     assert r.status_code == 400 and "locked" in r.text and "investor position" in r.text
     assert db("SELECT total_units FROM properties WHERE id=:i", i=pid)[0][0] == 16000
     r = await client.post(ed, data={"action": "save_core", **form, "subtitle": "New tagline"})
@@ -232,17 +317,24 @@ async def test_editor_errors_are_plain_sentences(client, db, monkeypatch):
     r = await client.post("/admin/listing/new", data={**CREATE_FORM, "title": ""})
     assert r.status_code == 400 and "Listing title: this field is required" in r.text
     r = await client.post("/admin/listing/new", data={**CREATE_FORM, "total_value": "1.2m"})
-    assert r.status_code == 400 and "Total property value (USD): enter a number using digits only. Example: 1200000." in r.text
+    assert (
+        r.status_code == 400
+        and "Total property value (USD): enter a number using digits only. Example: 1200000."
+        in r.text
+    )
     r = await client.post("/admin/listing/new", data={**CREATE_FORM, "expected_yield": "150"})
-    assert "Expected annual yield (%): must be between 0 and 100" in r.text
+    assert "Expected rental yield after handover (% per year): must be between 0 and 100" in r.text
     pid = await _create(client, db)
     ed = f"/admin/listing/{pid}"
     r = await client.post(ed, data={"action": "ms_add", "title": "", "status": "planned"})
     assert r.status_code == 400 and "Milestone title: this field is required" in r.text
     r = await client.post(ed, data={"action": "ms_add", "title": "X", "status": "done"})
     assert "choose Planned, In progress or Completed" in r.text
-    r = await client.post(ed, data={"action": "save_construction", "expected_completion": "30/06/2027"})
+    r = await client.post(
+        ed, data={"action": "save_construction", "expected_completion": "30/06/2027"}
+    )
     assert "enter a date as YYYY-MM-DD" in r.text
+
     # an unexpected failure is logged and replaced by a generic sentence with a reference
     def boom(*_a, **_k):
         raise RuntimeError("db exploded: secret internals")
