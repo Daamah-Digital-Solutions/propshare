@@ -22,8 +22,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import write_audit
 from app.core.errors import AppError
 from app.models import AssistantActionProposal
-from app.services import auth_service, notification_service, ticket_service
+from app.services import (
+    auth_service,
+    gift_service,
+    liquidity_service,
+    notification_service,
+    secondary_service,
+    ticket_service,
+)
 from app.services.assistant import agent, guard
+from app.services.assistant.tools.actions import PREF_KEYS
 
 log = logging.getLogger(__name__)
 
@@ -59,10 +67,51 @@ async def _create_support_ticket(
     return {"ticket_no": ticket.ticket_no, "ticket_id": str(ticket.id)}
 
 
+async def _cancel_secondary_listing(
+    session: AsyncSession, user_id: uuid.UUID, proposal: AssistantActionProposal
+) -> dict[str, Any]:
+    listing_id = uuid.UUID(str((proposal.params or {}).get("listing_id")))
+    out = await secondary_service.cancel_listing(session, seller_id=user_id, listing_id=listing_id)
+    return {"listing_id": str(listing_id), "status": str(out.get("status", "cancelled"))}
+
+
+async def _cancel_liquidity_exit_request(
+    session: AsyncSession, user_id: uuid.UUID, proposal: AssistantActionProposal
+) -> dict[str, Any]:
+    request_id = uuid.UUID(str((proposal.params or {}).get("request_id")))
+    out = await liquidity_service.cancel_exit_request(
+        session, seller_id=user_id, request_id=request_id
+    )
+    return {"request_id": str(request_id), "status": str(out.get("status", "cancelled"))}
+
+
+async def _cancel_scheduled_gift(
+    session: AsyncSession, user_id: uuid.UUID, proposal: AssistantActionProposal
+) -> dict[str, Any]:
+    gift_id = uuid.UUID(str((proposal.params or {}).get("gift_id")))
+    out = await gift_service.cancel_gift(session, giver_id=user_id, gift_id=gift_id)
+    return {"gift_id": str(gift_id), "status": str(out.get("status", "cancelled"))}
+
+
+async def _update_notification_preferences(
+    session: AsyncSession, user_id: uuid.UUID, proposal: AssistantActionProposal
+) -> dict[str, Any]:
+    changes = (proposal.params or {}).get("preferences") or {}
+    allowed = {k: bool(v) for k, v in changes.items() if k in PREF_KEYS}
+    if not allowed:
+        raise AppError("INVALID_INPUT", "Nothing to change.", status_code=422)
+    prefs = await notification_service.update_preferences(session, user_id, **allowed)
+    return {"preferences": prefs}
+
+
 EXECUTORS: dict[str, Executor] = {
     "resend_verification_email": _resend_verification_email,
     "mark_all_notifications_read": _mark_all_notifications_read,
     "create_support_ticket": _create_support_ticket,
+    "cancel_secondary_listing": _cancel_secondary_listing,
+    "cancel_liquidity_exit_request": _cancel_liquidity_exit_request,
+    "cancel_scheduled_gift": _cancel_scheduled_gift,
+    "update_notification_preferences": _update_notification_preferences,
 }
 
 

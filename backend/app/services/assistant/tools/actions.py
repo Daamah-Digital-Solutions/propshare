@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.models import SupportTicket
+from app.services import gift_service, liquidity_service, secondary_service
 from app.services.assistant import guard
 from app.services.assistant.context import AgentContext
 from app.services.assistant.tools.base import ToolOutput, ToolSpec, register
@@ -24,7 +25,17 @@ ACTIONS: dict[str, str] = {
     "resend_verification_email": "Send the email-verification link again.",
     "mark_all_notifications_read": "Mark all notifications as read.",
     "create_support_ticket": "Open a support ticket for a person to follow up.",
+    "cancel_secondary_listing": "Cancel one of your active secondary-market listings.",
+    "cancel_liquidity_exit_request": "Cancel one of your open liquidity exit requests.",
+    "cancel_scheduled_gift": "Cancel one of your scheduled gifts.",
+    "update_notification_preferences": "Change which email notifications you receive.",
 }
+PREF_KEYS = (
+    "email_investment_updates",
+    "email_returns",
+    "email_security_alerts",
+    "email_new_properties",
+)
 TICKET_CATEGORIES = (
     "payments",
     "withdrawals",
@@ -43,16 +54,35 @@ PRIORITIES = ("normal", "high")
 class ProposeActionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal[
-        "resend_verification_email", "mark_all_notifications_read", "create_support_ticket"
+        "resend_verification_email",
+        "mark_all_notifications_read",
+        "create_support_ticket",
+        "cancel_secondary_listing",
+        "cancel_liquidity_exit_request",
+        "cancel_scheduled_gift",
+        "update_notification_preferences",
     ]
     # ticket params: enums + ids only, never free text (the handoff summary is built server-side)
     category: str | None = Field(default=None, description="Ticket category (enum)")
     priority: str | None = Field(default=None, description="normal | high")
     payment_id: str | None = None
     investment_id: str | None = None
-    listing_id: str | None = None
+    listing_id: str | None = Field(
+        default=None, description="Secondary listing id (cancel_secondary_listing / ticket ref)"
+    )
     plan_id: str | None = None
     withdrawal_id: str | None = None
+    request_id: str | None = Field(
+        default=None, description="Liquidity exit request id (cancel_liquidity_exit_request)"
+    )
+    gift_id: str | None = Field(
+        default=None, description="Scheduled gift id (cancel_scheduled_gift)"
+    )
+    # update_notification_preferences: only the keys given change; null = leave as is
+    email_investment_updates: bool | None = None
+    email_returns: bool | None = None
+    email_security_alerts: bool | None = None
+    email_new_properties: bool | None = None
 
 
 class ProposeActionOut(ToolOutput):
@@ -101,6 +131,55 @@ async def _propose_action(session: AsyncSession, ctx: AgentContext, args) -> dic
                 "ALREADY_DONE", "The email address is already verified.", status_code=409
             )
         summary = ACTIONS[a.action]
+    elif a.action == "cancel_secondary_listing":
+        listing_id = _uuid_or_none(a.listing_id, "listing_id")
+        if not listing_id:
+            raise AppError("INVALID_INPUT", "listing_id is required.", status_code=422)
+        mine = await secondary_service.list_my_listings(session, ctx.user_id)
+        row = next((x for x in mine if str(x.get("id") or x.get("listing_id")) == listing_id), None)
+        if row is None or str(row.get("status")) != "active":
+            raise AppError("NOT_FOUND", "No active listing of yours with that id.", status_code=404)
+        params = {"listing_id": listing_id}
+        summary = (
+            f"Cancel your secondary-market listing of {row.get('units')} unit(s) of "
+            f"{row.get('property_title') or 'the property'}."
+        )
+    elif a.action == "cancel_liquidity_exit_request":
+        request_id = _uuid_or_none(a.request_id, "request_id")
+        if not request_id:
+            raise AppError("INVALID_INPUT", "request_id is required.", status_code=422)
+        mine = await liquidity_service.list_my_exit_requests(session, ctx.user_id)
+        row = next((x for x in mine if str(x.get("request_id")) == request_id), None)
+        if row is None or str(row.get("status")) != "open":
+            raise AppError(
+                "NOT_FOUND", "No open exit request of yours with that id.", status_code=404
+            )
+        params = {"request_id": request_id}
+        summary = (
+            f"Cancel your open liquidity exit request for {row.get('units_remaining')} unit(s) "
+            f"of {row.get('property_title') or 'the property'}."
+        )
+    elif a.action == "cancel_scheduled_gift":
+        gift_id = _uuid_or_none(a.gift_id, "gift_id")
+        if not gift_id:
+            raise AppError("INVALID_INPUT", "gift_id is required.", status_code=422)
+        gifts = await gift_service.list_gifts(session, ctx.user_id)
+        gift = next((g for g in gifts if str(g.id) == gift_id), None)
+        if gift is None or str(gift.status) not in ("scheduled", "pending", "active"):
+            raise AppError(
+                "NOT_FOUND", "No cancellable gift of yours with that id.", status_code=404
+            )
+        params = {"gift_id": gift_id}
+        summary = f"Cancel the scheduled gift to {gift.recipient_name or 'the recipient'}."
+    elif a.action == "update_notification_preferences":
+        changes = {k: getattr(a, k) for k in PREF_KEYS if getattr(a, k) is not None}
+        if not changes:
+            raise AppError("INVALID_INPUT", "Say which preference to change.", status_code=422)
+        params = {"preferences": changes}
+        summary = "Change email notifications: " + ", ".join(
+            f"{k.replace('email_', '').replace('_', ' ')} {'on' if v else 'off'}"
+            for k, v in changes.items()
+        )
     else:
         summary = ACTIONS[a.action]
     proposal, _token = await guard.issue_confirmation(
