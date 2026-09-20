@@ -576,6 +576,7 @@ async def run_turn(
         flags=sorted(flags),
         usage=assistant_row.usage,
         latency_ms=latency_ms,
+        first_token_ms=first_token_ms,
         safe_mode=safe_mode,
     )
 
