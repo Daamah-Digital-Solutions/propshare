@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api.routes import (
+    assistant,
     auth,
     broker,
     developer_updates,
@@ -38,6 +39,7 @@ from app.api.routes import (
     profiles,
     properties,
     secondary,
+    tickets,
     wallet,
     withdrawals,
 )
@@ -149,6 +151,8 @@ def create_app() -> FastAPI:
     app.include_router(admin_gifts.router)
     app.include_router(admin_installments.router)
     app.include_router(admin_reconciliation.router)
+    app.include_router(assistant.router)
+    app.include_router(tickets.router)
 
     # Server-rendered, admin-gated management panel at /admin.
     from app.admin import setup_admin

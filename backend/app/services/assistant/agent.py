@@ -31,6 +31,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import crypto
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import AssistantConversation, AssistantMessage
@@ -238,6 +239,7 @@ async def add_system_note(
         text=text,
         content=[item_to_dict(UserMessage(f"[system note] {text}"))],
         lang=lang,
+        enc_key_id=crypto.active_key_id(),
         created_at=dt.datetime.now(dt.UTC),
     )
     session.add(note)
@@ -392,6 +394,7 @@ async def run_turn(
         text=clean_text,
         content=[item_to_dict(UserMessage(clean_text))],
         lang=ctx.lang,
+        enc_key_id=crypto.active_key_id(),
         created_at=now,
     )
     session.add(user_row)
@@ -544,6 +547,7 @@ async def run_turn(
         confidence=confidence,
         guardrail_flags=sorted(flags),
         lang=ctx.lang,
+        enc_key_id=crypto.active_key_id(),
         created_at=max(dt.datetime.now(dt.UTC), now + dt.timedelta(microseconds=1)),
     )
     session.add(assistant_row)

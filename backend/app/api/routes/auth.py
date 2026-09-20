@@ -16,7 +16,13 @@ from sqlalchemy import select
 from app.api.deps import PrincipalDep, SessionDep, current_principal
 from app.core.config import get_settings
 from app.core.errors import AppError
-from app.core.ratelimit import FORGOT_LIMIT, LOGIN_LIMIT, REGISTER_LIMIT, limiter
+from app.core.ratelimit import (
+    FORGOT_LIMIT,
+    LOGIN_LIMIT,
+    REGISTER_LIMIT,
+    RESEND_VERIFY_LIMIT,
+    limiter,
+)
 from app.models import KycVerification, Wallet
 from app.models.identity import User
 from app.schemas.auth import (
@@ -239,9 +245,7 @@ async def my_role_application(role: str, principal: PrincipalDep, session: Sessi
     """The caller's own pending application for ``role`` (fields + document names), so the SPA can
     pre-fill the 'Edit & resubmit' form. 404 when there's no pending request. Storage keys are
     never exposed — only the display label + filename."""
-    req = await auth_service.get_pending_application(
-        session, user_id=principal.user_id, role=role
-    )
+    req = await auth_service.get_pending_application(session, user_id=principal.user_id, role=role)
     if req is None:
         raise AppError("NOT_FOUND", "No pending application for this role.", status_code=404)
     app = req.application if isinstance(req.application, dict) else {}
@@ -263,6 +267,14 @@ async def my_role_application(role: str, principal: PrincipalDep, session: Sessi
 @router.post("/verify-email", status_code=204)
 async def verify_email(body: VerifyEmailIn, session: SessionDep):
     await auth_service.verify_email(session, raw=body.token)
+    return Response(status_code=204)
+
+
+@router.post("/resend-verification", status_code=204)
+@limiter.limit(RESEND_VERIFY_LIMIT)
+async def resend_verification(request: Request, principal: PrincipalDep, session: SessionDep):
+    """A fresh verification link for the signed-in user (also the assistant's executor)."""
+    await auth_service.resend_verification(session, user_id=principal.user_id)
     return Response(status_code=204)
 
 

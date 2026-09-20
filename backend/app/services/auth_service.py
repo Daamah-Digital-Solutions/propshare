@@ -431,6 +431,39 @@ async def issue_email_token(session: AsyncSession, user: User, *, kind: str) -> 
     return raw
 
 
+RESEND_VERIFY_MAX_PER_HOUR = 3
+
+
+async def resend_verification(session: AsyncSession, *, user_id: uuid.UUID) -> None:
+    """Send a fresh verification link. Refused when the address is already verified and
+    capped per hour (each send creates an email_tokens row, so the cap is counted there)."""
+    user = await session.get(User, user_id)
+    if user is None:
+        raise AppError("NOT_FOUND", "User not found", status_code=404)
+    if user.email_verified:
+        raise AppError(
+            "ALREADY_VERIFIED", "This email address is already verified.", status_code=409
+        )
+    since = _utcnow() - dt.timedelta(hours=1)
+    recent = await session.scalar(
+        select(func.count())
+        .select_from(EmailToken)
+        .where(
+            EmailToken.user_id == user.id,
+            EmailToken.kind == "verify",
+            EmailToken.created_at >= since,
+        )
+    )
+    if int(recent or 0) >= RESEND_VERIFY_MAX_PER_HOUR:
+        raise AppError(
+            "TOO_MANY_REQUESTS",
+            "A verification email was sent recently. Please check your inbox and spam folder, "
+            "or try again in an hour.",
+            status_code=429,
+        )
+    await issue_email_token(session, user, kind="verify")
+
+
 async def _consume_email_token(session: AsyncSession, *, raw: str, kind: str) -> User:
     res = await session.execute(
         select(EmailToken).where(EmailToken.token_hash == hash_token(raw), EmailToken.kind == kind)

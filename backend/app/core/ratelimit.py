@@ -21,3 +21,6 @@ LOGIN_LIMIT = "10/minute"
 REGISTER_LIMIT = "10/minute"
 FORGOT_LIMIT = "5/minute"
 WEBHOOK_LIMIT = "120/minute"
+ASSISTANT_LIMIT = "30/minute"  # assistant messages, per IP
+TICKET_LIMIT = "5/minute"  # public support form, per IP
+RESEND_VERIFY_LIMIT = "3/minute"
