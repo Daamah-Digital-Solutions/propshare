@@ -416,6 +416,15 @@ async def purge(_caller_: AdminOrCronDep, session: SessionDep):
     return MaintenanceOut(purged=purged)
 
 
+@router.post("/maintenance/nudges")
+async def nudges(_caller_: AdminOrCronDep, session: SessionDep) -> dict[str, int]:
+    """Hourly cron: proactive reminders (unverified email, KYC not started / in review,
+    funded-but-idle wallet, ticket waiting for the user). Idempotent via cooldowns."""
+    from app.services import nudge_service
+
+    return await nudge_service.run_all(session)
+
+
 @router.post("/maintenance/reencrypt", response_model=MaintenanceOut)
 async def reencrypt(_caller_: AdminOrCronDep, session: SessionDep):
     from app.services.assistant import maintenance
