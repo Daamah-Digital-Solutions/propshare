@@ -147,7 +147,7 @@ class QueueOut(ToolOutput):
 class QueueIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     queue: str = Field(
-        description="One of: bank_deposits, withdrawals, kyc, tickets, knowledge_gaps"
+        description="One of: bank_deposits, withdrawals, kyc, tickets, knowledge_gaps, ops_cases"
     )
     limit: int = Field(default=10, ge=1, le=25)
 
@@ -213,8 +213,10 @@ async def _list_queue(session: AsyncSession, ctx: AgentContext, args) -> dict:
             }
             for k, email in rows
         ]
-    elif a.queue in ("tickets", "knowledge_gaps"):
-        kind = "support" if a.queue == "tickets" else "knowledge_gap"
+    elif a.queue in ("tickets", "knowledge_gaps", "ops_cases"):
+        kind = {"tickets": "support", "knowledge_gaps": "knowledge_gap", "ops_cases": "ops_case"}[
+            a.queue
+        ]
         rows = (
             await session.execute(
                 select(SupportTicket, User.email)
@@ -242,7 +244,8 @@ async def _list_queue(session: AsyncSession, ctx: AgentContext, args) -> dict:
     else:
         raise AppError(
             "INVALID_INPUT",
-            "queue must be one of bank_deposits, withdrawals, kyc, tickets, knowledge_gaps.",
+            "queue must be one of bank_deposits, withdrawals, kyc, tickets, knowledge_gaps, "
+            "ops_cases.",
             status_code=422,
         )
     return {"queue": a.queue, "items": items[: a.limit], "total": len(items)}

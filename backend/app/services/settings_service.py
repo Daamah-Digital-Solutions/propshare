@@ -62,6 +62,7 @@ _SETTING_SPECS: dict[str, str] = {
     "assistant_model_pricing": "json_object",
     "support_sla_hours_normal": "int",
     "support_sla_hours_high": "int",
+    "ops_stale_hours": "int",
 }
 
 
@@ -178,6 +179,8 @@ DEFAULTS: dict[str, str] = {
     # Support SLA (Batch C): hours without a public staff reply before escalation
     "support_sla_hours_normal": "24",
     "support_sla_hours_high": "8",
+    # Ops cases (Batch F): hours a bank claim / withdrawal may wait before a case is opened
+    "ops_stale_hours": "48",
 }
 
 

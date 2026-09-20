@@ -433,6 +433,15 @@ async def index_documents(_caller_: AdminOrCronDep, session: SessionDep) -> dict
     return await document_index_service.index_pending(session)
 
 
+@router.post("/maintenance/ops-cases")
+async def ops_cases(_caller_: AdminOrCronDep, session: SessionDep) -> dict:
+    """Hourly cron: open internal cases for ledger drift, stale bank claims and unpaid
+    withdrawals (once per condition while the case is open)."""
+    from app.services import ops_case_service
+
+    return await ops_case_service.sweep(session)
+
+
 @router.post("/maintenance/ticket-sla")
 async def ticket_sla(_caller_: AdminOrCronDep, session: SessionDep) -> dict:
     """Hourly cron: escalate tickets past their first-response SLA (once each)."""
