@@ -17,7 +17,7 @@ import datetime as dt
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
@@ -27,13 +27,15 @@ from app.models import (
     AssistantActionProposal,
     AssistantConversation,
     AssistantMessage,
+    AuditLog,
     EmailOutbox,
     KycVerification,
     SupportTicket,
     SupportTicketMessage,
     User,
+    UserRole,
 )
-from app.services import auth_service, notification_service
+from app.services import auth_service, notification_service, settings_service
 
 TICKET_CATEGORIES = (
     "payments",
@@ -221,6 +223,7 @@ async def create_from_handoff(
         context=handoff.as_context(),
         source="assistant",
     )
+    await _flag_duplicate(session, ticket)
     session.add(ticket)
     await session.flush()
     await session.refresh(ticket)
@@ -228,7 +231,9 @@ async def create_from_handoff(
     if conv is not None and conv.ticket_id is None:
         conv.ticket_id = ticket.id
     await _queue_support_email(
-        session, ticket, f"New ticket {ticket.ticket_no} from the assistant.\n\n{ticket.summary}"
+        session,
+        ticket,
+        f"New ticket {ticket.ticket_no} from the assistant.{_dup_note(ticket)}\n\n{ticket.summary}",
     )
     if user_id is not None:
         await notification_service.notify(
@@ -280,6 +285,7 @@ async def create_from_form(
         context={},
         source="form",
     )
+    await _flag_duplicate(session, ticket)
     session.add(ticket)
     await session.flush()
     await session.refresh(ticket)
@@ -291,8 +297,8 @@ async def create_from_form(
     await _queue_support_email(
         session,
         ticket,
-        f"New ticket {ticket.ticket_no} from the support form.\n\nCategory: {category}\n"
-        f"Subject: {subject}\n\n{body}",
+        f"New ticket {ticket.ticket_no} from the support form.{_dup_note(ticket)}\n\n"
+        f"Category: {category}\nSubject: {subject}\n\n{body}",
     )
     await write_audit(
         session,
@@ -441,3 +447,292 @@ async def set_status(
     )
     await session.flush()
     return ticket
+
+
+# --------------------------------------------------------------------------- #
+# Batch C: duplicates, SLA / escalation, CSAT, daily digest
+# --------------------------------------------------------------------------- #
+DUPLICATE_WINDOW_HOURS = 24
+
+
+async def _flag_duplicate(session: AsyncSession, ticket: SupportTicket) -> None:
+    """A second ticket from the same person in the same category within 24h is very likely
+    the same problem: link it (never block it) so staff answer once."""
+    if ticket.user_id is None and not ticket.contact_email:
+        return
+    since = dt.datetime.now(dt.UTC) - dt.timedelta(hours=DUPLICATE_WINDOW_HOURS)
+    stmt = (
+        select(SupportTicket)
+        .where(
+            SupportTicket.kind == "support",
+            SupportTicket.category == ticket.category,
+            SupportTicket.status.in_(("open", "in_progress", "waiting_user")),
+            SupportTicket.created_at >= since,
+        )
+        .order_by(SupportTicket.created_at.desc())
+        .limit(1)
+    )
+    if ticket.user_id is not None:
+        stmt = stmt.where(SupportTicket.user_id == ticket.user_id)
+    else:
+        stmt = stmt.where(SupportTicket.contact_email == ticket.contact_email)
+    earlier = (await session.execute(stmt)).scalar_one_or_none()
+    if earlier is not None:
+        ticket.context = {**(ticket.context or {}), "possible_duplicate_of": earlier.ticket_no}
+
+
+def _dup_note(ticket: SupportTicket) -> str:
+    dup = (ticket.context or {}).get("possible_duplicate_of")
+    return f" POSSIBLE DUPLICATE of {dup}." if dup else ""
+
+
+async def sla_hours(session: AsyncSession, priority: str) -> int:
+    key = "support_sla_hours_high" if priority == "high" else "support_sla_hours_normal"
+    return int(await settings_service.get_setting(session, key) or 24)
+
+
+async def _first_staff_reply_ids(session: AsyncSession) -> set[uuid.UUID]:
+    rows = await session.execute(
+        select(SupportTicketMessage.ticket_id)
+        .where(
+            SupportTicketMessage.author_type == "staff",
+            SupportTicketMessage.internal.is_(False),
+        )
+        .distinct()
+    )
+    return {r[0] for r in rows.all()}
+
+
+async def overdue_tickets(
+    session: AsyncSession, *, now: dt.datetime | None = None
+) -> list[SupportTicket]:
+    """Open tickets without any public staff reply past their SLA (by priority)."""
+    now = now or dt.datetime.now(dt.UTC)
+    answered = await _first_staff_reply_ids(session)
+    rows = (
+        (
+            await session.execute(
+                select(SupportTicket)
+                .where(
+                    SupportTicket.kind == "support",
+                    SupportTicket.status.in_(("open", "in_progress")),
+                )
+                .order_by(SupportTicket.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out = []
+    for t in rows:
+        if t.id in answered:
+            continue
+        limit = await sla_hours(session, t.priority)
+        if t.created_at <= now - dt.timedelta(hours=limit):
+            out.append(t)
+    return out
+
+
+async def escalate_overdue(session: AsyncSession, *, now: dt.datetime | None = None) -> dict:
+    """SLA sweep (cron): every overdue ticket is escalated ONCE — priority raised to high,
+    the breach recorded on the ticket, every admin notified in-app and the support inbox
+    emailed a single list. Re-running is safe (already-escalated tickets are skipped)."""
+    now = now or dt.datetime.now(dt.UTC)
+    overdue = [
+        t
+        for t in await overdue_tickets(session, now=now)
+        if not (t.context or {}).get("sla_breached_at")
+    ]
+    if not overdue:
+        return {"escalated": 0, "overdue": 0}
+    admins = [
+        r[0]
+        for r in (
+            await session.execute(select(UserRole.user_id).where(UserRole.role == "admin"))
+        ).all()
+    ]
+    lines = []
+    for t in overdue:
+        before = t.priority
+        t.priority = "high"
+        t.context = {
+            **(t.context or {}),
+            "sla_breached_at": now.isoformat(),
+            "priority_before_sla": before,
+        }
+        t.updated_at = now
+        age_h = round((now - t.created_at).total_seconds() / 3600, 1)
+        lines.append(f"{t.ticket_no} · {t.category} · {age_h}h without a reply")
+        await write_audit(
+            session,
+            action="ticket.sla_breached",
+            entity_type="support_ticket",
+            entity_id=str(t.id),
+            actor_id=None,
+            before={"priority": before},
+            after={"priority": "high", "age_hours": age_h},
+        )
+    for admin_id in admins:
+        await notification_service.notify(
+            session,
+            user_id=admin_id,
+            type="ticket_sla",
+            title=f"{len(overdue)} support ticket(s) past SLA",
+            message="\n".join(lines[:10]),
+        )
+    inbox = get_settings().support_inbox_email
+    if inbox:
+        session.add(
+            EmailOutbox(
+                user_id=None,
+                to_email=inbox,
+                subject=f"[SLA] {len(overdue)} ticket(s) past their first-response time",
+                body="These tickets have no public staff reply past their SLA and were raised "
+                "to high priority:\n\n" + "\n".join(lines),
+                category="support",
+                status="pending",
+            )
+        )
+    await session.flush()
+    return {"escalated": len(overdue), "overdue": len(overdue)}
+
+
+async def rate_ticket(
+    session: AsyncSession, *, user_id: uuid.UUID, ticket_id: uuid.UUID, score: int
+) -> SupportTicket:
+    """CSAT: the owner rates a resolved/closed ticket 1..5 (a second call updates)."""
+    ticket = await get_my_ticket(session, user_id=user_id, ticket_id=ticket_id)
+    if ticket.status not in ("resolved", "closed"):
+        raise AppError(
+            "TICKET_NOT_RESOLVED", "You can rate a ticket once it is resolved.", status_code=409
+        )
+    if not 1 <= int(score) <= 5:
+        raise AppError("INVALID_INPUT", "score must be 1..5.", status_code=422)
+    ticket.csat = int(score)
+    ticket.updated_at = dt.datetime.now(dt.UTC)
+    await session.flush()
+    return ticket
+
+
+async def daily_digest(session: AsyncSession, *, now: dt.datetime | None = None) -> dict[str, Any]:
+    """Numbers for the team's daily email (client doc §29): tickets in/out, backlog by
+    category and age, SLA breaches, knowledge gaps, CSAT, assistant load and safe-mode rate.
+    Counts only — no ticket bodies, no conversation text."""
+    now = now or dt.datetime.now(dt.UTC)
+    day_ago = now - dt.timedelta(hours=24)
+
+    async def count(stmt) -> int:
+        return int(await session.scalar(stmt) or 0)
+
+    open_states = ("open", "in_progress", "waiting_user")
+    open_by_cat = (
+        await session.execute(
+            select(SupportTicket.category, func.count())
+            .where(SupportTicket.kind == "support", SupportTicket.status.in_(open_states))
+            .group_by(SupportTicket.category)
+        )
+    ).all()
+    oldest_open = await session.scalar(
+        select(func.min(SupportTicket.created_at)).where(
+            SupportTicket.kind == "support", SupportTicket.status.in_(("open", "in_progress"))
+        )
+    )
+    csat = await session.scalar(
+        select(func.avg(SupportTicket.csat)).where(
+            SupportTicket.csat.is_not(None), SupportTicket.updated_at >= day_ago
+        )
+    )
+    overdue = await overdue_tickets(session, now=now)
+    return {
+        "as_of": now.isoformat(),
+        "tickets_new_24h": await count(
+            select(func.count())
+            .select_from(SupportTicket)
+            .where(SupportTicket.kind == "support", SupportTicket.created_at >= day_ago)
+        ),
+        "tickets_resolved_24h": await count(
+            select(func.count())
+            .select_from(SupportTicket)
+            .where(SupportTicket.kind == "support", SupportTicket.resolved_at >= day_ago)
+        ),
+        "tickets_open": sum(int(c) for _cat, c in open_by_cat),
+        "open_by_category": {str(cat): int(c) for cat, c in open_by_cat},
+        "oldest_open_hours": (
+            round((now - oldest_open).total_seconds() / 3600, 1) if oldest_open else 0
+        ),
+        "sla_overdue_now": len(overdue),
+        "sla_breaches_24h": await count(
+            select(func.count())
+            .select_from(AuditLog)
+            .where(AuditLog.action == "ticket.sla_breached", AuditLog.created_at >= day_ago)
+        ),
+        "knowledge_gaps_open": await count(
+            select(func.count())
+            .select_from(SupportTicket)
+            .where(SupportTicket.kind == "knowledge_gap", SupportTicket.status == "open")
+        ),
+        "csat_avg_24h": round(float(csat), 2) if csat is not None else None,
+        "assistant_conversations_24h": await count(
+            select(func.count())
+            .select_from(AssistantConversation)
+            .where(AssistantConversation.created_at >= day_ago)
+        ),
+        "assistant_safe_mode_24h": await count(
+            select(func.count())
+            .select_from(AssistantMessage)
+            .where(
+                AssistantMessage.role == "assistant",
+                AssistantMessage.confidence == "safe_mode",
+                AssistantMessage.created_at >= day_ago,
+            )
+        ),
+        "assistant_low_confidence_24h": await count(
+            select(func.count())
+            .select_from(AssistantMessage)
+            .where(
+                AssistantMessage.role == "assistant",
+                AssistantMessage.confidence == "low",
+                AssistantMessage.created_at >= day_ago,
+            )
+        ),
+    }
+
+
+def render_digest(d: dict[str, Any]) -> str:
+    cats = ", ".join(f"{k}: {v}" for k, v in sorted(d["open_by_category"].items())) or "none"
+    csat = d["csat_avg_24h"] if d["csat_avg_24h"] is not None else "no ratings"
+    return (
+        f"Capimax PropShare - support & assistant digest ({d['as_of'][:16]} UTC)\n\n"
+        f"Tickets: {d['tickets_new_24h']} new, {d['tickets_resolved_24h']} resolved in the last "
+        f"24h; {d['tickets_open']} open ({cats}); oldest open {d['oldest_open_hours']}h.\n"
+        f"SLA: {d['sla_overdue_now']} overdue now, {d['sla_breaches_24h']} escalated in the "
+        f"last 24h.\nKnowledge gaps open: {d['knowledge_gaps_open']}.\nCSAT (24h): {csat}.\n"
+        f"Assistant: {d['assistant_conversations_24h']} conversations, "
+        f"{d['assistant_safe_mode_24h']} safe-mode answers, "
+        f"{d['assistant_low_confidence_24h']} low-confidence answers.\n\n"
+        f"Queues: /admin/support-ticket/list - /admin/assistant-status"
+    )
+
+
+async def send_daily_digest(
+    session: AsyncSession, *, now: dt.datetime | None = None
+) -> dict[str, Any]:
+    """Cron (once a day): compute the digest and queue it to the support inbox."""
+    d = await daily_digest(session, now=now)
+    inbox = get_settings().support_inbox_email
+    if inbox:
+        session.add(
+            EmailOutbox(
+                user_id=None,
+                to_email=inbox,
+                subject=(
+                    f"[Digest] {d['tickets_open']} open tickets - {d['sla_overdue_now']} past "
+                    f"SLA - {d['assistant_conversations_24h']} conversations"
+                ),
+                body=render_digest(d),
+                category="support",
+                status="pending",
+            )
+        )
+        await session.flush()
+    return d

@@ -99,6 +99,11 @@ class TicketMessageIn(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
 
 
+class CsatIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    score: int = Field(ge=1, le=5)
+
+
 class TicketMessageOut(BaseModel):
     id: uuid.UUID
     author_type: str
@@ -117,4 +122,5 @@ class TicketOut(BaseModel):
     created_at: dt.datetime
     updated_at: dt.datetime
     resolved_at: dt.datetime | None
+    csat: int | None = None
     messages: list[TicketMessageOut] = Field(default_factory=list)

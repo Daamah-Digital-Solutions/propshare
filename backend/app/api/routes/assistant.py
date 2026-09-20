@@ -425,6 +425,22 @@ async def nudges(_caller_: AdminOrCronDep, session: SessionDep) -> dict[str, int
     return await nudge_service.run_all(session)
 
 
+@router.post("/maintenance/ticket-sla")
+async def ticket_sla(_caller_: AdminOrCronDep, session: SessionDep) -> dict:
+    """Hourly cron: escalate tickets past their first-response SLA (once each)."""
+    from app.services import ticket_service
+
+    return await ticket_service.escalate_overdue(session)
+
+
+@router.post("/maintenance/daily-digest")
+async def daily_digest(_caller_: AdminOrCronDep, session: SessionDep) -> dict:
+    """Daily cron: queue the support & assistant digest (counts only) to the support inbox."""
+    from app.services import ticket_service
+
+    return await ticket_service.send_daily_digest(session)
+
+
 @router.post("/maintenance/reencrypt", response_model=MaintenanceOut)
 async def reencrypt(_caller_: AdminOrCronDep, session: SessionDep):
     from app.services.assistant import maintenance

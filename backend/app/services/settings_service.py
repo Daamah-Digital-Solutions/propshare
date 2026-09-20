@@ -60,6 +60,8 @@ _SETTING_SPECS: dict[str, str] = {
     "assistant_daily_token_budget": "int",
     "assistant_retention_days": "int",
     "assistant_model_pricing": "json_object",
+    "support_sla_hours_normal": "int",
+    "support_sla_hours_high": "int",
 }
 
 
@@ -173,6 +175,9 @@ DEFAULTS: dict[str, str] = {
     "assistant_retention_days": "180",  # client decision; proposal in the plan
     "assistant_rollout": "admins",  # admins -> all -> visitors, never the other way round
     "assistant_model_pricing": "{}",  # filled from the provider's price list at rollout
+    # Support SLA (Batch C): hours without a public staff reply before escalation
+    "support_sla_hours_normal": "24",
+    "support_sla_hours_high": "8",
 }
 
 

@@ -12,7 +12,13 @@ from fastapi import APIRouter, Request
 from app.api.deps import PrincipalDep, SessionDep, current_principal
 from app.core.ratelimit import TICKET_LIMIT, limiter
 from app.models import SupportTicket, SupportTicketMessage
-from app.schemas.assistant import TicketCreateIn, TicketMessageIn, TicketMessageOut, TicketOut
+from app.schemas.assistant import (
+    CsatIn,
+    TicketCreateIn,
+    TicketMessageIn,
+    TicketMessageOut,
+    TicketOut,
+)
 from app.services import ticket_service
 
 router = APIRouter(prefix="/api/v1/support", tags=["support"])
@@ -30,6 +36,7 @@ def _out(t: SupportTicket, msgs: list[SupportTicketMessage] | None = None) -> Ti
         created_at=t.created_at,
         updated_at=t.updated_at,
         resolved_at=t.resolved_at,
+        csat=t.csat,
         messages=[
             TicketMessageOut(
                 id=m.id, author_type=m.author_type, body=m.body, created_at=m.created_at
@@ -68,6 +75,16 @@ async def my_tickets(principal: PrincipalDep, session: SessionDep):
 async def my_ticket(ticket_id: uuid.UUID, principal: PrincipalDep, session: SessionDep):
     ticket = await ticket_service.get_my_ticket(
         session, user_id=principal.user_id, ticket_id=ticket_id
+    )
+    msgs = await ticket_service.list_messages(session, ticket_id=ticket.id, include_internal=False)
+    return _out(ticket, msgs)
+
+
+@router.post("/tickets/{ticket_id}/csat", response_model=TicketOut)
+async def rate(ticket_id: uuid.UUID, body: CsatIn, principal: PrincipalDep, session: SessionDep):
+    """CSAT (client doc §28): the owner rates a resolved or closed ticket 1..5."""
+    ticket = await ticket_service.rate_ticket(
+        session, user_id=principal.user_id, ticket_id=ticket_id, score=body.score
     )
     msgs = await ticket_service.list_messages(session, ticket_id=ticket.id, include_internal=False)
     return _out(ticket, msgs)
