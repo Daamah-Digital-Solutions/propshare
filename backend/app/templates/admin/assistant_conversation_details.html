@@ -1,0 +1,49 @@
+{% extends "sqladmin/details.html" %}
+{% block content %}
+{{ super() }}
+<div class="container-fluid mt-3">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Transcript</h3>
+      <div class="card-subtitle text-muted">
+        Decrypted on demand for this page only; this view is recorded in the audit log
+        (<code>assistant.transcript_viewed</code>).
+        {% if model._ticket_no %} Linked ticket: <strong>{{ model._ticket_no }}</strong>.{% endif %}
+      </div>
+    </div>
+    <div class="card-body">
+      {% if model._decrypt_error %}
+        <div class="alert alert-danger">Could not decrypt: {{ model._decrypt_error }}</div>
+      {% elif not model._transcript %}
+        <p class="text-muted">No messages yet.</p>
+      {% endif %}
+      {% for m in model._transcript %}
+        <div class="mb-3 p-3 rounded" style="background: {% if m.role == 'user' %}#f1f5f9{% elif m.role == 'assistant' %}#f0fdf4{% else %}#fffbeb{% endif %};">
+          <div class="small text-muted mb-1">
+            <strong>{{ m.role }}</strong> · {{ m.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+            {% if m.confidence %} · confidence: {{ m.confidence }}{% endif %}
+            {% if m.feedback %} · feedback: {{ m.feedback }}{% endif %}
+            {% if m.latency_ms %} · {{ m.latency_ms }} ms{% endif %}
+            {% if m.usage and m.usage.get('cost_usd') %} · ${{ m.usage.get('cost_usd') }}{% endif %}
+            {% if m.key %} · key {{ m.key }}{% endif %}
+          </div>
+          <div style="white-space: pre-wrap;">{{ m.text }}</div>
+          {% if m.flags %}
+            <div class="mt-2">{% for f in m.flags %}<span class="badge bg-warning text-dark me-1">{{ f }}</span>{% endfor %}</div>
+          {% endif %}
+          {% if m.tool_calls %}
+            <details class="mt-2"><summary class="small">Tools ({{ m.tool_calls|length }})</summary>
+              <ul class="small mb-0">{% for t in m.tool_calls %}<li><code>{{ t.name }}</code> {{ 'ok' if t.ok else 'error' }} · {{ t.ms }} ms · <code>{{ t.arguments }}</code></li>{% endfor %}</ul>
+            </details>
+          {% endif %}
+          {% if m.cards %}
+            <details class="mt-2"><summary class="small">Cards ({{ m.cards|length }})</summary>
+              <ul class="small mb-0">{% for c in m.cards %}<li>{{ c.kind }}{% if c.path %} → <code>{{ c.path }}</code>{% endif %}{% if c.action %} · {{ c.action }}{% endif %}</li>{% endfor %}</ul>
+            </details>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

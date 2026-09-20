@@ -1,0 +1,33 @@
+{% extends "sqladmin/details.html" %}
+{% block content %}
+{{ super() }}
+<div class="container-fluid mt-3">
+  <div class="card">
+    <div class="card-header">
+      <h3 class="card-title">Thread</h3>
+      <div class="ms-auto">
+        <a class="btn btn-primary" href="/admin/support-ticket/reply/{{ model.id }}">Reply / add note</a>
+        {% if model._transcript_url %}
+          <a class="btn" href="{{ model._transcript_url }}">Open conversation transcript (audited)</a>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card-body">
+      {% if model.summary %}
+        <div class="mb-3 p-3 rounded" style="background:#f8fafc; white-space: pre-wrap;"><strong>Handoff summary</strong>
+{{ model.summary }}</div>
+      {% endif %}
+      {% if not model._thread %}<p class="text-muted">No messages.</p>{% endif %}
+      {% for m in model._thread %}
+        <div class="mb-3 p-3 rounded" style="background: {% if m.internal %}#fff7ed{% elif m.author_type == 'staff' %}#f0fdf4{% else %}#f1f5f9{% endif %};">
+          <div class="small text-muted mb-1">
+            <strong>{{ m.author_type }}</strong>{% if m.internal %} · <span class="badge bg-warning text-dark">internal note</span>{% endif %}
+            · {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
+          </div>
+          <div style="white-space: pre-wrap;">{{ m.body }}</div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

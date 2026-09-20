@@ -12,6 +12,7 @@ READ-ONLY here — they must only ever change through the audited service layer
 
 from __future__ import annotations
 
+import datetime as dt
 import decimal
 import html as _html
 import uuid
@@ -25,6 +26,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 from wtforms import SelectField
 
+from app.admin_assistant import ASSISTANT_VIEWS
 from app.admin_listing import ListingEditorView, is_full_admin
 from app.admin_pages import PW_PAGE
 from app.core.audit import write_audit
@@ -692,6 +694,9 @@ class PlatformSettingAdmin(AdminOnlyModelView, model=PlatformSetting):
         PlatformSetting.updated_at,
     ]
     column_searchable_list = [PlatformSetting.key]
+    # the key IS the primary key: without this the create form never sends it (NOT NULL error)
+    form_include_pk = True
+    form_columns = [PlatformSetting.key, PlatformSetting.value, PlatformSetting.description]
     can_create = True
     can_edit = True  # change a rate
     can_delete = False
@@ -709,6 +714,27 @@ class PlatformSettingAdmin(AdminOnlyModelView, model=PlatformSetting):
             settings_service.validate_setting(key, str(value))
         except AppError as exc:
             raise ValueError(exc.message) from exc
+        request.state.setting_before = None if is_created else getattr(model, "value", None)
+        data["updated_at"] = dt.datetime.now(dt.UTC)
+
+    async def after_model_change(self, data, model, is_created, request) -> None:
+        # The assistant's switches are safety controls: every change is written to the audit
+        # log with who flipped it and from what value.
+        key = (data.get("key") or getattr(model, "key", "") or "").strip()
+        if not key.startswith("assistant_"):
+            return
+        actor = request.session.get("admin_id")
+        async with session_scope() as session:
+            await write_audit(
+                session,
+                action="assistant.settings_changed",
+                entity_type="platform_setting",
+                entity_id=key,
+                actor_id=uuid.UUID(actor) if actor else None,
+                before={"value": getattr(request.state, "setting_before", None)},
+                after={"value": data.get("value")},
+                ip=request.client.host if request.client else None,
+            )
 
 
 class OwnershipLedgerAdmin(AdminOnlyModelView, model=OwnershipLedger):
@@ -1822,6 +1848,7 @@ def setup_admin(app) -> Admin:
         ListingEditorView,
         PasswordChangeView,
         RoleDocView,
+        *ASSISTANT_VIEWS,
     ):
         admin.add_view(view)
     return admin

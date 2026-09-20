@@ -13,6 +13,7 @@ Defaults match the frontend's disclosed fee note so display == what is charged.
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
 from typing import NoReturn
 
@@ -48,6 +49,17 @@ _SETTING_SPECS: dict[str, str] = {
     "withdrawal_auto_approve_limit": "int",
     "lp_passive_enabled": "bool_locked_false",
     "manual_payouts_enabled": "bool",
+    # AI assistant (plan Phase 1)
+    "assistant_enabled": "bool",
+    "assistant_visitor_enabled": "bool",
+    "assistant_provider": "enum:openai",
+    "assistant_reasoning_effort": "enum:none,low,medium,high,xhigh,max",
+    "assistant_rollout": "enum:admins,all",
+    "assistant_max_output_tokens": "int",
+    "assistant_daily_message_cap": "int",
+    "assistant_daily_token_budget": "int",
+    "assistant_retention_days": "int",
+    "assistant_model_pricing": "json_object",
 }
 
 
@@ -72,6 +84,19 @@ def validate_setting(key: str, value: str) -> None:
     if spec == "bool":
         if raw.lower() not in ("true", "1", "yes", "on", "false", "0", "no", "off", ""):
             _bad("must be a boolean.")
+        return
+    if spec.startswith("enum:"):
+        allowed = spec[5:].split(",")
+        if raw not in allowed:
+            _bad(f"must be one of: {', '.join(allowed)}.")
+        return
+    if spec == "json_object":
+        try:
+            parsed = json.loads(raw or "{}")
+        except ValueError:
+            _bad("must be valid JSON.")
+        if not isinstance(parsed, dict):
+            _bad("must be a JSON object.")
         return
     if spec == "pct_open" and raw == "":
         return  # empty price bound == open
