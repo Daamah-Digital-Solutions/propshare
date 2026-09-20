@@ -1,0 +1,551 @@
+"""Informational tools: public data any visitor may see (plan §4 tool inventory).
+
+Every number comes from the live database or platform settings, never from the knowledge
+base, so the assistant cannot quote a stale fee or price.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import decimal
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import AppError
+from app.models import Document, KbArticle
+from app.services import (
+    document_service,
+    installment_service,
+    listing_service,
+    payment_service,
+    platform_accounts_service,
+    property_service,
+    settings_service,
+)
+from app.services.assistant import guard
+from app.services.assistant.context import AgentContext
+from app.services.assistant.tools.base import NoArgs, ToolOutput, ToolSpec, register
+
+_CENTS = decimal.Decimal("0.01")
+
+
+def _now() -> str:
+    return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat()
+
+
+def _s(v: Any) -> str | None:
+    return None if v is None else str(v)
+
+
+# --------------------------------------------------------------------------- #
+# get_platform_settings
+# --------------------------------------------------------------------------- #
+class Fees(ToolOutput):
+    platform_fee_pct: str
+    management_fee_pct: str
+    installment_fee_pct: str
+    secondary_resale_fee_pct: str
+    liquidity_discount_pct: str
+    liquidity_fee_pct: str
+
+
+class Discounts(ToolOutput):
+    reinvest_discount_pct: str
+    pronova_discount_pct: str
+
+
+class InstallmentTerms(ToolOutput):
+    down_pct_by_months: dict[str, int]
+    note: str
+
+
+class DepositRails(ToolOutput):
+    card: bool
+    crypto: bool
+    bank_transfer: bool
+
+
+class PlatformSettingsOut(ToolOutput):
+    fees: Fees
+    discounts: Discounts
+    installment: InstallmentTerms
+    deposit_rails: DepositRails
+    currency: str
+    as_of: str
+
+
+async def _get_platform_settings(session: AsyncSession, ctx: AgentContext, args) -> dict:
+    from app.core.config import get_settings
+
+    async def g(key: str) -> str:
+        return await settings_service.get_setting(session, key)
+
+    banks = await platform_accounts_service.list_active(session)
+    return {
+        "fees": {
+            "platform_fee_pct": await g("platform_fee_pct"),
+            "management_fee_pct": await g("management_fee_pct"),
+            "installment_fee_pct": await g("installment_fee_pct"),
+            "secondary_resale_fee_pct": await g("secondary_resale_fee_pct"),
+            "liquidity_discount_pct": await g("liquidity_discount_pct"),
+            "liquidity_fee_pct": await g("liquidity_fee_pct"),
+        },
+        "discounts": {
+            "reinvest_discount_pct": await g("reinvest_discount_pct"),
+            "pronova_discount_pct": await g("pronova_discount_pct"),
+        },
+        "installment": {
+            "down_pct_by_months": {
+                str(m): d for m, d in sorted(installment_service._DOWN_PCT.items())
+            },
+            "note": (
+                "One standard plan for every off-plan listing: the down payment is paid now, "
+                "the rest in equal monthly installments; the installment fee applies to the "
+                "down payment and each installment; units vest with each payment; a missed "
+                "payment is retried with reminders, no late fee, no forfeit."
+            ),
+        },
+        "deposit_rails": {
+            "card": payment_service.provider_configured("card"),
+            "crypto": payment_service.provider_configured("crypto"),
+            "bank_transfer": len(banks) > 0,
+        },
+        "currency": get_settings().wallet_currency,
+        "as_of": _now(),
+    }
+
+
+register(
+    ToolSpec(
+        "get_platform_settings",
+        "Live platform fees, discounts, the standard installment plan terms and which deposit "
+        "methods are available right now. Use this for ANY question about fees or terms.",
+        NoArgs,
+        PlatformSettingsOut,
+        "informational",
+        _get_platform_settings,
+    )
+)
+
+
+# --------------------------------------------------------------------------- #
+# search_properties / get_property
+# --------------------------------------------------------------------------- #
+class SearchPropertiesIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    search: str | None = Field(default=None, description="Free text: title or location")
+    model: str | None = Field(default=None, description="Ownership model key")
+    property_type: str | None = None
+    city: str | None = None
+    country: str | None = None
+    min_yield: float | None = Field(default=None, ge=0, le=100)
+    max_price: float | None = Field(default=None, ge=0)
+    sort: str = Field(default="newest", description="newest | yield | price | funded")
+    limit: int = Field(default=5, ge=1, le=10)
+
+
+class PropertyCard(ToolOutput):
+    id: str
+    slug: str | None
+    title: str
+    location: str
+    country: str | None
+    city: str | None
+    model: str
+    model_label: str
+    property_type: str
+    status: str
+    unit_price: float | None
+    minimum_investment: float | None
+    total_value: float | None
+    target_yield: float | None
+    expected_yield: float | None
+    capital_appreciation: float | None
+    total_return: float | None
+    funding_progress: float | None
+    available_units: int
+    developer_name: str | None
+
+
+class SearchPropertiesOut(ToolOutput):
+    items: list[PropertyCard]
+    total: int
+    as_of: str
+
+
+def _card(row: dict) -> dict:
+    return {
+        "id": str(row["id"]),
+        "slug": row["slug"],
+        "title": row["title"],
+        "location": row["location"],
+        "country": row["country"],
+        "city": row["city"],
+        "model": row["model"],
+        "model_label": listing_service.MODEL_LABELS.get(row["model"], row["model"]),
+        "property_type": row["property_type"],
+        "status": row["status"],
+        "unit_price": row["unit_price"],
+        "minimum_investment": row["minimum_investment"],
+        "total_value": row["total_value"],
+        "target_yield": row["target_yield"],
+        "expected_yield": row["expected_yield"],
+        "capital_appreciation": row["capital_appreciation"],
+        "total_return": row["total_return"],
+        "funding_progress": row["funding_progress"],
+        "available_units": row["available_units"],
+        "developer_name": row["developer_name"],
+    }
+
+
+async def _search_properties(session: AsyncSession, ctx: AgentContext, args) -> dict:
+    a: SearchPropertiesIn = args
+    rows, total = await property_service.list_public(
+        session,
+        model=a.model,
+        property_type=a.property_type,
+        country=a.country,
+        city=a.city,
+        min_yield=a.min_yield,
+        max_price=a.max_price,
+        search=a.search,
+        sort=a.sort if a.sort in ("newest", "yield", "price", "funded") else "newest",
+        limit=a.limit,
+        offset=0,
+    )
+    names = await property_service._owner_names(session, rows)
+    return {
+        "items": [_card(property_service.serialize_summary(p, names)) for p in rows],
+        "total": int(total),
+        "as_of": _now(),
+    }
+
+
+register(
+    ToolSpec(
+        "search_properties",
+        "Search the marketplace (published listings only). Returns up to 10 property cards "
+        "with live prices, yields and availability.",
+        SearchPropertiesIn,
+        SearchPropertiesOut,
+        "informational",
+        _search_properties,
+    )
+)
+
+
+class GetPropertyIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id_or_slug: str = Field(min_length=1, max_length=160)
+
+
+class MilestoneOut(ToolOutput):
+    title: str
+    status: str
+    target_date: str | None
+    progress_pct: int | None
+
+
+class DocumentOut(ToolOutput):
+    title: str
+    category: str
+
+
+class PropertyDetailOut(PropertyCard):
+    description: str | None
+    subtitle: str | None
+    expected_completion: str | None
+    construction_progress: int
+    spv_name: str | None
+    legal_structure: str | None
+    listing_fees: dict[str, float]
+    terms: dict[str, str]
+    amenities: list[str]
+    milestones: list[MilestoneOut]
+    documents: list[DocumentOut]
+    page_path: str
+    as_of: str
+
+
+async def _get_property(session: AsyncSession, ctx: AgentContext, args) -> dict:
+    a: GetPropertyIn = args
+    prop = await property_service.get_public_detail(session, a.id_or_slug)
+    names = await property_service._owner_names(session, [prop])
+    card = _card(property_service.serialize_summary(prop, names))
+    milestones = await listing_service.list_milestones(session, prop.id)
+    docs = await document_service.list_property_documents(session, a.id_or_slug)
+    content = prop.content if isinstance(prop.content, dict) else {}
+    fees = content.get("fees") or {}
+    terms = content.get("terms") or {}
+    details = content.get("details") or {}
+    return {
+        **card,
+        "description": prop.description,
+        "subtitle": prop.subtitle,
+        "expected_completion": _s(prop.expected_completion),
+        "construction_progress": listing_service.construction_progress(milestones),
+        "spv_name": prop.spv_name,
+        "legal_structure": prop.legal_structure,
+        "listing_fees": {k: float(v) for k, v in fees.items() if isinstance(v, int | float)},
+        "terms": {k: str(v) for k, v in terms.items() if v},
+        "amenities": [str(x) for x in (details.get("amenities") or [])],
+        "milestones": [
+            {
+                "title": m.title,
+                "status": str(m.status),
+                "target_date": _s(m.target_date),
+                "progress_pct": m.progress_pct,
+            }
+            for m in milestones
+        ],
+        "documents": [{"title": d.title, "category": d.type} for d in docs],
+        "page_path": f"/property/{prop.slug or prop.id}",
+        "as_of": _now(),
+    }
+
+
+register(
+    ToolSpec(
+        "get_property",
+        "Full public details of one published listing by id or slug: numbers, description, "
+        "milestones, document titles and the page link. Never invent a property.",
+        GetPropertyIn,
+        PropertyDetailOut,
+        "informational",
+        _get_property,
+    )
+)
+
+
+# --------------------------------------------------------------------------- #
+# search_kb (approved articles only)
+# --------------------------------------------------------------------------- #
+class SearchKbIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=1, max_length=200)
+    lang: str = Field(default="en", pattern="^(en|ar)$")
+    limit: int = Field(default=3, ge=1, le=5)
+
+
+class KbHit(ToolOutput):
+    slug: str
+    title: str
+    snippet: dict[str, str]  # {"untrusted_text": ...}
+    lang: str
+    updated_at: str
+
+
+class SearchKbOut(ToolOutput):
+    items: list[KbHit]
+
+
+async def _search_kb(session: AsyncSession, ctx: AgentContext, args) -> dict:
+    a: SearchKbIn = args
+    words = [w for w in a.query.lower().split() if len(w) > 2][:6]
+    stmt = select(KbArticle).where(KbArticle.status == "approved", KbArticle.lang == a.lang)
+    if words:
+        stmt = stmt.where(
+            or_(
+                *[KbArticle.title.ilike(f"%{w}%") for w in words],
+                *[KbArticle.body_md.ilike(f"%{w}%") for w in words],
+            )
+        )
+    rows = (await session.execute(stmt.order_by(KbArticle.priority).limit(a.limit))).scalars().all()
+    return {
+        "items": [
+            {
+                "slug": r.slug,
+                "title": r.title,
+                "snippet": guard.wrap_untrusted(r.body_md[:600]),
+                "lang": r.lang,
+                "updated_at": r.updated_at.isoformat(),
+            }
+            for r in rows
+        ]
+    }
+
+
+register(
+    ToolSpec(
+        "search_kb",
+        "Search the approved help articles (how things work, policies). Never contains "
+        "numbers: use get_platform_settings or get_property for figures.",
+        SearchKbIn,
+        SearchKbOut,
+        "informational",
+        _search_kb,
+    )
+)
+
+
+# --------------------------------------------------------------------------- #
+# prepare_deep_link
+# --------------------------------------------------------------------------- #
+class DeepLinkIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    route_id: str = Field(description="One of: " + ", ".join(sorted(guard.DEEP_LINKS)))
+    slug: str | None = Field(default=None, description="Property slug (route_id=property)")
+
+
+class DeepLinkOut(ToolOutput):
+    route_id: str
+    path: str
+    label: str
+
+
+async def _prepare_deep_link(session: AsyncSession, ctx: AgentContext, args) -> dict:
+    a: DeepLinkIn = args
+    return guard.make_link(a.route_id, a.slug)
+
+
+register(
+    ToolSpec(
+        "prepare_deep_link",
+        "Get the in-app link for a screen (wallet, deposit, KYC, a property page...). Only "
+        "these links may be shown to the user.",
+        DeepLinkIn,
+        DeepLinkOut,
+        "informational",
+        _prepare_deep_link,
+    )
+)
+
+
+# --------------------------------------------------------------------------- #
+# quote_investment (prepare only: same eligibility as the invest endpoint)
+# --------------------------------------------------------------------------- #
+class QuoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id_or_slug: str = Field(min_length=1, max_length=160)
+    amount: float = Field(gt=0, le=100_000_000)
+    duration_months: int | None = Field(
+        default=None, description="Installment plan length for off-plan listings"
+    )
+
+
+class ScheduleRow(ToolOutput):
+    seq: int
+    kind: str
+    base_amount: str
+    fee_amount: str
+    total_amount: str
+
+
+class QuoteOut(ToolOutput):
+    property_title: str
+    model: str
+    units: int
+    unit_price: str
+    subtotal: str
+    platform_fee_pct: str
+    platform_fee: str
+    total_now: str
+    minimum_investment: str
+    purchase_type: str  # direct | installment
+    down_payment_pct: int | None
+    installment_fee_pct: str | None
+    schedule: list[ScheduleRow]
+    eligibility_notes: list[str]
+    as_of: str
+
+
+async def _quote_investment(session: AsyncSession, ctx: AgentContext, args) -> dict:
+    a: QuoteIn = args
+    prop = await property_service.get_public_detail(session, a.id_or_slug)
+    amount = decimal.Decimal(str(a.amount)).quantize(_CENTS)
+    unit = decimal.Decimal(prop.unit_price)
+    units = int(amount // unit)
+    notes: list[str] = []
+    if str(prop.status) != "active":
+        notes.append("This listing is not open for investment right now.")
+    if units < 1 or unit * units < decimal.Decimal(prop.minimum_investment):
+        notes.append(
+            f"The minimum for this listing is {prop.minimum_investment} "
+            f"(whole units of {prop.unit_price}); amounts are rounded down to whole units."
+        )
+    if units > prop.available_units:
+        notes.append(f"Only {prop.available_units} units are still available.")
+    if ctx.is_visitor:
+        notes.append("Sign in and complete identity verification before investing.")
+    elif ctx.kyc_status != "verified":
+        notes.append("Identity verification must be approved before investing.")
+    profile = listing_service.profile_of(prop.model)
+    offplan = profile in listing_service.OFFPLAN_PROFILES
+    subtotal = (unit * units).quantize(_CENTS)
+    rates = await settings_service.get_fee_rates(session)
+    platform_pct = rates["platform_fee_pct"]
+    schedule: list[dict] = []
+    down_pct = None
+    inst_fee = None
+    if offplan:
+        months = a.duration_months or 12
+        table = installment_service._DOWN_PCT
+        if months not in table:
+            notes.append(
+                f"Installment plans run {', '.join(str(m) for m in sorted(table))} months."
+            )
+            months = 12
+        down_pct = table[months]
+        fee_pct = await settings_service.get_installment_fee_pct(session)
+        inst_fee = f"{fee_pct.normalize():f}"
+        down_base = (subtotal * down_pct / 100).quantize(_CENTS)
+        rest = subtotal - down_base
+        per = (rest / months).quantize(_CENTS) if months else decimal.Decimal(0)
+        rows_ = [("down_payment", down_base)] + [("installment", per)] * months
+        for i, (kind, base) in enumerate(rows_):
+            fee = (base * fee_pct / 100).quantize(_CENTS)
+            schedule.append(
+                {
+                    "seq": i,
+                    "kind": kind,
+                    "base_amount": f"{base:.2f}",
+                    "fee_amount": f"{fee:.2f}",
+                    "total_amount": f"{(base + fee):.2f}",
+                }
+            )
+        platform_fee = decimal.Decimal(0)
+        total_now = decimal.Decimal(schedule[0]["total_amount"]) if schedule else decimal.Decimal(0)
+        notes.append("Off-plan listings are bought through the standard installment plan.")
+    else:
+        platform_fee = (subtotal * platform_pct / 100).quantize(_CENTS)
+        total_now = subtotal + platform_fee
+    return {
+        "property_title": prop.title,
+        "model": prop.model,
+        "units": units,
+        "unit_price": f"{unit:.2f}",
+        "subtotal": f"{subtotal:.2f}",
+        "platform_fee_pct": f"{platform_pct.normalize():f}",
+        "platform_fee": f"{platform_fee:.2f}",
+        "total_now": f"{total_now:.2f}",
+        "minimum_investment": f"{decimal.Decimal(prop.minimum_investment):.2f}",
+        "purchase_type": "installment" if offplan else "direct",
+        "down_payment_pct": down_pct,
+        "installment_fee_pct": inst_fee,
+        "schedule": schedule[:25],
+        "eligibility_notes": notes,
+        "as_of": _now(),
+    }
+
+
+register(
+    ToolSpec(
+        "quote_investment",
+        "Work out what an amount buys on a listing: whole units, fees, total payable now, and "
+        "for off-plan listings the installment schedule. Prepares only; nothing is bought.",
+        QuoteIn,
+        QuoteOut,
+        "prepare_only",
+        _quote_investment,
+    )
+)
+
+
+def _unused(*_: Any) -> None:  # keeps AppError/Document imports meaningful for type checkers
+    return None
+
+
+_unused(AppError, Document)
