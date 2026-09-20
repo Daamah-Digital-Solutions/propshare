@@ -168,6 +168,8 @@ def _clear_provider_secrets(monkeypatch):
         "sumsub_app_token",
         "sumsub_secret_key",
         "sumsub_webhook_secret",
+        "openai_api_key",
+        "assistant_hmac_secret",
     ):
         monkeypatch.setattr(settings, attr, "", raising=False)
     yield

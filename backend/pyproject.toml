@@ -33,6 +33,9 @@ dependencies = [
     # Pillow lets reportlab embed the PNG logo in the certificate (pure wheel; cert rendering
     # falls back to a vector wordmark if it is ever missing, so this is not load-bearing).
     "pillow>=10.2",
+    # AI assistant (plan Phase 1): provider SDK + AES-GCM for conversation encryption.
+    "openai>=1.40",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]

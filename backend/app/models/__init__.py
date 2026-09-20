@@ -512,6 +512,12 @@ class FamilyReturnAllocation(Base):
 # Phase 1 identity tables (app-owned auth). Imported so Base.metadata registers them
 # for Alembic autogenerate / app use. DDL is owned by alembic/0002.
 # Phase 2 compliance tables (audit log + webhook idempotency). DDL owned by 0003.
+from app.models.assistant import (  # noqa: E402
+    AssistantActionProposal,
+    AssistantConsent,
+    AssistantConversation,
+    AssistantMessage,
+)
 from app.models.broker import BrokerCode, BrokerCommission, BrokerReferral  # noqa: E402
 from app.models.compliance import AuditLog, KycWebhookEvent  # noqa: E402
 from app.models.developer_updates import (  # noqa: E402
@@ -534,6 +540,7 @@ from app.models.identity import (  # noqa: E402
 )
 from app.models.installments import InstallmentPayment, InstallmentPlan  # noqa: E402
 from app.models.investments import OwnershipLedger, PlatformSetting  # noqa: E402
+from app.models.kb import KbArticle  # noqa: E402
 from app.models.liquidity import LpExitRequest, LpPoolTier, LpPosition  # noqa: E402
 from app.models.milestones import PropertyMilestone  # noqa: E402
 from app.models.notifications import EmailOutbox, NotificationPreference  # noqa: E402
@@ -545,6 +552,7 @@ from app.models.payout_methods import (  # noqa: E402
     UserCryptoWallet,
 )
 from app.models.secondary import SecondaryTrade  # noqa: E402
+from app.models.support import SupportTicket, SupportTicketMessage  # noqa: E402
 from app.models.withdrawals import ConnectAccount, PayoutEvent, Withdrawal  # noqa: E402
 
 __all__ = [
@@ -620,4 +628,12 @@ __all__ = [
     # installment plans (Group 6)
     "InstallmentPlan",
     "InstallmentPayment",
+    # AI assistant (plan Phase 1)
+    "AssistantConversation",
+    "AssistantMessage",
+    "AssistantActionProposal",
+    "AssistantConsent",
+    "SupportTicket",
+    "SupportTicketMessage",
+    "KbArticle",
 ]

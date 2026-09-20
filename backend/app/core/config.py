@@ -178,6 +178,37 @@ class Settings(BaseSettings):
     apple_key_id: str = ""
     apple_private_key: str = ""  # contents of the .p8
 
+    # --- AI assistant (plan Phase 1). Every switch defaults OFF: the assistant only runs
+    # when a key, an encryption key file and an HMAC secret are all present AND the admin
+    # turns it on in platform settings. No secret material ever lives in these fields
+    # except the provider key itself. ---
+    openai_api_key: str = ""
+    assistant_enabled: bool = False  # deploy-level kill switch (the DB setting gates rollout)
+    assistant_timeout_seconds: float = 90.0
+    support_inbox_email: str = ""
+    # Path to the key file (outside the app tree AND outside the backup tree) plus the id of
+    # the key new rows are written with. The key material itself is never in .env.
+    assistant_encryption_keys_file: str = ""
+    assistant_encryption_active_key: str = ""
+    # Dedicated secret for the provider's safety identifier (HMAC of the user id). Never the
+    # JWT secret: an unkeyed hash of a UUID is reversible by enumeration against our own DB.
+    assistant_hmac_secret: str = ""
+    # Bumped whenever the privacy policy changes; consent is recorded per user per version.
+    assistant_policy_version: str = "2026-10"
+
+    @property
+    def assistant_configured(self) -> bool:
+        """True only when the assistant can run safely: provider key, kill switch on,
+        readable encryption key file and HMAC secret."""
+        from app.core import crypto
+
+        return bool(
+            self.openai_api_key
+            and self.assistant_enabled
+            and self.assistant_hmac_secret
+            and crypto.is_configured()
+        )
+
     @property
     def cors_origins(self) -> list[str]:
         return [o.strip() for o in self.frontend_origin.split(",") if o.strip()]

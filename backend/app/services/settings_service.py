@@ -133,6 +133,21 @@ DEFAULTS: dict[str, str] = {
     # Manual, admin-settled withdrawals (Task 3). When true a withdrawal holds funds and waits
     # in the admin queue for mark-paid/reject (no Stripe Connect / NOWPayments payout call).
     "manual_payouts_enabled": "true",
+    # --- AI assistant (plan Phase 1). Everything OFF / empty until the owner decides:
+    # the model is chosen by the release eval, retention and visitor mode are client
+    # decisions, and the rollout starts with admins only. ---
+    "assistant_enabled": "false",
+    "assistant_visitor_enabled": "false",
+    "assistant_provider": "openai",
+    "assistant_model": "",  # empty => assistant unavailable (the widget falls back)
+    "assistant_reasoning_effort": "low",
+    "assistant_max_output_tokens": "2048",
+    "assistant_disabled_tools": "",
+    "assistant_daily_message_cap": "200",
+    "assistant_daily_token_budget": "20000000",
+    "assistant_retention_days": "180",  # client decision; proposal in the plan
+    "assistant_rollout": "admins",  # admins -> all -> visitors, never the other way round
+    "assistant_model_pricing": "{}",  # filled from the provider's price list at rollout
 }
 
 
