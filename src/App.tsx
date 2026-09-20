@@ -10,7 +10,7 @@ import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { MainLayout } from "@/components/layout/MainLayout";
 import PWAInstallPrompt from "@/components/pwa/PWAInstallPrompt";
 import PWAServiceWorker from "@/components/pwa/PWAServiceWorker";
-import ChatWidget from "@/components/chat/ChatWidget";
+import AssistantMount from "@/components/assistant/AssistantMount";
 
 // Eagerly load the homepage for fast initial load
 import Index from "./pages/Index";
@@ -25,6 +25,8 @@ const OwnerDashboard = lazy(() => import("./pages/OwnerDashboard"));
 const DeveloperDashboard = lazy(() => import("./pages/DeveloperDashboard"));
 const LiquidityDashboard = lazy(() => import("./pages/LiquidityDashboard"));
 const LiquidityProviderMarket = lazy(() => import("./pages/LiquidityProviderMarket"));
+const MyTickets = lazy(() => import("./pages/MyTickets"));
+const TicketDetail = lazy(() => import("./pages/TicketDetail"));
 const ExitMechanisms = lazy(() => import("./pages/ExitMechanisms"));
 const PropertyTypes = lazy(() => import("./pages/PropertyTypes"));
 const ConstructionModelPage = lazy(() => import("./pages/ConstructionModelPage"));
@@ -75,7 +77,7 @@ const App = () => (
           <BrowserRouter>
             <PWAInstallPrompt />
             <PWAServiceWorker />
-            <ChatWidget />
+            <AssistantMount />
             <MainLayout>
               <Suspense fallback={<PageLoader />}>
                 <Routes>
@@ -147,6 +149,22 @@ const App = () => (
                   <Route path="/verify-email" element={<VerifyEmail />} />
                   <Route path="/install" element={<InstallApp />} />
                   <Route path="/support" element={<Support />} />
+                  <Route
+                    path="/support/tickets"
+                    element={
+                      <ProtectedRoute>
+                        <MyTickets />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/support/tickets/:id"
+                    element={
+                      <ProtectedRoute>
+                        <TicketDetail />
+                      </ProtectedRoute>
+                    }
+                  />
                   <Route path="/disclaimer" element={<Disclaimer />} />
                   <Route path="/legal" element={<Legal />} />
                   <Route path="/terms" element={<Terms />} />

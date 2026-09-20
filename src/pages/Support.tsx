@@ -8,6 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { Link } from "react-router-dom";
+import { ApiError } from "@/lib/api";
+import { ASSISTANT_V2_FLAG, TICKET_CATEGORIES, ticketsApi } from "@/lib/assistantApi";
 import {
   MessageCircle,
   Phone,
@@ -60,6 +63,7 @@ const Support = () => {
     subject: "",
     message: "",
   });
+  const [contactCategory, setContactCategory] = useState<string>("other");
 
   // Support Contact Info
   const whatsappNumber = "+12053508771";
@@ -101,8 +105,34 @@ const Support = () => {
   // Handle contact form submission. There is no server-side ticketing backend yet, so
   // we perform a REAL action — compose an email to support via the user's mail client —
   // instead of faking a "message sent" + a non-existent confirmation email.
-  const handleContactSubmit = (e: React.FormEvent) => {
+  const handleContactSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (ASSISTANT_V2_FLAG) {
+      // Assistant v2: a real ticket in the platform (staff reply from the admin panel; the
+      // member follows it under /support/tickets). Visitors identify by email.
+      try {
+        const ticket = await ticketsApi.create({
+          category: contactCategory,
+          subject: contactForm.subject || "Support request",
+          body: `Name: ${contactForm.name}\n\n${contactForm.message}`,
+          contact_email: isAuthenticated ? undefined : contactForm.email,
+        });
+        setContactForm({ name: "", email: "", subject: "", message: "" });
+        toast({
+          title: `Ticket ${ticket.ticket_no} opened`,
+          description: isAuthenticated
+            ? "We will reply here and notify you. You can follow it under My tickets."
+            : `We will reply by email to ${contactForm.email}.`,
+        });
+      } catch (err) {
+        toast({
+          title: "Could not send",
+          description: err instanceof ApiError ? err.message : "Please try again or email us directly.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
     const subject = encodeURIComponent(contactForm.subject || "Support request");
     const body = encodeURIComponent(
       `Name: ${contactForm.name}\nEmail: ${contactForm.email}\n\n${contactForm.message}`,
@@ -220,9 +250,18 @@ const Support = () => {
       {/* Contact Form Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div>
-          <h2 className="text-2xl font-bold text-foreground mb-4">Send Us a Message</h2>
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <h2 className="text-2xl font-bold text-foreground">Send Us a Message</h2>
+            {ASSISTANT_V2_FLAG && isAuthenticated && (
+              <Button asChild variant="outline" size="sm">
+                <Link to="/support/tickets">My tickets</Link>
+              </Button>
+            )}
+          </div>
           <p className="text-muted-foreground mb-6">
-            Fill out the form below and we'll get back to you within 24 hours. You'll receive an automatic confirmation email once your message is submitted.
+            {ASSISTANT_V2_FLAG
+              ? "Fill out the form below and a ticket is opened for our team. You will be notified of every reply."
+              : "Fill out the form below and we'll get back to you within 24 hours. You'll receive an automatic confirmation email once your message is submitted."}
           </p>
 
           <Card>
@@ -251,6 +290,24 @@ const Support = () => {
                     />
                   </div>
                 </div>
+
+                {ASSISTANT_V2_FLAG && (
+                  <div className="space-y-2">
+                    <Label htmlFor="category">Topic</Label>
+                    <select
+                      id="category"
+                      value={contactCategory}
+                      onChange={(e) => setContactCategory(e.target.value)}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      {TICKET_CATEGORIES.map((c) => (
+                        <option key={c} value={c}>
+                          {c.replace("_", " ")}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <Label htmlFor="subject">Subject</Label>
