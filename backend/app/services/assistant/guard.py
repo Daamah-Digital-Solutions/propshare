@@ -259,9 +259,31 @@ FORBIDDEN_TERMS = (
 )
 
 
-def postprocess_output(text: str) -> tuple[str, list[str]]:
-    """Strip links that are not ours and flag forbidden wording. Returns (text, flags)."""
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(\s*(/[^)\s]*)\s*\)")
+_BARE_PATH_RE = re.compile(r"(?<![\w/.])(/[a-z][a-z0-9-]*(?:\?[a-z_]+=[a-z_]+)?)(?![\w/])")
+
+
+def allowed_route_for(path: str) -> str | None:
+    """The deep-link id whose path equals this relative path (property pages by prefix)."""
+    for route_id, (pattern, _label) in DEEP_LINKS.items():
+        if "{slug}" in pattern:
+            prefix = pattern.split("{slug}")[0]
+            if path.startswith(prefix) and _SLUG_RE.match(path[len(prefix) :] or ""):
+                return route_id
+        elif path == pattern:
+            return route_id
+    return None
+
+
+def postprocess_output(text: str) -> tuple[str, list[str], list[dict[str, str]]]:
+    """Strip links that are not ours, flag forbidden wording, and collect the platform
+    routes the text refers to. Returns (text, flags, links).
+
+    The model is told to hand out pages only through ``prepare_deep_link``, but it still
+    types relative markdown links it has seen. An allow-listed path becomes a real link card
+    (``links``); anything else is reduced to its label so no unknown route reaches the user."""
     flags: list[str] = []
+    links: list[dict[str, str]] = []
 
     def _link(m: re.Match) -> str:
         url = m.group(0)
@@ -270,8 +292,24 @@ def postprocess_output(text: str) -> tuple[str, list[str]]:
         flags.append("external_link_removed")
         return "[link removed]"
 
+    def _md(m: re.Match) -> str:
+        label, path = m.group(1), m.group(2)
+        route_id = allowed_route_for(path)
+        if route_id is None:
+            flags.append("unknown_route_removed")
+            return label
+        if not any(link["path"] == path for link in links):
+            links.append({"route_id": route_id, "path": path, "label": DEEP_LINKS[route_id][1]})
+        return label
+
     cleaned = _URL_RE.sub(_link, text)
+    cleaned = _MD_LINK_RE.sub(_md, cleaned)
+    for m in _BARE_PATH_RE.finditer(cleaned):
+        path = m.group(1)
+        route_id = allowed_route_for(path)
+        if route_id is not None and not any(link["path"] == path for link in links):
+            links.append({"route_id": route_id, "path": path, "label": DEEP_LINKS[route_id][1]})
     for pattern in FORBIDDEN_TERMS:
         if pattern.search(cleaned):
             flags.append(f"forbidden_term:{pattern.pattern[:30]}")
-    return cleaned, sorted(set(flags))
+    return cleaned, sorted(set(flags)), links

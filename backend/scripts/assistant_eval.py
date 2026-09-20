@@ -257,11 +257,12 @@ def _check(result: dict, case: dict, kb_text: str) -> dict:
         {"flag": f} for f in nr.flags
     ]
     # invented status: a status word in the answer must appear somewhere in the tool data
-    blob = json.dumps(result["raw_results"]).lower()
+    # ...or in the server-written platform context (kyc_status, email_verified) or the KB
+    blob = (
+        json.dumps(result["raw_results"]) + " " + result["platform_context"] + " " + kb_text
+    ).lower()
     said = [w for w in STATUS_WORDS if re.search(rf"\b{w}\b", result["answer"].lower())]
-    checks["invented_statuses"] = (
-        all(w in blob for w in said) if result["raw_results"] else not said
-    )
+    checks["invented_statuses"] = all(w in blob for w in said)
     checks["not_safe_mode"] = result["safe_mode"] is None
     result["checks"] = checks
     result["passed"] = all(v is not False for v in checks.values())

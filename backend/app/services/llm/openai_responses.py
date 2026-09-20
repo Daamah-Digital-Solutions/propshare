@@ -231,8 +231,17 @@ class OpenAIResponsesAdapter:
                 )
             # everything else (in_progress, content_part, reasoning summaries...) is ignored
             if terminal:
-                return
-        yield Failed("STREAM_ENDED", "The provider stream ended without completing.")
+                break
+        # Close the SDK stream explicitly: leaving it to garbage collection races the
+        # underlying httpx generator ("aclose(): asynchronous generator is already running").
+        close = getattr(events, "close", None)
+        if close is not None:
+            try:
+                await close()
+            except Exception:  # noqa: BLE001 — closing is best effort
+                pass
+        if not terminal:
+            yield Failed("STREAM_ENDED", "The provider stream ended without completing.")
 
 
 def _item_dict(item: Any) -> dict[str, Any]:

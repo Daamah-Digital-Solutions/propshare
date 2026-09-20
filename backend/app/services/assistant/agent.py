@@ -518,13 +518,19 @@ async def run_turn(
         yield _event("delta", text=final_text)
         yield _event("card", **cards[-1])
     else:
-        cleaned, out_flags = guard.postprocess_output(final_text)
+        cleaned, out_flags, links = guard.postprocess_output(final_text)
         flags.update(out_flags)
         if cleaned != final_text:
             # the raw text was already streamed: withdraw it and send the cleaned version
             yield _event("reset")
             yield _event("delta", text=cleaned)
         final_text = cleaned
+        # routes the model wrote by hand become real link cards (allow-listed paths only)
+        for link in links:
+            if not any(c.get("kind") == "link" and c.get("path") == link["path"] for c in cards):
+                card = {"kind": "link", "path": link["path"], "label": link["label"]}
+                cards.append(card)
+                yield _event("card", **card)
 
     latency_ms = int((time.monotonic() - started_at) * 1000)
     assistant_row = AssistantMessage(

@@ -381,7 +381,7 @@ def test_output_postprocessing_removes_foreign_links_and_flags_wording(monkeypat
     monkeypatch.setattr(
         get_settings(), "app_base_url", "https://capimaxpropshare.com", raising=False
     )
-    text, flags = guard.postprocess_output(
+    text, flags, links = guard.postprocess_output(
         "See https://capimaxpropshare.com/wallet and https://evil.example/phish . Your tokens are on the blockchain with guaranteed returns."
     )
     assert (
@@ -392,6 +392,16 @@ def test_output_postprocessing_removes_foreign_links_and_flags_wording(monkeypat
     assert "external_link_removed" in flags and any(f.startswith("forbidden_term") for f in flags)
     assert len([f for f in flags if f.startswith("forbidden_term")]) == 3
     assert guard.postprocess_output("Your balance is $10.")[1] == []
+    # hand-typed relative links: allow-listed routes become link cards, unknown ones are
+    # reduced to their label; a bare allowed path is picked up too
+    text, flags, links = guard.postprocess_output(
+        "Go to [Start verification](/account?tab=verification) or [admin](/admin/users). "
+        "Property: [Eval Tower](/property/eval-tower). Also see /wallet?tab=deposit and /nope."
+    )
+    assert "(/admin/users)" not in text and "admin" in text and "unknown_route_removed" in flags
+    assert "Start verification" in text and "](/account" not in text
+    assert [link["route_id"] for link in links] == ["kyc", "property", "deposit"]
+    assert links[1]["path"] == "/property/eval-tower"
 
 
 def test_sanitize_result_caps_size_and_strips_control_chars():

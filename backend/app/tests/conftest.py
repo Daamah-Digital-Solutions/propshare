@@ -170,9 +170,17 @@ def _clear_provider_secrets(monkeypatch):
         "sumsub_webhook_secret",
         "openai_api_key",
         "assistant_hmac_secret",
+        "assistant_encryption_keys_file",
+        "assistant_encryption_active_key",
+        "support_inbox_email",
     ):
         monkeypatch.setattr(settings, attr, "", raising=False)
+    monkeypatch.setattr(settings, "assistant_enabled", False, raising=False)
+    from app.core import crypto
+
+    crypto.reset_cache()
     yield
+    crypto.reset_cache()
 
 
 @pytest_asyncio.fixture
