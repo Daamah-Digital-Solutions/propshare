@@ -14,6 +14,7 @@ Principles:
 
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import hashlib
 import hmac
@@ -117,6 +118,13 @@ def safety_identifier(subject: str) -> str:
 # --------------------------------------------------------------------------- #
 PROPOSAL_TTL = dt.timedelta(minutes=15)
 
+# Side channel from ``issue_confirmation`` to the agent loop: the raw token must reach the
+# user's confirmation card but must NEVER be part of a tool result (which the model reads).
+# The agent installs a fresh list before running a tool and drains it afterwards.
+issued_tokens: contextvars.ContextVar[list[dict[str, Any]] | None] = contextvars.ContextVar(
+    "assistant_issued_tokens", default=None
+)
+
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -148,6 +156,15 @@ async def issue_confirmation(
     )
     session.add(proposal)
     await session.flush()
+    sink = issued_tokens.get()
+    if sink is not None:
+        sink.append(
+            {
+                "proposal_id": str(proposal.id),
+                "token": token,
+                "expires_at": proposal.expires_at.isoformat(),
+            }
+        )
     return proposal, token
 
 
