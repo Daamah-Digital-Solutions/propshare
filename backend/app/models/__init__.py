@@ -525,6 +525,7 @@ from app.models.developer_updates import (  # noqa: E402
     DeveloperUpdateRecipient,
 )
 from app.models.distributions import Distribution, DistributionItem  # noqa: E402
+from app.models.document_text import DocumentText  # noqa: E402
 from app.models.estate import (  # noqa: E402
     EstateBeneficiary,
     EstateEvent,
@@ -567,6 +568,7 @@ __all__ = [
     "SecondaryListing",
     "Notification",
     "Document",
+    "DocumentText",
     "FamilyGroup",
     "FamilyMember",
     "FamilyMemberBankAccount",

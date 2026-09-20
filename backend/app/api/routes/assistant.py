@@ -425,6 +425,14 @@ async def nudges(_caller_: AdminOrCronDep, session: SessionDep) -> dict[str, int
     return await nudge_service.run_all(session)
 
 
+@router.post("/maintenance/index-documents")
+async def index_documents(_caller_: AdminOrCronDep, session: SessionDep) -> dict[str, int]:
+    """Hourly cron: extract text from property documents that are not indexed yet."""
+    from app.services import document_index_service
+
+    return await document_index_service.index_pending(session)
+
+
 @router.post("/maintenance/ticket-sla")
 async def ticket_sla(_caller_: AdminOrCronDep, session: SessionDep) -> dict:
     """Hourly cron: escalate tickets past their first-response SLA (once each)."""

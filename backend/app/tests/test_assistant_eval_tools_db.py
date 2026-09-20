@@ -37,7 +37,10 @@ async def test_seed_kb_is_idempotent_and_versions_on_change(client, db, asession
     seed = _load("seed_kb")
     assert await seed._seed(None) == 0
     n = db("SELECT count(*) FROM kb_articles")[0][0]
-    assert n == len(seed.ARTICLES) and n >= 12
+    assert n == len(seed.ARTICLES) + len(seed.ARTICLES_AR) and n >= 24
+    # every English article has an Arabic twin with the same slug
+    assert [a[0] for a in seed.ARTICLES] == [a[0] for a in seed.ARTICLES_AR]
+    assert db("SELECT count(*) FROM kb_articles WHERE lang='ar'")[0][0] == len(seed.ARTICLES_AR)
     assert db("SELECT DISTINCT status FROM kb_articles") == [("draft",)]
     assert await seed._seed(None) == 0
     assert db("SELECT count(*) FROM kb_articles")[0][0] == n  # nothing duplicated
@@ -58,9 +61,12 @@ async def test_seed_kb_is_idempotent_and_versions_on_change(client, db, asession
     assert await seed._seed("u@x.io") == 0
     approved = db("SELECT slug, version FROM kb_articles WHERE status='approved' ORDER BY slug")
     assert len(approved) == n and (slug, 2) in [tuple(r) for r in approved]
-    assert db("SELECT status FROM kb_articles WHERE slug=:s AND version=1", s=slug)[0][0] == "draft"
+    assert (
+        db("SELECT status FROM kb_articles WHERE slug=:s AND lang='en' AND version=1", s=slug)[0][0]
+        == "draft"
+    )
     # every article is wording only: no live figure slipped in (percent signs / currency)
-    for _slug, _title, _cat, _prio, text in seed.ARTICLES:
+    for _slug, _title, _cat, _prio, text in seed.ARTICLES + seed.ARTICLES_AR:
         assert "%" not in text and "$" not in text, _slug
 
 

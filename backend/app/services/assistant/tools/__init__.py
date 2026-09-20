@@ -6,6 +6,7 @@ from __future__ import annotations
 from app.services.assistant.tools import (  # noqa: F401
     account,
     actions,
+    documents,
     platform,
     roles,
     staff,

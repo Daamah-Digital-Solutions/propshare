@@ -36,6 +36,8 @@ dependencies = [
     # AI assistant (plan Phase 1): provider SDK + AES-GCM for conversation encryption.
     "openai>=1.40",
     "cryptography>=42.0",
+    # Text extraction from uploaded property documents (assistant document search).
+    "pypdf>=5.0",
 ]
 
 [project.optional-dependencies]
