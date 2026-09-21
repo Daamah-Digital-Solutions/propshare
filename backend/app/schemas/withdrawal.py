@@ -39,6 +39,18 @@ class WithdrawalListOut(BaseModel):
     total: int
 
 
+class PayoutMethodMode(BaseModel):
+    mode: str  # manual (an admin settles it) | auto (the provider settles it)
+    connect_required: bool  # the destination is a Stripe-held account, not a saved IBAN
+    requested_auto: bool  # listed in payout_auto_methods (may still be manual if unconfigured)
+    provider_configured: bool
+
+
+class PayoutConfigOut(BaseModel):
+    methods: dict[str, PayoutMethodMode]
+    auto_approve_limit: str
+
+
 class ConnectStatusOut(BaseModel):
     status: str  # none | pending | verified | restricted
     payouts_enabled: bool

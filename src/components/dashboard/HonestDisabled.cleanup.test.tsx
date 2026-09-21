@@ -31,6 +31,16 @@ vi.mock("@/lib/api", () => ({
   bankAccountsApi: { list: vi.fn().mockResolvedValue([]), add: vi.fn(), remove: vi.fn(), setDefault: vi.fn() },
   cryptoWalletsApi: { list: vi.fn().mockResolvedValue([]), add: vi.fn(), remove: vi.fn(), setDefault: vi.fn() },
   bankDepositApi: { platformAccounts: vi.fn().mockResolvedValue([]), submitClaim: vi.fn() },
+  // withdrawals read their destination flow from the server (manual by default here)
+  payoutConfigApi: {
+    get: vi.fn().mockResolvedValue({
+      auto_approve_limit: "5000",
+      methods: {
+        bank: { mode: "manual", connect_required: false, requested_auto: false, provider_configured: false },
+        crypto: { mode: "manual", connect_required: false, requested_auto: false, provider_configured: false },
+      },
+    }),
+  },
   holdingsApi: { mine: (...a: unknown[]) => holdingsMine(...a) },
   propertyApi: { list: (...a: unknown[]) => propsList(...a) },
   returnsApi: { getMine: (...a: unknown[]) => returnsGetMine(...a) },

@@ -44,6 +44,8 @@ import {
   bankAccountsApi,
   cryptoWalletsApi,
   bankDepositApi,
+  payoutConfigApi,
+  connectApi,
   ApiError,
   type TransactionItem,
   type WithdrawMethod,
@@ -97,6 +99,20 @@ export const InvestorWallet = () => {
     queryKey: ["deposit-methods"],
     queryFn: walletApi.depositMethods,
   });
+  // How withdrawals settle right now. Manual = an admin pays by hand against a saved
+  // account; auto = the provider pays out (bank -> Stripe Connect, no saved IBAN used).
+  const { data: payoutConfig } = useQuery({
+    queryKey: ["payout-config"],
+    queryFn: payoutConfigApi.get,
+  });
+  const bankIsAuto = payoutConfig?.methods?.bank?.connect_required ?? false;
+  const { data: connectStatus } = useQuery({
+    queryKey: ["connect-status"],
+    queryFn: connectApi.status,
+    enabled: bankIsAuto, // only meaningful once bank payouts run through Stripe
+  });
+  const [linkingBank, setLinkingBank] = useState(false);
+  const bankLinked = Boolean(connectStatus?.payouts_enabled);
 
   const methods = savedMethods ?? [];
   const banks = bankAccounts ?? [];
@@ -260,6 +276,20 @@ export const InvestorWallet = () => {
     }
   };
 
+  // ---- Stripe bank linking (automatic payouts only) ----
+  const handleLinkBank = async () => {
+    setLinkingBank(true);
+    try {
+      const { onboarding_url } = await connectApi.onboard();
+      window.location.href = onboarding_url; // Stripe-hosted; it collects the bank details
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError ? error.message : "Could not start bank linking. Try again.",
+      );
+      setLinkingBank(false);
+    }
+  };
+
   // ---- Withdraw ----
   const handleWithdraw = async () => {
     const amt = Number(withdrawAmount);
@@ -271,9 +301,19 @@ export const InvestorWallet = () => {
       toast.error("Amount exceeds your available balance");
       return;
     }
-    const payoutId = withdrawMethod === "bank" ? selectedBankId || banks.find((b) => b.is_default)?.id
-                                              : selectedWalletId || wallets.find((w) => w.is_default)?.id;
-    if (!payoutId) {
+    // Automatic bank payouts go to the user's Stripe-linked account: there is no saved
+    // destination to pick, only the completed onboarding.
+    const autoBank = withdrawMethod === "bank" && bankIsAuto;
+    if (autoBank && !bankLinked) {
+      toast.error("Link your bank account first to withdraw automatically.");
+      return;
+    }
+    const payoutId = autoBank
+      ? undefined
+      : withdrawMethod === "bank"
+        ? selectedBankId || banks.find((b) => b.is_default)?.id
+        : selectedWalletId || wallets.find((w) => w.is_default)?.id;
+    if (!autoBank && !payoutId) {
       toast.error(
         withdrawMethod === "bank" ? "Add a bank account first" : "Add a crypto wallet first",
       );
@@ -281,13 +321,20 @@ export const InvestorWallet = () => {
     }
     setWithdrawing(true);
     try {
-      await withdrawApi.create(
-        { amount: amt, method: withdrawMethod, payout_method_id: payoutId },
+      const created = await withdrawApi.create(
+        { amount: amt, method: withdrawMethod, ...(payoutId ? { payout_method_id: payoutId } : {}) },
         crypto.randomUUID(),
       );
-      toast.success("Withdrawal requested", {
-        description: "Your request has been sent to our team and will be processed shortly.",
-      });
+      // "approved" = sent to the provider straight away; anything else waits for a human.
+      toast.success(
+        created.status === "approved" ? "Withdrawal sent" : "Withdrawal requested",
+        {
+          description:
+            created.status === "approved"
+              ? "It is on its way to your linked bank. Banks usually post it within 1-2 business days."
+              : "Your request has been sent to our team and will be processed shortly.",
+        },
+      );
       setWithdrawAmount("");
       invalidateWallet();
     } catch (error) {
@@ -295,6 +342,8 @@ export const InvestorWallet = () => {
       const map: Record<string, string> = {
         KYC_REQUIRED: "Complete identity verification before withdrawing.",
         NO_PAYOUT_METHOD: "Add a payout destination first.",
+        CONNECT_NOT_READY: "Finish linking your bank with Stripe before withdrawing.",
+        PAYOUTS_NOT_CONFIGURED: "Automatic payouts are not available right now.",
         INSUFFICIENT_FUNDS: "Amount exceeds your available balance.",
       };
       toast.error(map[code] ?? (error instanceof ApiError ? error.message : "Withdrawal failed."));
@@ -509,7 +558,34 @@ export const InvestorWallet = () => {
                 </Select>
               </div>
 
-              {withdrawMethod === "bank" &&
+              {withdrawMethod === "bank" && bankIsAuto && (
+                <div className="space-y-2 rounded-lg bg-muted/50 p-3" data-testid="connect-bank">
+                  {bankLinked ? (
+                    <p className="text-sm">
+                      Paid automatically to your linked bank account
+                      {connectStatus?.stripe_account_id ? " (secured by Stripe)" : ""}. No waiting
+                      for our team.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-sm text-muted-foreground">
+                        Bank withdrawals are paid out automatically. Link your bank account once —
+                        your details are held by Stripe, not by us.
+                      </p>
+                      <Button
+                        variant="outline"
+                        className="w-full"
+                        onClick={handleLinkBank}
+                        disabled={linkingBank}
+                      >
+                        {linkingBank ? "Opening Stripe…" : "Link bank account"}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {withdrawMethod === "bank" && !bankIsAuto &&
                 (banks.length === 0 ? (
                   <p className="text-sm text-muted-foreground rounded-lg bg-muted/50 p-3">
                     You have no saved bank account. Add one in <b>Payment Methods</b> below first.
@@ -565,7 +641,9 @@ export const InvestorWallet = () => {
                 {withdrawing ? "Submitting…" : `Withdraw $${withdrawAmount || "0"}`}
               </Button>
               <p className="text-xs text-muted-foreground text-center">
-                Withdrawals are reviewed and paid out by our team, usually within 1–2 business days.
+                {withdrawMethod === "bank" && bankIsAuto
+                  ? `Sent automatically up to $${Number(payoutConfig?.auto_approve_limit ?? 0).toLocaleString()} per request; larger amounts are reviewed by our team first.`
+                  : "Withdrawals are reviewed and paid out by our team, usually within 1–2 business days."}
               </p>
             </div>
           </DialogContent>

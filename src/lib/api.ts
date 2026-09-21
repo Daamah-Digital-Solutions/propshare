@@ -1184,6 +1184,26 @@ export const bankDepositApi = {
   },
 };
 
+/** How each payout method settles right now (server-driven; do not guess in the UI). */
+export interface PayoutMethodMode {
+  mode: "manual" | "auto";
+  /** Automatic bank payouts pay a Stripe-held account, not a saved IBAN. */
+  connect_required: boolean;
+  requested_auto: boolean;
+  provider_configured: boolean;
+}
+
+export interface PayoutConfig {
+  methods: Record<string, PayoutMethodMode>;
+  auto_approve_limit: string;
+}
+
+export const payoutConfigApi = {
+  get(): Promise<PayoutConfig> {
+    return apiRequest<PayoutConfig>("/api/v1/wallet/payout-config");
+  },
+};
+
 export const connectApi = {
   /** Stripe Connect onboarding status for bank withdrawals. */
   status(): Promise<ConnectStatus> {

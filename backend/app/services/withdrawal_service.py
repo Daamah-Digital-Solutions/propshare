@@ -13,12 +13,21 @@ Safeguards (there is no auto-reversing webhook for a wrong send):
 
 Threshold: ``withdrawal_auto_approve_limit`` (platform_settings, default $5000). ≤ limit
 auto-approves; above it goes to the admin review queue.
+
+**Manual vs automatic, per method** (``payout_auto_methods``, default empty = all manual):
+a method listed there is settled by its provider without an admin (bank → Stripe Connect,
+crypto → NOWPayments); every other method follows the legacy global ``manual_payouts_enabled``
+switch. So ``payout_auto_methods="bank"`` with ``manual_payouts_enabled=true`` gives automatic
+bank payouts while crypto still waits for an admin — the shape the owner asked for.
+An automatic, auto-approved withdrawal is submitted to the provider immediately after the
+request commits (``execute_now``); the executor cron stays as the retry net.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import decimal
+import logging
 import uuid
 
 from sqlalchemy import select
@@ -36,6 +45,8 @@ from app.services import (
     wallet_service,
 )
 from app.services.integrations.payments import nowpayments_gateway, stripe_gateway
+
+logger = logging.getLogger(__name__)
 
 _CENTS = decimal.Decimal("0.01")
 _PROVIDER_FOR_METHOD = {"bank": "stripe", "crypto": "nowpayments"}
@@ -59,6 +70,21 @@ async def _manual_enabled(session: AsyncSession) -> bool:
     Connect / NOWPayments payout. Held on request, then admin mark-paid / reject."""
     raw = await settings_service.get_setting(session, "manual_payouts_enabled")
     return (raw or "true").strip().lower() in ("true", "1", "yes", "on")
+
+
+async def auto_methods(session: AsyncSession) -> set[str]:
+    """Methods that settle through their provider instead of an admin."""
+    raw = await settings_service.get_setting(session, "payout_auto_methods")
+    return {m.strip().lower() for m in (raw or "").split(",") if m.strip()}
+
+
+async def is_manual_for(session: AsyncSession, method: str) -> bool:
+    """A method is automatic when it is listed in ``payout_auto_methods`` **and** its provider
+    is configured; otherwise the legacy global switch decides. A listed-but-unconfigured
+    provider falls back to manual instead of 503-ing the customer."""
+    if method in await auto_methods(session) and _provider_configured(method):
+        return False
+    return await _manual_enabled(session)
 
 
 async def _auto_limit(session: AsyncSession) -> decimal.Decimal:
@@ -93,7 +119,7 @@ async def request_withdrawal(
     if existing is not None:
         return _result(existing)
 
-    manual = await _manual_enabled(session)
+    manual = await is_manual_for(session, method)
     provider = "manual" if manual else _PROVIDER_FOR_METHOD[method]
 
     if not manual and not _provider_configured(method):
@@ -141,6 +167,12 @@ async def request_withdrawal(
         actor_id=user_id,
         after={"amount": str(amount_dec), "method": method, "status": status, "provider": provider},
     )
+    if status == "approved":
+        # Make the row + its hold durable NOW. The instant submitter runs on its own session
+        # (and so does the cron): until this commits, they would see nothing — and the FastAPI
+        # dependency does not commit until after background tasks have run. Everything written
+        # in this call still commits as one unit; nothing after this point can fail money.
+        await session.commit()
     if status == "pending_review":
         await notification_service.notify(
             session,
@@ -233,21 +265,31 @@ async def _resolve_manual_destination(
 
 
 # --- executor (provider call, AFTER commit of the request) ----------------- #
-async def execute_approved(session: AsyncSession, *, limit: int = 50) -> int:
-    """Submit approved withdrawals to the provider, idempotently. Cron/admin-triggered.
-    Each provider call uses idempotency key = withdrawal.id (no double-send on retry)."""
-    rows = (
-        (
-            await session.execute(
-                select(Withdrawal)
-                .where(Withdrawal.status == "approved")
-                .with_for_update(skip_locked=True)
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+def _is_provider_balance_shortfall(exc: AppError) -> bool:
+    """Stripe transfers pay out of the PLATFORM's Stripe balance. Deposits that arrived by
+    bank transfer or crypto are not in it, so a perfectly valid withdrawal can be refused
+    with ``balance_insufficient``. That is our operational problem, not the customer's:
+    the request goes back to the admin queue with its hold intact instead of failing."""
+    body = str((exc.details or {}).get("body", "")).lower()
+    return "balance_insufficient" in body or "insufficient funds" in body
+
+
+async def execute_approved(
+    session: AsyncSession, *, limit: int = 50, withdrawal_id: uuid.UUID | None = None
+) -> int:
+    """Submit approved withdrawals to the provider, idempotently. Cron/admin-triggered, or
+    for one row right after its request (``withdrawal_id``). Each provider call uses
+    idempotency key = withdrawal.id (no double-send on retry), and the ``approved`` filter
+    under FOR UPDATE means the cron and the instant path can never submit the same row twice."""
+    stmt = (
+        select(Withdrawal)
+        .where(Withdrawal.status == "approved")
+        .with_for_update(skip_locked=True)
+        .limit(limit)
     )
+    if withdrawal_id is not None:
+        stmt = stmt.where(Withdrawal.id == withdrawal_id)
+    rows = (await session.execute(stmt)).scalars().all()
     processed = 0
     for wd in rows:
         dest = wd.destination if isinstance(wd.destination, dict) else {}
@@ -279,6 +321,21 @@ async def execute_approved(session: AsyncSession, *, limit: int = 50) -> int:
                 after={"provider_payout_id": wd.provider_payout_id},
             )
         except AppError as exc:
+            if _is_provider_balance_shortfall(exc):
+                # Keep the hold; an admin settles it by hand (or tops the provider up and
+                # re-approves). The customer's money is never released into limbo.
+                wd.status = "pending_review"
+                wd.failure_reason = "Awaiting manual settlement (provider balance)."
+                wd.updated_at = _utcnow()
+                await write_audit(
+                    session,
+                    action="withdrawal.submit_deferred",
+                    entity_type="withdrawal",
+                    entity_id=str(wd.id),
+                    after={"reason": "provider balance shortfall"},
+                )
+                processed += 1
+                continue
             # Submission failed -> return funds, mark failed (idempotent compensating credit).
             wd.status = "failed"
             wd.failure_reason = exc.message
@@ -298,6 +355,40 @@ async def execute_approved(session: AsyncSession, *, limit: int = 50) -> int:
             )
         processed += 1
     return processed
+
+
+async def execute_now(withdrawal_id: uuid.UUID) -> None:
+    """Submit one just-approved withdrawal without waiting for the cron.
+
+    Runs as a background task **after** the request transaction committed, on its own
+    session: the row (and its hold) is already durable, so a crash here leaves an
+    ``approved`` row that the executor cron picks up on its next pass. Never raises into
+    the caller — a provider outage must not turn a successful request into a 500."""
+    from app.core.db import session_scope  # local: avoids a circular import at module load
+
+    try:
+        async with session_scope() as session:
+            await execute_approved(session, limit=1, withdrawal_id=withdrawal_id)
+    except Exception:  # noqa: BLE001 - background task: log-and-leave-for-the-cron
+        logger.exception("instant payout submit failed; cron will retry", extra={
+            "withdrawal_id": str(withdrawal_id)
+        })
+
+
+async def payout_config(session: AsyncSession) -> dict:
+    """What the wallet UI needs to render the right destination flow per method."""
+    auto = await auto_methods(session)
+    modes = {}
+    for method in _PROVIDER_FOR_METHOD:
+        manual = await is_manual_for(session, method)
+        modes[method] = {
+            "mode": "manual" if manual else "auto",
+            # auto bank payouts go to a Stripe-held account, not to a saved IBAN
+            "connect_required": method == "bank" and not manual,
+            "requested_auto": method in auto,
+            "provider_configured": _provider_configured(method),
+        }
+    return {"methods": modes, "auto_approve_limit": str(await _auto_limit(session))}
 
 
 # --- admin review ---------------------------------------------------------- #

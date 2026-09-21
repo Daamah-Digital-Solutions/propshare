@@ -337,8 +337,10 @@ async def test_execute_then_webhook_completes_crypto(client, db, monkeypatch):
     uid = _uid(db, "done@w.com")
     _fund(db, uid, 100)
     wid = (await _withdraw(client, t, 100)).json()["withdrawal_id"]
-    assert (await _execute(client, admin)).json()["submitted"] >= 1
+    # the request itself submits an auto-approved payout; the cron is only the retry net,
+    # so it now finds nothing left to do
     assert db("SELECT status FROM withdrawals WHERE id=:i", i=wid)[0][0] == "processing"
+    assert (await _execute(client, admin)).json()["submitted"] == 0
     ppid = db("SELECT provider_payout_id FROM withdrawals WHERE id=:i", i=wid)[0][0]
 
     r = await _signed_nowp(client, {"id": ppid, "unique_external_id": wid, "status": "finished"})
@@ -377,15 +379,15 @@ async def test_execute_submit_failure_releases(client, db, monkeypatch):
     t = await _verified(client, db, "subfail@w.com")
     uid = _uid(db, "subfail@w.com")
     _fund(db, uid, 100)
-    wid = (await _withdraw(client, t, 100)).json()["withdrawal_id"]
-
     from app.core.errors import AppError
 
     async def boom(**kw):
         raise AppError("PAYOUT_PROVIDER_ERROR", "provider down", status_code=502)
 
+    # provider down BEFORE the request, so the instant submit is the one that fails
     monkeypatch.setattr(nowp, "create_payout", boom)
-    await _execute(client, admin)
+    wid = (await _withdraw(client, t, 100)).json()["withdrawal_id"]
+    await _execute(client, admin)  # nothing left for the cron
     assert db("SELECT status FROM withdrawals WHERE id=:i", i=wid)[0][0] == "failed"
     assert _bal(db, uid) == 100  # released
     _assert_balance_invariant(db, uid)

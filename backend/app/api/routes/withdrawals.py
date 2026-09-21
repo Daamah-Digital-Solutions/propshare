@@ -1,5 +1,6 @@
 """Withdrawal + Stripe Connect routes (Phase 7).
 
+- GET  /wallet/payout-config     how each method settles right now (manual vs automatic).
 - POST /wallet/withdrawals       request a payout (KYC-gated, Idempotency-Key).
 - GET  /wallet/withdrawals       the caller's withdrawals.
 - POST /wallet/connect/onboard   start/continue Stripe Connect bank onboarding.
@@ -11,7 +12,7 @@ settlement is webhook-only (see routes/payments.py). Honest 503 per rail.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from sqlalchemy import select
 
 from app.api.deps import KycVerifiedDep, PrincipalDep, SessionDep
@@ -21,6 +22,8 @@ from app.models.identity import User
 from app.schemas.withdrawal import (
     ConnectOnboardOut,
     ConnectStatusOut,
+    PayoutConfigOut,
+    PayoutMethodMode,
     WithdrawalCreateIn,
     WithdrawalCreateOut,
     WithdrawalListOut,
@@ -31,9 +34,24 @@ from app.services import connect_service, withdrawal_service
 router = APIRouter(prefix="/api/v1/wallet", tags=["withdrawals"])
 
 
+@router.get("/payout-config", response_model=PayoutConfigOut)
+async def payout_config(session: SessionDep, principal: PrincipalDep):
+    """Which destination flow each method uses right now (manual saved account vs an
+    automatic provider payout). The wallet renders from this instead of guessing."""
+    cfg = await withdrawal_service.payout_config(session)
+    return PayoutConfigOut(
+        methods={k: PayoutMethodMode(**v) for k, v in cfg["methods"].items()},
+        auto_approve_limit=cfg["auto_approve_limit"],
+    )
+
+
 @router.post("/withdrawals", response_model=WithdrawalCreateOut)
 async def create_withdrawal(
-    body: WithdrawalCreateIn, request: Request, session: SessionDep, principal: KycVerifiedDep
+    body: WithdrawalCreateIn,
+    request: Request,
+    background: BackgroundTasks,
+    session: SessionDep,
+    principal: KycVerifiedDep,
 ):
     idempotency_key = request.headers.get("Idempotency-Key")
     if not idempotency_key:
@@ -53,6 +71,10 @@ async def create_withdrawal(
         user_email=str(email or ""),
         payout_method_id=body.payout_method_id,
     )
+    # Automatic rail, under the auto-approve limit: submit to the provider as soon as this
+    # request's transaction is committed, so the customer does not wait for the cron pass.
+    if result["status"] == "approved":
+        background.add_task(withdrawal_service.execute_now, result["withdrawal_id"])
     return WithdrawalCreateOut(**result)
 
 

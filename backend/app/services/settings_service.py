@@ -28,6 +28,7 @@ from app.models.investments import PlatformSetting
 #   pct_open -> numeric >= 0 OR empty string (price bounds; "" == open/no bound)
 #   int      -> integer >= 0
 #   bool_locked_false -> only "false" (hard-locked; cannot be enabled)
+#   csv_methods -> empty, or a comma-separated subset of the payout methods (bank, crypto)
 _SETTING_SPECS: dict[str, str] = {
     "platform_fee_pct": "pct",
     "management_fee_pct": "pct",
@@ -49,6 +50,7 @@ _SETTING_SPECS: dict[str, str] = {
     "withdrawal_auto_approve_limit": "int",
     "lp_passive_enabled": "bool_locked_false",
     "manual_payouts_enabled": "bool",
+    "payout_auto_methods": "csv_methods",
     # AI assistant (plan Phase 1)
     "assistant_enabled": "bool",
     "assistant_visitor_enabled": "bool",
@@ -92,6 +94,13 @@ def validate_setting(key: str, value: str) -> None:
         allowed = spec[5:].split(",")
         if raw not in allowed:
             _bad(f"must be one of: {', '.join(allowed)}.")
+        return
+    if spec == "csv_methods":
+        allowed = {"bank", "crypto"}
+        chosen = [m.strip().lower() for m in raw.split(",") if m.strip()]
+        unknown = [m for m in chosen if m not in allowed]
+        if unknown:
+            _bad(f"unknown payout method(s): {', '.join(unknown)}. Use bank and/or crypto.")
         return
     if spec == "json_object":
         try:
@@ -161,6 +170,10 @@ DEFAULTS: dict[str, str] = {
     # Manual, admin-settled withdrawals (Task 3). When true a withdrawal holds funds and waits
     # in the admin queue for mark-paid/reject (no Stripe Connect / NOWPayments payout call).
     "manual_payouts_enabled": "true",
+    # Methods that settle automatically through their provider instead of the admin queue
+    # ("bank" = Stripe Connect, "crypto" = NOWPayments). Empty = everything manual. A method
+    # listed here whose provider is unconfigured stays manual (no customer-facing 503).
+    "payout_auto_methods": "",
     # --- AI assistant (plan Phase 1). Everything OFF / empty until the owner decides:
     # the model is chosen by the release eval, retention and visitor mode are client
     # decisions, and the rollout starts with admins only. ---
