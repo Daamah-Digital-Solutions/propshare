@@ -13,6 +13,7 @@ What must hold:
 
 from __future__ import annotations
 
+import decimal
 import uuid
 
 import pytest
@@ -293,3 +294,177 @@ async def test_other_provider_errors_still_return_the_money(client, db, monkeypa
     assert _row(db, wid)[0] == "failed"
     bal, pend = db("SELECT balance, pending_balance FROM wallets WHERE user_id=:u", u=uid)[0]
     assert (float(bal), float(pend)) == (500.0, 0.0)  # released back
+
+
+# --- Instant Payouts (money in minutes, US debit cards) ---------------------- #
+def _instant_on(db, *, fee_pct="1.0", max_amount="9999"):
+    _setting(db, "manual_payouts_enabled", "true")
+    _setting(db, "payout_auto_methods", "bank")
+    _setting(db, "payout_instant_enabled", "true")
+    _setting(db, "payout_instant_fee_pct", fee_pct)
+    _setting(db, "payout_instant_max", max_amount)
+
+
+def _instant_card(monkeypatch, *, eligible=True, available="10000"):
+    """A connected account with (or without) a debit card Stripe will push to instantly."""
+    calls: dict = {}
+
+    async def fake_destination(account_id):
+        return "card_x" if eligible else None
+
+    async def fake_available(account_id, currency):
+        import decimal as _d
+
+        return _d.Decimal(available)
+
+    async def fake_instant(**kw):
+        calls.update(kw)
+        return PayoutResult(provider_payout_id="po_instant", status="processing")
+
+    monkeypatch.setattr(stripe, "instant_destination", fake_destination)
+    monkeypatch.setattr(stripe, "instant_available", fake_available)
+    monkeypatch.setattr(stripe, "create_instant_payout", fake_instant)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_instant_deducts_fee_and_pushes_to_the_card(client, db, monkeypatch):
+    _instant_on(db)
+    tok = await _verified(client, db, "fast@w.com")
+    uid = _uid(db, "fast@w.com")
+    _fund(db, uid, 1000)
+    _stripe_ready(monkeypatch, db, uid)
+    calls = _instant_card(monkeypatch)
+
+    r = await _withdraw(client, tok, 200, "bank", speed="instant")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["speed"], body["fee"], body["net_amount"]) == ("instant", "2.00", "198.00")
+
+    # the transfer and the instant payout both carry the NET amount
+    assert calls["amount"] == decimal.Decimal("198.00")
+    assert calls["destination"] == "card_x"
+    speed, fee = db("SELECT speed, fee FROM withdrawals WHERE id=:i", i=body["withdrawal_id"])[0]
+    assert (speed, float(fee)) == ("instant", 2.0)
+    # the wallet was debited the full amount once; the fee is ours, not a second ledger row
+    bal, pend = db("SELECT balance, pending_balance FROM wallets WHERE user_id=:u", u=uid)[0]
+    assert (float(bal), float(pend)) == (800.0, 200.0)
+    assert float(db("SELECT SUM(amount) FROM transactions WHERE user_id=:u", u=uid)[0][0]) == 800.0
+
+
+@pytest.mark.asyncio
+async def test_instant_leg_failure_downgrades_instead_of_losing_the_money(client, db, monkeypatch):
+    """The transfer already made the money the investor's, so a card problem must only cost
+    them the speed."""
+    _instant_on(db)
+    tok = await _verified(client, db, "down@w.com")
+    uid = _uid(db, "down@w.com")
+    _fund(db, uid, 1000)
+    _stripe_ready(monkeypatch, db, uid)
+    _instant_card(monkeypatch)  # eligible at request time
+
+    seen = {"n": 0}
+
+    async def gone_after_first_check(account_id):
+        # eligible when the request validates it, gone by the time we push
+        seen["n"] += 1
+        return "card_x" if seen["n"] == 1 else None
+
+    monkeypatch.setattr(stripe, "instant_destination", gone_after_first_check)
+
+    r = await _withdraw(client, tok, 200, "bank", speed="instant")
+    assert r.status_code == 200, r.text
+    wid = r.json()["withdrawal_id"]
+    status, speed, reason = db(
+        "SELECT status, speed, failure_reason FROM withdrawals WHERE id=:i", i=wid
+    )[0]
+    assert status == "processing"  # still on its way, standard schedule
+    assert speed == "standard"
+    assert "standard schedule" in reason
+    bal, pend = db("SELECT balance, pending_balance FROM wallets WHERE user_id=:u", u=uid)[0]
+    assert (float(bal), float(pend)) == (800.0, 200.0)  # nothing returned, nothing lost
+
+
+@pytest.mark.asyncio
+async def test_instant_refused_without_an_eligible_card(client, db, monkeypatch):
+    _instant_on(db)
+    tok = await _verified(client, db, "nocard@w.com")
+    uid = _uid(db, "nocard@w.com")
+    _fund(db, uid, 1000)
+    _stripe_ready(monkeypatch, db, uid)
+    _instant_card(monkeypatch, eligible=False)
+
+    r = await _withdraw(client, tok, 200, "bank", speed="instant")
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "INSTANT_NOT_AVAILABLE"
+    assert r.json()["error"]["details"]["reason"] == "NO_ELIGIBLE_CARD"
+    # refused BEFORE any hold
+    assert db("SELECT COUNT(*) FROM withdrawals WHERE user_id=:u", u=uid)[0][0] == 0
+    assert float(db("SELECT balance FROM wallets WHERE user_id=:u", u=uid)[0][0]) == 1000.0
+
+
+@pytest.mark.asyncio
+async def test_instant_over_stripes_per_payout_cap(client, db, monkeypatch):
+    _instant_on(db, max_amount="9999")
+    tok = await _verified(client, db, "cap@w.com")
+    uid = _uid(db, "cap@w.com")
+    _fund(db, uid, 20000)
+    _setting(db, "withdrawal_auto_approve_limit", "50000")
+    _stripe_ready(monkeypatch, db, uid)
+    _instant_card(monkeypatch)
+
+    r = await _withdraw(client, tok, 12000, "bank", speed="instant")
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "INSTANT_LIMIT_EXCEEDED"
+    # the same amount goes through fine at standard speed
+    r2 = await _withdraw(client, tok, 12000, "bank")
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["fee"] == "0.00"
+
+
+@pytest.mark.asyncio
+async def test_instant_refused_when_switched_off_or_rail_is_manual(client, db, monkeypatch):
+    _setting(db, "manual_payouts_enabled", "true")
+    _setting(db, "payout_auto_methods", "")  # bank is manual
+    _setting(db, "payout_instant_enabled", "true")
+    tok = await _verified(client, db, "off@w.com")
+    uid = _uid(db, "off@w.com")
+    _fund(db, uid, 1000)
+    db(
+        "INSERT INTO user_bank_accounts (user_id, bank_name, account_holder, iban, is_default) "
+        "VALUES (:u,'B','H','IBAN9',true)",
+        u=uid,
+    )
+    r = await _withdraw(client, tok, 100, "bank", speed="instant")
+    assert r.status_code == 409
+    assert r.json()["error"]["code"] == "INSTANT_NOT_AVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_payout_config_publishes_instant_readiness(client, db, monkeypatch):
+    _instant_on(db, fee_pct="1.5", max_amount="9999")
+    tok = await _verified(client, db, "ready@w.com")
+    uid = _uid(db, "ready@w.com")
+    _stripe_ready(monkeypatch, db, uid)
+    _instant_card(monkeypatch)
+
+    r = await client.get(
+        "/api/v1/wallet/payout-config", headers={"Authorization": f"Bearer {tok}"}
+    )
+    assert r.status_code == 200, r.text
+    inst = r.json()["instant"]
+    assert inst["available"] is True
+    assert (inst["fee_pct"], inst["max_amount"], inst["reason"]) == ("1.5", "9999", None)
+
+
+@pytest.mark.asyncio
+async def test_instant_fee_rounds_up_to_the_cent(client, db, monkeypatch):
+    """Stripe bills the platform its own percentage; our fee may never round down below it."""
+    from app.services.withdrawal_service import instant_fee_for
+
+    assert instant_fee_for(decimal.Decimal("10.01"), decimal.Decimal("1.0")) == decimal.Decimal(
+        "0.11"
+    )
+    assert instant_fee_for(decimal.Decimal("100"), decimal.Decimal("1.5")) == decimal.Decimal(
+        "1.50"
+    )

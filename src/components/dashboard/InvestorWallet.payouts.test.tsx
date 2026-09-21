@@ -55,8 +55,9 @@ vi.mock("@/components/exit/ExitButton", () => ({ ExitButton: () => <button>exit<
 
 import { InvestorWallet } from "./InvestorWallet";
 
-const mode = (bankAuto: boolean) => ({
+const mode = (bankAuto: boolean, instant = { available: false, reason: "DISABLED" }) => ({
   auto_approve_limit: "5000",
+  instant: { fee_pct: "1.0", max_amount: "9999", ...instant },
   methods: {
     bank: {
       mode: bankAuto ? "auto" : "manual",
@@ -162,5 +163,79 @@ describe("InvestorWallet — withdrawal destination flow", () => {
         expect.objectContaining({ description: expect.stringMatching(/on its way/i) }),
       ),
     );
+  });
+  it("offers instant only when the server says this account can take one", async () => {
+    api.payoutConfig.mockResolvedValue(mode(true)); // available: false
+    api.connectStatus.mockResolvedValue({
+      status: "verified",
+      payouts_enabled: true,
+      details_submitted: true,
+      stripe_account_id: "acct_1",
+    });
+    mount();
+    await openWithdraw();
+    await waitFor(() => expect(screen.getByTestId("connect-bank")).toBeInTheDocument());
+    expect(screen.queryByTestId("instant-option")).toBeNull();
+  });
+
+  it("shows the fee before confirming and sends speed=instant", async () => {
+    api.payoutConfig.mockResolvedValue(mode(true, { available: true, reason: null }));
+    api.connectStatus.mockResolvedValue({
+      status: "verified",
+      payouts_enabled: true,
+      details_submitted: true,
+      stripe_account_id: "acct_1",
+    });
+    api.withdrawCreate.mockResolvedValue({
+      withdrawal_id: "w2",
+      amount: "200.00",
+      method: "bank",
+      status: "approved",
+      speed: "instant",
+      fee: "2.00",
+      net_amount: "198.00",
+      created_at: null,
+    });
+    mount();
+    await openWithdraw();
+    await waitFor(() => expect(screen.getByTestId("instant-option")).toBeInTheDocument());
+    fireEvent.change(screen.getByPlaceholderText(/enter amount/i), { target: { value: "200" } });
+    fireEvent.click(screen.getByLabelText(/get it in minutes/i));
+    // the cost is stated before the button is pressed, not after
+    await waitFor(() =>
+      expect(screen.getByTestId("instant-breakdown")).toHaveTextContent(
+        /Fee \$2\.00 · you receive \$198\.00/,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Withdraw \$200$/i }));
+    await waitFor(() => expect(api.withdrawCreate).toHaveBeenCalled());
+    expect(api.withdrawCreate.mock.calls[0][0]).toEqual({
+      amount: 200,
+      method: "bank",
+      speed: "instant",
+    });
+    await waitFor(() =>
+      expect(toastMock.success).toHaveBeenCalledWith(
+        "Withdrawal sent",
+        expect.objectContaining({ description: expect.stringMatching(/30 minutes/) }),
+      ),
+    );
+  });
+
+  it("blocks an instant amount over the cap instead of letting the payout fail", async () => {
+    api.payoutConfig.mockResolvedValue(mode(true, { available: true, reason: null }));
+    api.connectStatus.mockResolvedValue({
+      status: "verified",
+      payouts_enabled: true,
+      details_submitted: true,
+      stripe_account_id: "acct_1",
+    });
+    mount();
+    await openWithdraw();
+    await waitFor(() => expect(screen.getByTestId("instant-option")).toBeInTheDocument());
+    fireEvent.change(screen.getByPlaceholderText(/enter amount/i), { target: { value: "12000" } });
+    fireEvent.click(screen.getByLabelText(/get it in minutes/i));
+    await waitFor(() => expect(screen.getByText(/capped at \$9,999/i)).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: /^Withdraw \$12000$/i })).toBeDisabled();
   });
 });

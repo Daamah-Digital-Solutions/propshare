@@ -22,6 +22,7 @@ from app.models.identity import User
 from app.schemas.withdrawal import (
     ConnectOnboardOut,
     ConnectStatusOut,
+    InstantReadiness,
     PayoutConfigOut,
     PayoutMethodMode,
     WithdrawalCreateIn,
@@ -42,6 +43,9 @@ async def payout_config(session: SessionDep, principal: PrincipalDep):
     return PayoutConfigOut(
         methods={k: PayoutMethodMode(**v) for k, v in cfg["methods"].items()},
         auto_approve_limit=cfg["auto_approve_limit"],
+        instant=InstantReadiness(
+            **await withdrawal_service.instant_readiness(session, principal.user_id)
+        ),
     )
 
 
@@ -70,6 +74,7 @@ async def create_withdrawal(
         idempotency_key=idempotency_key,
         user_email=str(email or ""),
         payout_method_id=body.payout_method_id,
+        speed=body.speed,
     )
     # Automatic rail, under the auto-approve limit: submit to the provider as soon as this
     # request's transaction is committed, so the customer does not wait for the cron pass.

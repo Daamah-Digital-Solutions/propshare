@@ -113,6 +113,16 @@ export const InvestorWallet = () => {
   });
   const [linkingBank, setLinkingBank] = useState(false);
   const bankLinked = Boolean(connectStatus?.payouts_enabled);
+  // Instant payouts: minutes to an eligible debit card, for a fee. Offered only when the
+  // server says this account can actually take one.
+  const [instant, setInstant] = useState(false);
+  const instantInfo = payoutConfig?.instant;
+  const instantOffered = withdrawMethod === "bank" && bankIsAuto && Boolean(instantInfo?.available);
+  const instantFeePct = Number(instantInfo?.fee_pct ?? 0);
+  const instantMax = Number(instantInfo?.max_amount ?? 0);
+  const requested = Number(withdrawAmount) || 0;
+  const instantFee = instant ? Math.ceil(requested * instantFeePct) / 100 : 0;
+  const overInstantMax = instant && requested > instantMax;
 
   const methods = savedMethods ?? [];
   const banks = bankAccounts ?? [];
@@ -321,16 +331,24 @@ export const InvestorWallet = () => {
     }
     setWithdrawing(true);
     try {
+      const useInstant = instantOffered && instant;
       const created = await withdrawApi.create(
-        { amount: amt, method: withdrawMethod, ...(payoutId ? { payout_method_id: payoutId } : {}) },
+        {
+          amount: amt,
+          method: withdrawMethod,
+          ...(payoutId ? { payout_method_id: payoutId } : {}),
+          ...(useInstant ? { speed: "instant" as const } : {}),
+        },
         crypto.randomUUID(),
       );
       // "approved" = sent to the provider straight away; anything else waits for a human.
+      const sentInstantly = created.status === "approved" && created.speed === "instant";
       toast.success(
         created.status === "approved" ? "Withdrawal sent" : "Withdrawal requested",
         {
-          description:
-            created.status === "approved"
+          description: sentInstantly
+            ? `$${created.net_amount} is on its way to your card and usually arrives within 30 minutes.`
+            : created.status === "approved"
               ? "It is on its way to your linked bank. Banks usually post it within 1-2 business days."
               : "Your request has been sent to our team and will be processed shortly.",
         },
@@ -343,6 +361,8 @@ export const InvestorWallet = () => {
         KYC_REQUIRED: "Complete identity verification before withdrawing.",
         NO_PAYOUT_METHOD: "Add a payout destination first.",
         CONNECT_NOT_READY: "Finish linking your bank with Stripe before withdrawing.",
+        INSTANT_NOT_AVAILABLE: "Instant payout is not available on this account right now.",
+        INSTANT_LIMIT_EXCEEDED: "That is above the instant payout limit. Use the standard speed.",
         PAYOUTS_NOT_CONFIGURED: "Automatic payouts are not available right now.",
         INSUFFICIENT_FUNDS: "Amount exceeds your available balance.",
       };
@@ -637,7 +657,42 @@ export const InvestorWallet = () => {
                   </div>
                 ))}
 
-              <Button className="w-full" onClick={handleWithdraw} disabled={withdrawing}>
+              {instantOffered && (
+                <div className="rounded-lg border p-3 space-y-2" data-testid="instant-option">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={instant}
+                      onChange={(e) => setInstant(e.target.checked)}
+                      aria-label="Get it in minutes"
+                    />
+                    <span className="text-sm">
+                      <b>Get it in minutes</b> — paid straight to your debit card, any day or
+                      time, for a {instantFeePct}% fee. Without it, your bank posts the money in
+                      1–2 business days for free.
+                    </span>
+                  </label>
+                  {instant && requested > 0 && !overInstantMax && (
+                    <p className="text-sm text-muted-foreground" data-testid="instant-breakdown">
+                      Fee ${instantFee.toFixed(2)} · you receive $
+                      {(requested - instantFee).toFixed(2)}
+                    </p>
+                  )}
+                  {overInstantMax && (
+                    <p className="text-sm text-destructive">
+                      Instant payouts are capped at ${instantMax.toLocaleString()} per request.
+                      Lower the amount or use the standard speed.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <Button
+                className="w-full"
+                onClick={handleWithdraw}
+                disabled={withdrawing || overInstantMax}
+              >
                 {withdrawing ? "Submitting…" : `Withdraw $${withdrawAmount || "0"}`}
               </Button>
               <p className="text-xs text-muted-foreground text-center">

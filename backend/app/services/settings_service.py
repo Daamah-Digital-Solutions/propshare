@@ -51,6 +51,9 @@ _SETTING_SPECS: dict[str, str] = {
     "lp_passive_enabled": "bool_locked_false",
     "manual_payouts_enabled": "bool",
     "payout_auto_methods": "csv_methods",
+    "payout_instant_enabled": "bool",
+    "payout_instant_fee_pct": "pct",
+    "payout_instant_max": "int",
     # AI assistant (plan Phase 1)
     "assistant_enabled": "bool",
     "assistant_visitor_enabled": "bool",
@@ -174,6 +177,12 @@ DEFAULTS: dict[str, str] = {
     # ("bank" = Stripe Connect, "crypto" = NOWPayments). Empty = everything manual. A method
     # listed here whose provider is unconfigured stays manual (no customer-facing 503).
     "payout_auto_methods": "",
+    # Stripe Instant Payouts (minutes, eligible debit cards). Stripe charges the platform 1%
+    # per instant payout and caps each one at 9,999 in the account currency; the fee below is
+    # what WE deduct from the customer's withdrawal to cover it.
+    "payout_instant_enabled": "false",
+    "payout_instant_fee_pct": "1.0",
+    "payout_instant_max": "9999",
     # --- AI assistant (plan Phase 1). Everything OFF / empty until the owner decides:
     # the model is chosen by the release eval, retention and visitor mode are client
     # decisions, and the rollout starts with admins only. ---

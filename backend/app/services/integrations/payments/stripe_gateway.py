@@ -190,11 +190,20 @@ async def detach_payment_method(payment_method_id: str) -> None:
 
 
 # --- Stripe Connect onboarding (Phase 7, bank withdrawals) ----------------- #
-async def _post(path: str, data: dict, *, idempotency_key: str | None = None) -> dict:
+async def _post(
+    path: str,
+    data: dict,
+    *,
+    idempotency_key: str | None = None,
+    on_behalf_of: str | None = None,
+) -> dict:
     settings = get_settings()
     headers = {}
     if idempotency_key:
         headers["Idempotency-Key"] = idempotency_key
+    if on_behalf_of:
+        # act AS the connected account (its own balance, its own external accounts)
+        headers["Stripe-Account"] = on_behalf_of
     async with httpx.AsyncClient(timeout=20) as client:
         resp = await client.post(
             f"{_API_BASE}/{path}", data=data, headers=headers, auth=(settings.stripe_secret_key, "")
@@ -279,6 +288,80 @@ async def create_payout(
         idempotency_key=idempotency_key,
     )
     return PayoutResult(provider_payout_id=str(transfer["id"]), status="processing")
+
+
+# --- Instant Payouts (money in minutes, Connect) ---------------------------- #
+# Two steps: our existing transfer moves funds from the PLATFORM balance into the
+# connected account, then a payout with method="instant" pushes them from that account to
+# the investor's eligible debit card. Stripe charges the platform 1% per instant payout and
+# caps each one (9,999 USD). Only funds Stripe marks `instant_available` can go this way.
+
+
+async def instant_destination(account_id: str) -> str | None:
+    """The connected account's first external account that can receive an instant payout,
+    or None. Stripe fails an instant payout to an ineligible destination, so we check
+    before offering the option to the customer."""
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(
+            f"{_API_BASE}/accounts/{account_id}/external_accounts",
+            auth=(settings.stripe_secret_key, ""),
+            headers={"Stripe-Account": account_id},
+        )
+    if resp.status_code >= 400:
+        return None
+    for ext in resp.json().get("data", []):
+        if "instant" in (ext.get("available_payout_methods") or []):
+            return str(ext["id"])
+    return None
+
+
+async def instant_available(account_id: str, currency: str) -> decimal.Decimal:
+    """How much of the connected account's balance Stripe will release instantly."""
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(
+            f"{_API_BASE}/balance",
+            auth=(settings.stripe_secret_key, ""),
+            headers={"Stripe-Account": account_id},
+        )
+    if resp.status_code >= 400:
+        return decimal.Decimal("0")
+    for entry in resp.json().get("instant_available", []) or []:
+        if str(entry.get("currency", "")).lower() == currency.lower():
+            return decimal.Decimal(int(entry.get("amount") or 0)) / 100
+    return decimal.Decimal("0")
+
+
+async def create_instant_payout(
+    *,
+    withdrawal_id: uuid.UUID,
+    account_id: str,
+    destination: str,
+    amount: decimal.Decimal,
+    currency: str,
+    idempotency_key: str,
+) -> PayoutResult:
+    """Push the connected account's balance to its debit card in minutes. The metadata
+    carries our withdrawal id so the resulting payout webhook settles the right row."""
+    if not connect_configured():
+        raise AppError(
+            "PAYOUTS_NOT_CONFIGURED", "Stripe Connect is not configured.", status_code=503
+        )
+    minor = int((amount * 100).to_integral_value(rounding=decimal.ROUND_HALF_UP))
+    payout = await _post(
+        "payouts",
+        {
+            "amount": str(minor),
+            "currency": currency.lower(),
+            "method": "instant",
+            "destination": destination,
+            "metadata[withdrawal_id]": str(withdrawal_id),
+        },
+        idempotency_key=idempotency_key,
+        on_behalf_of=account_id,
+    )
+    return PayoutResult(provider_payout_id=str(payout["id"]), status="processing")
 
 
 async def get_payout_status(provider_payout_id: str) -> str:

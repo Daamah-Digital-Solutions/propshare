@@ -41,6 +41,11 @@ class Withdrawal(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     amount: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     method: Mapped[str] = mapped_column(Text, nullable=False)  # bank | crypto
+    # standard = the provider's normal schedule; instant = Stripe Instant Payouts (minutes,
+    # US-eligible debit cards). `fee` is deducted from `amount`: the customer receives the
+    # difference, the wallet was debited the full `amount` at hold time.
+    speed: Mapped[str] = mapped_column(Text, nullable=False, server_default="standard")
+    fee: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
     provider: Mapped[str] = mapped_column(Text, nullable=False)  # stripe | nowpayments
     destination: Mapped[object] = mapped_column(JSONB, nullable=False, server_default="{}")
     # pending_review | approved | processing | completed | failed | returned | rejected

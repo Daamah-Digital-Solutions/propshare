@@ -13,6 +13,7 @@ class WithdrawalCreateIn(BaseModel):
     method: str = Field(pattern="^(bank|crypto)$")
     address: str | None = None  # crypto inline-address fallback (Stripe/legacy path)
     payout_method_id: uuid.UUID | None = None  # a saved bank account / crypto wallet (manual)
+    speed: str = Field(default="standard", pattern="^(standard|instant)$")
 
 
 class WithdrawalCreateOut(BaseModel):
@@ -20,6 +21,9 @@ class WithdrawalCreateOut(BaseModel):
     amount: str
     method: str
     status: str
+    speed: str
+    fee: str
+    net_amount: str  # what actually reaches the customer (amount - fee)
     created_at: str | None
 
 
@@ -46,9 +50,17 @@ class PayoutMethodMode(BaseModel):
     provider_configured: bool
 
 
+class InstantReadiness(BaseModel):
+    available: bool
+    fee_pct: str
+    max_amount: str
+    reason: str | None  # DISABLED | BANK_NOT_AUTOMATIC | CONNECT_NOT_READY | NO_ELIGIBLE_CARD
+
+
 class PayoutConfigOut(BaseModel):
     methods: dict[str, PayoutMethodMode]
     auto_approve_limit: str
+    instant: InstantReadiness
 
 
 class ConnectStatusOut(BaseModel):

@@ -87,6 +87,61 @@ async def is_manual_for(session: AsyncSession, method: str) -> bool:
     return await _manual_enabled(session)
 
 
+async def _instant_enabled(session: AsyncSession) -> bool:
+    raw = await settings_service.get_setting(session, "payout_instant_enabled")
+    return (raw or "false").strip().lower() in ("true", "1", "yes", "on")
+
+
+async def _instant_fee_pct(session: AsyncSession) -> decimal.Decimal:
+    raw = await settings_service.get_setting(session, "payout_instant_fee_pct")
+    try:
+        return decimal.Decimal(raw)
+    except (decimal.InvalidOperation, TypeError):
+        return decimal.Decimal("1.0")
+
+
+async def _instant_max(session: AsyncSession) -> decimal.Decimal:
+    """Stripe caps each instant payout (9,999 in the account currency)."""
+    raw = await settings_service.get_setting(session, "payout_instant_max")
+    try:
+        return decimal.Decimal(raw)
+    except (decimal.InvalidOperation, TypeError):
+        return decimal.Decimal("9999")
+
+
+def instant_fee_for(amount: decimal.Decimal, pct: decimal.Decimal) -> decimal.Decimal:
+    """Rounded UP to the cent: the platform must never collect less than Stripe charges it."""
+    return (amount * pct / 100).quantize(_CENTS, rounding=decimal.ROUND_CEILING)
+
+
+async def instant_readiness(session: AsyncSession, user_id: uuid.UUID) -> dict:
+    """Can THIS user take money out in minutes right now? Checked before the option is ever
+    shown, because Stripe fails an instant payout to an ineligible destination."""
+    enabled = await _instant_enabled(session)
+    out = {
+        "available": False,
+        "fee_pct": str(await _instant_fee_pct(session)),
+        "max_amount": str(await _instant_max(session)),
+        "reason": None,
+    }
+    if not enabled:
+        out["reason"] = "DISABLED"
+        return out
+    if await is_manual_for(session, "bank"):
+        out["reason"] = "BANK_NOT_AUTOMATIC"
+        return out
+    acct: ConnectAccount | None = await connect_service.get_account(session, user_id)
+    if acct is None or not acct.payouts_enabled or not acct.stripe_account_id:
+        out["reason"] = "CONNECT_NOT_READY"
+        return out
+    if await stripe_gateway.instant_destination(acct.stripe_account_id) is None:
+        # linked, but no debit card that supports instant
+        out["reason"] = "NO_ELIGIBLE_CARD"
+        return out
+    out["available"] = True
+    return out
+
+
 async def _auto_limit(session: AsyncSession) -> decimal.Decimal:
     raw = await settings_service.get_setting(session, "withdrawal_auto_approve_limit")
     try:
@@ -106,6 +161,7 @@ async def request_withdrawal(
     idempotency_key: str,
     user_email: str,
     payout_method_id: uuid.UUID | None = None,
+    speed: str = "standard",
 ) -> dict:
     if method not in _PROVIDER_FOR_METHOD:
         raise AppError("INVALID_METHOD", "method must be 'bank' or 'crypto'.", status_code=422)
@@ -131,6 +187,39 @@ async def request_withdrawal(
     if amount_dec <= 0:
         raise AppError("INVALID_AMOUNT", "Withdrawal amount must be positive.", status_code=422)
 
+    # Instant is opt-in per request, and every reason it cannot run is answered BEFORE the
+    # hold, so the customer picks again instead of discovering it from a failed payout.
+    fee = decimal.Decimal("0").quantize(_CENTS)
+    if speed == "instant":
+        if manual or method != "bank":
+            raise AppError(
+                "INSTANT_NOT_AVAILABLE",
+                "Instant payouts are only available for automatic bank withdrawals.",
+                status_code=409,
+            )
+        ready = await instant_readiness(session, user_id)
+        if not ready["available"]:
+            raise AppError(
+                "INSTANT_NOT_AVAILABLE",
+                "Instant payouts are not available on this account.",
+                status_code=409,
+                details={"reason": ready["reason"]},
+            )
+        if amount_dec > decimal.Decimal(ready["max_amount"]):
+            raise AppError(
+                "INSTANT_LIMIT_EXCEEDED",
+                f"Instant payouts are capped at {ready['max_amount']} per request.",
+                status_code=422,
+                details={"max_amount": ready["max_amount"]},
+            )
+        fee = instant_fee_for(amount_dec, decimal.Decimal(ready["fee_pct"]))
+        if fee >= amount_dec:
+            raise AppError(
+                "INVALID_AMOUNT", "Amount is too small for an instant payout.", status_code=422
+            )
+    elif speed != "standard":
+        raise AppError("INVALID_SPEED", "speed must be 'standard' or 'instant'.", status_code=422)
+
     if manual:
         # Snapshot the chosen saved destination; ALL manual payouts wait for the admin.
         destination = await _resolve_manual_destination(
@@ -150,6 +239,8 @@ async def request_withdrawal(
         destination=destination,
         status=status,
         idempotency_key=idempotency_key,
+        speed=speed,
+        fee=fee,
     )
     session.add(wd)
     await session.flush()  # assign wd.id
@@ -165,7 +256,14 @@ async def request_withdrawal(
         entity_type="withdrawal",
         entity_id=str(wd.id),
         actor_id=user_id,
-        after={"amount": str(amount_dec), "method": method, "status": status, "provider": provider},
+        after={
+            "amount": str(amount_dec),
+            "method": method,
+            "status": status,
+            "provider": provider,
+            "speed": speed,
+            "fee": str(fee),
+        },
     )
     if status == "approved":
         # Make the row + its hold durable NOW. The instant submitter runs on its own session
@@ -274,6 +372,43 @@ def _is_provider_balance_shortfall(exc: AppError) -> bool:
     return "balance_insufficient" in body or "insufficient funds" in body
 
 
+async def _push_instant(wd: Withdrawal, *, account_id: str, amount: decimal.Decimal) -> None:
+    """Second leg of an instant payout: from the connected account to the investor's card.
+
+    The transfer already succeeded, so the money IS the investor's — it will arrive on the
+    normal schedule whatever happens here. A failure therefore downgrades the speed and is
+    recorded, never fails the withdrawal and never returns funds the investor now owns."""
+    try:
+        destination = await stripe_gateway.instant_destination(account_id)
+        if destination is None:
+            raise AppError("INSTANT_NOT_AVAILABLE", "No instant-eligible card.", status_code=409)
+        available = await stripe_gateway.instant_available(account_id, "usd")
+        if available < amount:
+            raise AppError(
+                "INSTANT_NOT_AVAILABLE",
+                f"Only {available} of {amount} is instantly available.",
+                status_code=409,
+            )
+        payout = await stripe_gateway.create_instant_payout(
+            withdrawal_id=wd.id,
+            account_id=account_id,
+            destination=destination,
+            amount=amount,
+            currency="usd",
+            idempotency_key=f"{wd.id}-instant",
+        )
+        dest = dict(wd.destination or {})
+        dest["instant_payout_id"] = payout.provider_payout_id
+        wd.destination = dest
+    except AppError as exc:
+        wd.speed = "standard"
+        wd.failure_reason = f"Instant unavailable, paid on the standard schedule: {exc.message}"
+        logger.warning(
+            "instant payout leg failed; standard schedule applies",
+            extra={"withdrawal_id": str(wd.id), "reason": exc.message},
+        )
+
+
 async def execute_approved(
     session: AsyncSession, *, limit: int = 50, withdrawal_id: uuid.UUID | None = None
 ) -> int:
@@ -295,13 +430,17 @@ async def execute_approved(
         dest = wd.destination if isinstance(wd.destination, dict) else {}
         try:
             if wd.provider == "stripe":
+                account_id = str(dest.get("connect_account_id"))
+                payable = wd.amount - wd.fee  # the fee stays with us to cover Stripe's
                 result = await stripe_gateway.create_payout(
                     withdrawal_id=wd.id,
-                    account_id=str(dest.get("connect_account_id")),
-                    amount=wd.amount,
+                    account_id=account_id,
+                    amount=payable,
                     currency="usd",
                     idempotency_key=str(wd.id),
                 )
+                if wd.speed == "instant":
+                    await _push_instant(wd, account_id=account_id, amount=payable)
             else:
                 result = await nowpayments_gateway.create_payout(
                     withdrawal_id=wd.id,
@@ -723,5 +862,8 @@ def _result(wd: Withdrawal) -> dict:
         "amount": str(wd.amount),
         "method": wd.method,
         "status": wd.status,
+        "speed": wd.speed,
+        "fee": str(wd.fee),
+        "net_amount": str(wd.amount - wd.fee),
         "created_at": wd.created_at.isoformat() if wd.created_at else None,
     }

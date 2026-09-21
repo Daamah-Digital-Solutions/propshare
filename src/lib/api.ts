@@ -1038,6 +1038,9 @@ export interface WithdrawalCreateResponse {
   amount: string;
   method: string;
   status: string;
+  speed: string;
+  fee: string;
+  net_amount: string;
   created_at: string | null;
 }
 
@@ -1067,6 +1070,8 @@ export const withdrawApi = {
       method: WithdrawMethod;
       address?: string;
       payout_method_id?: string;
+      /** "instant" reaches an eligible debit card in minutes, for a fee. */
+      speed?: "standard" | "instant";
     },
     idempotencyKey: string,
   ): Promise<WithdrawalCreateResponse> {
@@ -1193,9 +1198,18 @@ export interface PayoutMethodMode {
   provider_configured: boolean;
 }
 
+export interface InstantReadiness {
+  available: boolean;
+  fee_pct: string;
+  max_amount: string;
+  /** DISABLED | BANK_NOT_AUTOMATIC | CONNECT_NOT_READY | NO_ELIGIBLE_CARD */
+  reason: string | null;
+}
+
 export interface PayoutConfig {
   methods: Record<string, PayoutMethodMode>;
   auto_approve_limit: string;
+  instant: InstantReadiness;
 }
 
 export const payoutConfigApi = {

@@ -56,8 +56,8 @@ Stripe are not affected.
 **"Instant" is instant on our side, not at the bank.** The moment the customer confirms, the
 money leaves our platform and is transferred to their Stripe-held account. Stripe then pays
 their bank on its own schedule — normally **1–2 business days**, longer across borders. The
-wallet wording says exactly this. Stripe's own "Instant Payouts" product (minutes, to an
-eligible debit card, for a fee) is a separate feature we have not built.
+wallet wording says exactly this. For money in **minutes**, see the Instant Payouts section
+at the end of this document — that is a separate, opt-in speed with a fee.
 
 **Stripe can only pay out money that is in the Stripe balance.** Card deposits land there;
 bank transfers and crypto deposits do not. If investors fund by bank or crypto and then
@@ -68,10 +68,89 @@ deposits are the main rail.
 
 ## 5. Tests
 
-`backend/app/tests/test_payout_auto_mode_db.py` (9 tests): bank automatic while crypto stays
-manual, instant submit, over-limit review, 409 before onboarding, unconfigured fallback,
+`backend/app/tests/test_payout_auto_mode_db.py`: bank automatic while crypto stays manual,
+submit-on-request, over-limit review, 409 before onboarding, unconfigured fallback,
 payout-config output and auth, settings validation, balance shortfall queued with the hold
-intact, and other provider errors still returning the money.
-`src/components/dashboard/InvestorWallet.payouts.test.tsx` (3 tests): manual keeps the saved
-account picker, automatic asks for linking and blocks withdrawal until linked, a linked user
-sends without a saved-account id and is told it was sent.
+intact, and other provider errors still returning the money. (The instant-speed cases are
+listed in the last section.)
+`src/components/dashboard/InvestorWallet.payouts.test.tsx`: manual keeps the saved account
+picker, automatic asks for linking and blocks withdrawal until linked, a linked user sends
+without a saved-account id and is told it was sent.
+
+---
+
+# Instant Payouts (money in minutes) — US investors
+
+Added 2026-09-21 after confirming the Stripe account is registered in the **US**.
+
+## Who can use it
+
+Stripe pays a connected account instantly only when **both** the platform and the recipient
+are in supported countries, and Connect itself only reaches connected accounts in the
+**US, UK, EEA, Canada and Switzerland** from a US platform. Investors in the Gulf cannot be
+paid through Stripe at all — neither instantly nor on the standard schedule — so the manual
+admin-settled rail stays in place for them. Their withdrawals are unaffected by everything
+in this document.
+
+Within the eligible group, the investor also needs an **instant-eligible debit card** on
+their Stripe account. We check that before ever showing the option, because Stripe fails an
+instant payout to an ineligible destination.
+
+## How a request flows
+
+1. The investor ticks **Get it in minutes** and sees the fee and the net amount before
+   confirming.
+2. The wallet is held for the **full** amount, exactly as before.
+3. We transfer `amount - fee` from the platform balance into their connected account.
+4. We immediately pay that out to their card with `method=instant`.
+5. The fee stays in our Stripe balance and covers the 1% Stripe charges the platform.
+
+If step 4 fails (card removed, balance not yet instantly available), the withdrawal is
+**downgraded to standard**, not failed: the money is already theirs and arrives on the normal
+schedule. The row records why, and the customer keeps their money either way.
+
+## Settings
+
+| Key | Default | Meaning |
+|---|---|---|
+| `payout_instant_enabled` | `false` | Master switch for the instant option |
+| `payout_instant_fee_pct` | `1.0` | What we deduct from the customer, rounded up to the cent |
+| `payout_instant_max` | `9999` | Stripe's per-payout cap in the account currency |
+
+Requires `payout_auto_methods=bank` — instant is a faster finish to the automatic rail, not a
+separate one.
+
+## What Stripe charges and limits
+
+| Item | Value |
+|---|---|
+| Stripe fee to the platform | 1% of each instant payout |
+| Arrival | Usually within 30 minutes, 24/7 including weekends |
+| Per-payout cap | 9,999 USD |
+| Daily cap | Platform-wide, visible in the Stripe Dashboard |
+| Eligibility | Not automatic for new platforms — confirm in the Dashboard before switching it on |
+
+Two operational notes. Only funds that came from **card** payments count as instantly
+available, so bank-transfer and crypto deposits do not feed this rail. And `payout_instant_max`
+must be kept in step with Stripe's published cap.
+
+## Before switching it on
+
+1. Confirm in the Stripe Dashboard that the platform is eligible for Instant Payouts and note
+   the daily limit.
+2. In Connect external account settings, set **Allow debit cards** to **Yes**, otherwise
+   investors cannot add an eligible card.
+3. Make sure onboarding uses the **full** service agreement — recipient-agreement accounts
+   cannot receive instant payouts.
+4. Disclose the fee wherever it is marketed. Stripe requires it.
+
+## Tests
+
+`backend/app/tests/test_payout_auto_mode_db.py` grew to 16: fee deducted and rounded up, the
+card push carries the net amount, the wallet ledger stays single-entry, a failed instant leg
+downgrades without losing money, refusal without an eligible card happens before any hold,
+the per-payout cap is refused while the same amount passes at standard speed, refusal when
+the switch is off or the rail is manual, and readiness published to the wallet.
+`src/components/dashboard/InvestorWallet.payouts.test.tsx` grew to 6: the option appears only
+when the server allows it, the fee is shown before confirming and `speed=instant` is sent,
+and an over-cap amount is blocked client-side.
