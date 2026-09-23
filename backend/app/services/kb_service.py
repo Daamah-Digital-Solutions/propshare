@@ -23,7 +23,8 @@ MAX_BUNDLE_CHARS = 60_000  # ~15k tokens; a bigger KB must be split by audience 
 async def approved_articles(session: AsyncSession) -> list[KbArticle]:
     stmt = (
         select(KbArticle)
-        .where(KbArticle.status == "approved")
+        # the company reference library is searched through a tool, never sent in the prompt
+        .where(KbArticle.status == "approved", KbArticle.audience != "reference")
         .order_by(KbArticle.priority, KbArticle.slug, KbArticle.lang, KbArticle.version)
     )
     return list((await session.execute(stmt)).scalars().all())

@@ -267,6 +267,27 @@ dashboard lists the reference number of each of your investment certificates and
 Capimax Trust, where a certificate, a property record or a developer can be checked
 independently. Certificates themselves are downloaded from the Certificates tab.""",
     ),
+    (
+        "capimax-ecosystem-and-partners",
+        "PropShare in the Capimax ecosystem, and its partners",
+        "basics",
+        5,
+        """Capimax PropShare is the Capimax ecosystem's digital, non-blockchain platform for
+fractional participation in real estate, focused on off-plan and under-construction projects and
+portfolios. Units are digitally recorded contractual participation interests backed by each
+property's SPV, agreements and holder register; they are not crypto tokens. Sister routes:
+Capimax Assets (ready, income-producing property, non-blockchain), Capimax BRX and Capimax RT (the
+ecosystem's separate tokenized routes), Capimax Group and Capimax One (group umbrella and
+discovery portal), Capimax Pro with CPV (property and document verification), Nova Digital
+Finance (financing, separate from ownership) and Pronova / PRN (a separate digital-asset
+project, never a share in a property). Partners by role: payments (Stripe, PayPal, NOWPayments),
+identity and compliance (Sumsub), banking (Mercury, Revolut Business, Wise Business), financial
+studies and valuation (CIM Global Financial), legal (LexCrest Global Legal), insurance
+(CoverTech, Assurax), developers (Westoria Capital Estates, Crestmark Global, Valora Estates
+Global, Verdea Estates, Aethera Development, Elevate Properties, Prime Stone Global) and
+operators (Priminn Hotels, Elite Gate Properties, Crown Facilities). Details, what each one does
+and official links are in the reference library.""",
+    ),
 ]
 
 
@@ -481,6 +502,25 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 "مركز التحقق" في لوحة المستثمر يعرض الرقم المرجعي لكل شهادة استثمار لديك ورابطًا إلى Capimax Trust
 حيث يمكن التحقق بشكل مستقل من الشهادة أو سجل العقار أو المطوّر. أما الشهادات نفسها فتُنزَّل من
 تبويب الشهادات.""",
+    ),
+    (
+        "capimax-ecosystem-and-partners",
+        "بروبشير داخل منظومة كابي مكس وشركاؤها",
+        "basics",
+        5,
+        """كابي مكس بروبشير هي منصة المنظومة الرقمية غير القائمة على البلوك تشين للمشاركة الجزئية في
+العقارات، وتركّز على المشروعات على الخارطة وتحت الإنشاء والمحافظ المرتبطة بها. الوحدات حصص
+مشاركة تعاقدية مسجّلة رقميًا تدعمها شركة الغرض الخاص لكل عقار والاتفاقيات وسجل الملاك، وليست
+عملات رقمية. المنصات الشقيقة: Capimax Assets (عقارات جاهزة ومدرّة للدخل بصيغة غير مرمّزة)،
+وCapimax BRX وCapimax RT (المساران المرمّزان المستقلان في المنظومة)، وCapimax Group وCapimax One
+(المظلة المؤسسية وبوابة الاكتشاف)، وCapimax Pro مع CPV (التحقق من العقارات والمستندات)، ونوفا
+ديجيتال فاينانس (التمويل، منفصل عن الملكية)، وبرونوفا / PRN (مشروع أصول رقمية منفصل، ليس حصة في
+أي عقار). الشركاء حسب الدور: المدفوعات (Stripe وPayPal وNOWPayments)، الهوية والامتثال (Sumsub)،
+الخدمات البنكية (Mercury وRevolut Business وWise Business)، الدراسات المالية والتقييم (CIM Global
+Financial)، القانوني (LexCrest Global Legal)، التأمين (CoverTech وAssurax)، المطورون (Westoria
+Capital Estates وCrestmark Global وValora Estates Global وVerdea Estates وAethera Development
+وElevate Properties وPrime Stone Global)، والتشغيل (Priminn Hotels وElite Gate Properties وCrown
+Facilities). التفاصيل ودور كل جهة والروابط الرسمية في مكتبة المراجع.""",
     ),
 ]
 

@@ -23,6 +23,7 @@ from app.services import (
     payment_service,
     platform_accounts_service,
     property_service,
+    reference_library,
     settings_service,
     withdrawal_service,
 )
@@ -385,7 +386,11 @@ class SearchKbOut(ToolOutput):
 async def _search_kb(session: AsyncSession, ctx: AgentContext, args) -> dict:
     a: SearchKbIn = args
     words = [w for w in a.query.lower().split() if len(w) > 2][:6]
-    stmt = select(KbArticle).where(KbArticle.status == "approved", KbArticle.lang == a.lang)
+    stmt = select(KbArticle).where(
+        KbArticle.status == "approved",
+        KbArticle.lang == a.lang,
+        KbArticle.audience != reference_library.REFERENCE_AUDIENCE,
+    )
     if words:
         stmt = stmt.where(
             or_(
@@ -417,6 +422,69 @@ register(
         SearchKbOut,
         "informational",
         _search_kb,
+    )
+)
+
+
+# --------------------------------------------------------------------------- #
+# search_reference (the company's own reference documents)
+# --------------------------------------------------------------------------- #
+class SearchReferenceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(
+        min_length=2,
+        max_length=200,
+        description="Keywords, best in English (the library is mostly English), e.g. "
+        "'Nova financing', 'LexCrest legal due diligence', 'insurance partners'",
+    )
+    limit: int = Field(default=3, ge=1, le=4)
+
+
+class ReferenceHit(ToolOutput):
+    source: str
+    section: str
+    lang: str
+    text: dict[str, str]  # {"untrusted_text": ...}
+
+
+class SearchReferenceOut(ToolOutput):
+    items: list[ReferenceHit]
+    note: str
+
+
+async def _search_reference(session: AsyncSession, ctx: AgentContext, args) -> dict:
+    a: SearchReferenceIn = args
+    rows = await reference_library.search(session, a.query, a.limit)
+    return {
+        "items": [
+            {
+                "source": (r.source_ref or "").split(" | ")[-1],
+                "section": r.title,
+                "lang": r.lang,
+                "text": guard.wrap_untrusted(r.body_md),
+            }
+            for r in rows
+        ],
+        "note": (
+            "Company reference material. Fees, installment terms, payment methods and what "
+            "the user can do right now come from the live tools; where they differ, the live "
+            "tools apply."
+        ),
+    }
+
+
+register(
+    ToolSpec(
+        "search_reference",
+        "Search the company's approved reference library: what PropShare is, the Capimax "
+        "ecosystem (Group, One, Assets, BRX, RT, Pro/CPV, Nova Digital Finance, Pronova/PRN), "
+        "partners and service providers (payments, banking, KYC, valuation, legal, insurance, "
+        "developers, hotel/property/facility operators), the operating model, participant "
+        "journeys, policies, disclosures and the FAQ. Returns the best-matching passages.",
+        SearchReferenceIn,
+        SearchReferenceOut,
+        "informational",
+        _search_reference,
     )
 )
 
