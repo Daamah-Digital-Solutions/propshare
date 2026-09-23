@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
+import { MfaChallenge } from "@/components/auth/MfaChallenge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,6 +42,8 @@ const Auth = () => {
   const [terms, setTerms] = useState(false);
   // Broker referral code (Phase 11) — captured from a ?ref=CODE share link, editable.
   const [referralCode, setReferralCode] = useState("");
+  // Two-factor: the password was right, a code is still owed (no session exists yet).
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
 
   useEffect(() => {
     const ref = searchParams.get("ref");
@@ -59,7 +62,11 @@ const Auth = () => {
     setIsLoading(true);
 
     try {
-      await login(loginEmail, loginPassword);
+      const result = await login(loginEmail, loginPassword);
+      if (result.status === "mfa_required") {
+        setMfaToken(result.mfaToken);
+        return;
+      }
       toast({ title: "Welcome back!", description: "You have successfully signed in." });
       navigate("/dashboard");
     } catch (error) {
@@ -211,6 +218,19 @@ const Auth = () => {
 
         <Card className="bg-card border-border">
           <CardContent className="p-6">
+            {mfaToken ? (
+              <MfaChallenge
+                mfaToken={mfaToken}
+                onDone={() => {
+                  toast({ title: "Welcome back!", description: "You have successfully signed in." });
+                  navigate("/dashboard");
+                }}
+                onRestart={() => {
+                  setMfaToken(null);
+                  setLoginPassword("");
+                }}
+              />
+            ) : (
             <Tabs defaultValue="login" className="space-y-6">
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="login">Sign In</TabsTrigger>
@@ -482,6 +502,7 @@ const Auth = () => {
                 </div>
               </TabsContent>
             </Tabs>
+            )}
           </CardContent>
         </Card>
 

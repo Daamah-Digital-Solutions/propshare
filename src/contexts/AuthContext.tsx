@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from "react";
 import { authApi, MeResponse, refreshAccessToken, setAccessToken } from "@/lib/api";
+import type { LoginResult } from "@/lib/api";
 
 export type UserRole =
   | "guest"
@@ -20,7 +21,11 @@ interface AuthContextType {
   pendingRoles: UserRole[];
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /** Password sign-in. With two-factor on, resolves to `mfa_required` and NO session
+   * exists yet: finish with `completeMfaLogin`. */
+  login: (email: string, password: string) => Promise<LoginResult>;
+  /** Second sign-in step (after `login` or Google returned `mfa_required`). */
+  completeMfaLogin: (mfaToken: string, code: string) => Promise<void>;
   register: (input: {
     email: string;
     password: string;
@@ -76,7 +81,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [loadMe]);
 
   const login = useCallback(async (email: string, password: string) => {
-    const me = await authApi.login(email, password);
+    const result = await authApi.login(email, password);
+    if (result.status === "signed_in") setUser(result.me);
+    return result;
+  }, []);
+
+  const completeMfaLogin = useCallback(async (mfaToken: string, code: string) => {
+    const me = await authApi.completeMfa(mfaToken, code);
     setUser(me);
   }, []);
 
@@ -152,6 +163,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         isAuthenticated: !!user,
         isLoading,
         login,
+        completeMfaLogin,
         register,
         signOut,
         switchActiveRole,

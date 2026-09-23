@@ -19,6 +19,7 @@ from app.core.errors import AppError
 from app.core.ratelimit import (
     FORGOT_LIMIT,
     LOGIN_LIMIT,
+    MFA_LIMIT,
     REGISTER_LIMIT,
     RESEND_VERIFY_LIMIT,
     limiter,
@@ -29,7 +30,14 @@ from app.schemas.auth import (
     ChangePasswordIn,
     ForgotPasswordIn,
     LoginIn,
+    LoginOut,
     MeOut,
+    MfaCodeIn,
+    MfaDisableIn,
+    MfaLoginIn,
+    MfaRecoveryCodesOut,
+    MfaSetupOut,
+    MfaStatusOut,
     OAuthCallbackIn,
     RegisterIn,
     RequestRoleIn,
@@ -39,7 +47,7 @@ from app.schemas.auth import (
     VerifyEmailIn,
     WalletSummary,
 )
-from app.services import auth_service
+from app.services import auth_service, mfa_service
 from app.services.integrations import oauth
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -71,6 +79,30 @@ def _clear_refresh_cookie(response: Response) -> None:
 
 def _token_out(access: str) -> TokenOut:
     return TokenOut(access_token=access, expires_in=get_settings().access_token_ttl_seconds)
+
+
+async def _start_session(
+    session: SessionDep, user: User, request: Request, response: Response
+) -> LoginOut:
+    """Mint the access token + refresh cookie. Only ever reached after every factor passed."""
+    access, raw_refresh, _exp = await auth_service.issue_tokens(
+        session,
+        user,
+        user_agent=request.headers.get("user-agent"),
+        ip=request.client.host if request.client else None,
+    )
+    _set_refresh_cookie(response, raw_refresh, get_settings().refresh_token_ttl_seconds)
+    return LoginOut(access_token=access, expires_in=get_settings().access_token_ttl_seconds)
+
+
+async def _session_or_challenge(
+    session: SessionDep, user: User, request: Request, response: Response, *, via: str
+) -> LoginOut:
+    """First factor passed. With 2FA on, hand back a short-lived challenge instead of tokens:
+    no access token, no refresh cookie, until the code step succeeds."""
+    if await mfa_service.is_enabled(session, user.id):
+        return LoginOut(mfa_required=True, mfa_token=mfa_service.issue_challenge(user.id, via=via))
+    return await _start_session(session, user, request, response)
 
 
 async def _build_me(session: SessionDep, user: User) -> MeOut:
@@ -125,7 +157,7 @@ async def register(body: RegisterIn, request: Request, response: Response, sessi
     return _token_out(access)
 
 
-@router.post("/login", response_model=TokenOut)
+@router.post("/login", response_model=LoginOut)
 @limiter.limit(LOGIN_LIMIT)
 async def login(body: LoginIn, request: Request, response: Response, session: SessionDep):
     user = await auth_service.authenticate(session, email=str(body.email), password=body.password)
@@ -136,14 +168,19 @@ async def login(body: LoginIn, request: Request, response: Response, session: Se
             "choose your own password, then sign in here.",
             status_code=403,
         )
-    access, raw_refresh, _exp = await auth_service.issue_tokens(
-        session,
-        user,
-        user_agent=request.headers.get("user-agent"),
-        ip=request.client.host if request.client else None,
-    )
-    _set_refresh_cookie(response, raw_refresh, get_settings().refresh_token_ttl_seconds)
-    return _token_out(access)
+    return await _session_or_challenge(session, user, request, response, via="password")
+
+
+@router.post("/login/mfa", response_model=LoginOut)
+@limiter.limit(MFA_LIMIT)
+async def login_mfa(body: MfaLoginIn, request: Request, response: Response, session: SessionDep):
+    """Second sign-in step: the challenge from /login (or /oauth) + a code."""
+    user_id, _via = mfa_service.read_challenge(body.mfa_token)
+    user = await session.get(User, user_id)
+    if user is None:
+        raise AppError("MFA_CHALLENGE_EXPIRED", "Please sign in again.", status_code=401)
+    await mfa_service.verify_second_factor(session, user, body.code)
+    return await _start_session(session, user, request, response)
 
 
 @router.post("/refresh", response_model=TokenOut)
@@ -309,7 +346,7 @@ async def change_password(body: ChangePasswordIn, principal: PrincipalDep, sessi
 # --------------------------------------------------------------------------- #
 # OAuth (Google / Apple) — SPA posts the provider authorization code
 # --------------------------------------------------------------------------- #
-@router.post("/oauth/{provider}", response_model=TokenOut)
+@router.post("/oauth/{provider}", response_model=LoginOut)
 async def oauth_login(
     provider: str, body: OAuthCallbackIn, request: Request, response: Response, session: SessionDep
 ):
@@ -321,14 +358,63 @@ async def oauth_login(
         email=profile.email,
         full_name=profile.full_name,
     )
-    access, raw_refresh, _exp = await auth_service.issue_tokens(
-        session,
-        user,
-        user_agent=request.headers.get("user-agent"),
-        ip=request.client.host if request.client else None,
-    )
-    _set_refresh_cookie(response, raw_refresh, get_settings().refresh_token_ttl_seconds)
-    return _token_out(access)
+    # Google proves the first factor only; an account with 2FA on still needs its code.
+    return await _session_or_challenge(session, user, request, response, via=f"oauth:{provider}")
+
+
+# --------------------------------------------------------------------------- #
+# Two-factor authentication management (signed-in user)
+# --------------------------------------------------------------------------- #
+async def _me_user(session: SessionDep, principal: PrincipalDep) -> User:
+    user = await session.get(User, principal.user_id)
+    if user is None:
+        raise AppError("NOT_FOUND", "User not found", status_code=404)
+    return user
+
+
+@router.get("/mfa", response_model=MfaStatusOut)
+async def mfa_status(principal: PrincipalDep, session: SessionDep):
+    return MfaStatusOut(**await mfa_service.status(session, principal.user_id))
+
+
+@router.post("/mfa/setup", response_model=MfaSetupOut)
+@limiter.limit(MFA_LIMIT)
+async def mfa_setup(request: Request, principal: PrincipalDep, session: SessionDep):
+    """Step 1: a new secret + QR code. Nothing is enforced until /mfa/enable succeeds."""
+    user = await _me_user(session, principal)
+    return MfaSetupOut(**await mfa_service.begin_setup(session, user))
+
+
+@router.post("/mfa/enable", response_model=MfaRecoveryCodesOut)
+@limiter.limit(MFA_LIMIT)
+async def mfa_enable(
+    body: MfaCodeIn, request: Request, principal: PrincipalDep, session: SessionDep
+):
+    """Step 2: the first code from the app turns 2FA on. Recovery codes are returned ONCE."""
+    user = await _me_user(session, principal)
+    codes = await mfa_service.confirm_setup(session, user, body.code)
+    return MfaRecoveryCodesOut(recovery_codes=codes)
+
+
+@router.post("/mfa/disable", status_code=204)
+@limiter.limit(MFA_LIMIT)
+async def mfa_disable(
+    body: MfaDisableIn, request: Request, principal: PrincipalDep, session: SessionDep
+):
+    user = await _me_user(session, principal)
+    await mfa_service.disable(session, user, password=body.password, code=body.code)
+    return Response(status_code=204)
+
+
+@router.post("/mfa/recovery-codes", response_model=MfaRecoveryCodesOut)
+@limiter.limit(MFA_LIMIT)
+async def mfa_recovery_codes(
+    body: MfaCodeIn, request: Request, principal: PrincipalDep, session: SessionDep
+):
+    """Replace every recovery code (the old ones stop working). Returned ONCE."""
+    user = await _me_user(session, principal)
+    codes = await mfa_service.regenerate_recovery_codes(session, user, body.code)
+    return MfaRecoveryCodesOut(recovery_codes=codes)
 
 
 # expose for tests / other routers

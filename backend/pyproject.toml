@@ -38,6 +38,9 @@ dependencies = [
     "cryptography>=42.0",
     # Text extraction from uploaded property documents (assistant document search).
     "pypdf>=5.0",
+    # Two-factor authentication: QR code (SVG) for the authenticator-app enrolment.
+    # Pure Python, no system deps. TOTP itself is stdlib-only (app/core/totp.py).
+    "segno>=1.6",
 ]
 
 [project.optional-dependencies]

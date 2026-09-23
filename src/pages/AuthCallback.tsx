@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { authApi, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { MfaChallenge } from "@/components/auth/MfaChallenge";
 
 /** OAuth redirect target: providers send the user back here with ?code=...
  *  We exchange the code with the backend, which verifies it with the provider.
@@ -12,6 +13,8 @@ export default function AuthCallback() {
   const navigate = useNavigate();
   const { refresh } = useAuth();
   const [error, setError] = useState<string | null>(null);
+  // Google succeeded but the account has two-factor on: a code is still owed.
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
   const ran = useRef(false);
 
   useEffect(() => {
@@ -30,7 +33,11 @@ export default function AuthCallback() {
     const redirectUri = `${window.location.origin}/auth/callback/${provider}`;
     authApi
       .oauthLogin(provider, code, redirectUri)
-      .then(async () => {
+      .then(async (result) => {
+        if (result.status === "mfa_required") {
+          setMfaToken(result.mfaToken);
+          return;
+        }
         await refresh();
         navigate("/dashboard", { replace: true });
       })
@@ -42,6 +49,20 @@ export default function AuthCallback() {
         }
       });
   }, [provider, params, navigate, refresh]);
+
+  if (mfaToken && !error) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6">
+          <MfaChallenge
+            mfaToken={mfaToken}
+            onDone={() => navigate("/dashboard", { replace: true })}
+            onRestart={() => navigate("/auth", { replace: true })}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4 p-6 text-center">

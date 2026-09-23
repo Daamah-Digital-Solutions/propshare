@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 
 from pydantic import BaseModel, EmailStr, Field
@@ -80,3 +81,52 @@ class OAuthCallbackIn(BaseModel):
 
     code: str
     redirect_uri: str
+
+
+# --------------------------------------------------------------------------- #
+# Two-factor authentication
+# --------------------------------------------------------------------------- #
+class LoginOut(BaseModel):
+    """Login / OAuth result. Without 2FA it is exactly ``TokenOut``. With 2FA on, no token is
+    issued yet: ``mfa_required`` is true and ``mfa_token`` (5 minutes) must be exchanged at
+    ``POST /auth/login/mfa`` together with a code."""
+
+    access_token: str | None = None
+    token_type: str = "bearer"
+    expires_in: int | None = None
+    mfa_required: bool = False
+    mfa_token: str | None = None
+
+
+class MfaLoginIn(BaseModel):
+    mfa_token: str = Field(min_length=10, max_length=512)
+    # a 6-digit authenticator code, or a recovery code such as ABCD-EFGH-JKLM-NPQR
+    code: str = Field(min_length=6, max_length=32)
+
+
+class MfaStatusOut(BaseModel):
+    has_password: bool
+    enabled: bool
+    enabled_at: dt.datetime | None
+    recovery_codes_remaining: int
+    available: bool
+
+
+class MfaSetupOut(BaseModel):
+    secret: str
+    otpauth_uri: str
+    qr_svg_data_uri: str
+    expires_in: int
+
+
+class MfaCodeIn(BaseModel):
+    code: str = Field(min_length=6, max_length=32)
+
+
+class MfaDisableIn(BaseModel):
+    password: str | None = Field(default=None, max_length=128)
+    code: str = Field(min_length=6, max_length=32)
+
+
+class MfaRecoveryCodesOut(BaseModel):
+    recovery_codes: list[str]

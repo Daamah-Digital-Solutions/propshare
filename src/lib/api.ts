@@ -148,6 +148,66 @@ interface TokenResponse {
   expires_in: number;
 }
 
+/** /auth/login and /auth/oauth: tokens, or — with two-factor on — a 5-minute challenge that
+ * must be exchanged at /auth/login/mfa together with a code. No token exists before that. */
+interface LoginResponse {
+  access_token: string | null;
+  token_type: string;
+  expires_in: number | null;
+  mfa_required: boolean;
+  mfa_token: string | null;
+}
+
+export type LoginResult =
+  | { status: "signed_in"; me: MeResponse }
+  | { status: "mfa_required"; mfaToken: string };
+
+async function finishLogin(res: LoginResponse): Promise<LoginResult> {
+  if (res.mfa_required && res.mfa_token) {
+    return { status: "mfa_required", mfaToken: res.mfa_token };
+  }
+  setAccessToken(res.access_token);
+  return { status: "signed_in", me: await authApi.me() };
+}
+
+// ---- Two-factor authentication (authenticator app + recovery codes) ----
+export interface MfaStatus {
+  /** false for accounts created with Google: turning 2FA off then needs the code only */
+  has_password: boolean;
+  enabled: boolean;
+  enabled_at: string | null;
+  recovery_codes_remaining: number;
+  /** false while the platform cannot store secrets securely — enrolment is refused */
+  available: boolean;
+}
+
+export interface MfaSetup {
+  /** for "can't scan? type this key" */
+  secret: string;
+  otpauth_uri: string;
+  qr_svg_data_uri: string;
+  expires_in: number;
+}
+
+export const mfaApi = {
+  status(): Promise<MfaStatus> {
+    return apiRequest<MfaStatus>("/api/v1/auth/mfa");
+  },
+  setup(): Promise<MfaSetup> {
+    return apiRequest<MfaSetup>("/api/v1/auth/mfa/setup", { method: "POST" });
+  },
+  /** Turns 2FA on. The recovery codes are returned ONCE and never again. */
+  enable(code: string): Promise<{ recovery_codes: string[] }> {
+    return apiRequest("/api/v1/auth/mfa/enable", { method: "POST", body: { code } });
+  },
+  disable(input: { password: string | null; code: string }): Promise<void> {
+    return apiRequest("/api/v1/auth/mfa/disable", { method: "POST", body: input });
+  },
+  regenerateRecoveryCodes(code: string): Promise<{ recovery_codes: string[] }> {
+    return apiRequest("/api/v1/auth/mfa/recovery-codes", { method: "POST", body: { code } });
+  },
+};
+
 // ---- Auth endpoints ----
 export const authApi = {
   async register(input: {
@@ -166,23 +226,32 @@ export const authApi = {
     return authApi.me();
   },
 
-  async login(email: string, password: string): Promise<MeResponse> {
-    const tok = await apiRequest<TokenResponse>("/api/v1/auth/login", {
+  async login(email: string, password: string): Promise<LoginResult> {
+    const res = await apiRequest<LoginResponse>("/api/v1/auth/login", {
       method: "POST",
       body: { email, password },
       auth: false,
     });
-    setAccessToken(tok.access_token);
-    return authApi.me();
+    return finishLogin(res);
   },
 
-  async oauthLogin(provider: string, code: string, redirect_uri: string): Promise<MeResponse> {
-    const tok = await apiRequest<TokenResponse>(`/api/v1/auth/oauth/${provider}`, {
+  async oauthLogin(provider: string, code: string, redirect_uri: string): Promise<LoginResult> {
+    const res = await apiRequest<LoginResponse>(`/api/v1/auth/oauth/${provider}`, {
       method: "POST",
       body: { code, redirect_uri },
       auth: false,
     });
-    setAccessToken(tok.access_token);
+    return finishLogin(res);
+  },
+
+  /** Second sign-in step: the challenge + a 6-digit code or a recovery code. */
+  async completeMfa(mfaToken: string, code: string): Promise<MeResponse> {
+    const res = await apiRequest<LoginResponse>("/api/v1/auth/login/mfa", {
+      method: "POST",
+      body: { mfa_token: mfaToken, code },
+      auth: false,
+    });
+    setAccessToken(res.access_token);
     return authApi.me();
   },
 

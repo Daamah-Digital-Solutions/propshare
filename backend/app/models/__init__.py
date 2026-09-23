@@ -543,6 +543,7 @@ from app.models.installments import InstallmentPayment, InstallmentPlan  # noqa:
 from app.models.investments import OwnershipLedger, PlatformSetting  # noqa: E402
 from app.models.kb import KbArticle  # noqa: E402
 from app.models.liquidity import LpExitRequest, LpPoolTier, LpPosition  # noqa: E402
+from app.models.mfa import UserMfa, UserRecoveryCode  # noqa: E402
 from app.models.milestones import PropertyMilestone  # noqa: E402
 from app.models.notifications import EmailOutbox, NotificationPreference  # noqa: E402
 from app.models.payment_methods import PaymentCustomer, SavedPaymentMethod  # noqa: E402
@@ -638,4 +639,6 @@ __all__ = [
     "SupportTicket",
     "SupportTicketMessage",
     "KbArticle",
+    "UserMfa",
+    "UserRecoveryCode",
 ]

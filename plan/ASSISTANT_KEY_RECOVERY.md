@@ -8,6 +8,17 @@ by design** — tickets, audit rows and every other table stay readable.
 
 This document is the only place that says where the key lives and how to get it back.
 
+> **Since 2026-09-23 the same key file also protects two-factor authentication.** Each
+> user's authenticator-app secret (`user_mfa.secret_enc`) is encrypted with it. Consequences:
+> - **2FA cannot be switched on until this key file exists on the server.** Without it the
+>   Account Settings panel says "Not available right now" and enrolment is refused (503) —
+>   the platform never stores a 2FA secret in plaintext. The assistant does not need to be
+>   enabled; only the key file (section 2) is required.
+> - If the key is lost, users with 2FA on can still sign in with a **recovery code** (these are
+>   hashed, not encrypted, so they do not depend on the key). A user who has neither phone nor
+>   codes is helped by staff: `/admin → Users → (user) → Reset two-factor`, audited as
+>   `mfa.admin_reset` — only after confirming the person's identity.
+
 ## 1. Where the key lives
 
 | Item | Value |
@@ -61,6 +72,7 @@ Run the backup once by hand and confirm exit 0 (`tail /var/log/capimax-backup.lo
 | Server rebuilt / key file lost, DB restored from dump | Recreate `/etc/capimax/keys/assistant.keys` from the password manager (every key id that was ever active, one line each), same ownership/mode, same `.env` pointers, restart. Transcripts read again. |
 | Key file lost **and** password manager copy lost | Transcripts are gone. Tickets, audit, users, money are unaffected. Provision a fresh `k1` (section 2); old `assistant_messages` rows can be purged (`POST /api/v1/assistant/maintenance/purge` after setting `assistant_retention_days=0` temporarily, or `DELETE FROM assistant_conversations`). |
 | Wrong key in the file (decrypt errors in the admin transcript view: "Could not decrypt") | The file does not contain the key id stored on the row (`assistant_messages.enc_key_id`). Restore the missing line from the password manager. |
+| Key file lost, users have 2FA on | Authenticator codes answer "use a recovery code" (503 `MFA_UNAVAILABLE`); recovery codes keep working. Restore the key line from the password manager and restart — codes work again. Users with no codes left: staff reset (see the note at the top). |
 | Suspected key exposure | Rotate immediately (section 3), then remove the exposed key line after re-encryption reaches 0 remaining. Review `audit_log` for `assistant.transcript_viewed`. |
 
 ## 5. Things that must stay true

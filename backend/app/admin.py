@@ -28,10 +28,10 @@ from wtforms import SelectField
 
 from app.admin_assistant import ASSISTANT_VIEWS
 from app.admin_listing import ListingEditorView, is_full_admin
-from app.admin_pages import PW_PAGE
+from app.admin_pages import PW_PAGE, TWO_FACTOR_PAGE
 from app.core.audit import write_audit
 from app.core.config import get_settings
-from app.core.db import get_engine, session_scope
+from app.core.db import get_engine, get_sessionmaker, session_scope
 from app.core.errors import AppError
 from app.models import (
     BrokerCode,
@@ -84,6 +84,7 @@ from app.services import (
     kyc_service,
     listing_service,
     manual_deposit_service,
+    mfa_service,
     property_service,
     withdrawal_service,
 )
@@ -135,6 +136,8 @@ class AdminAuth(AuthenticationBackend):
                     "admin_roles": roles,
                     # one-time password: nothing but the change-password page until replaced
                     "admin_must_change": bool(user.must_change_password),
+                    # 2FA on: nothing but the code page until the second factor passes
+                    "admin_mfa_pending": await mfa_service.is_enabled(session, user.id),
                 }
             )
         return True
@@ -154,6 +157,10 @@ class AdminAuth(AuthenticationBackend):
         rel = request.url.path
         if rel.startswith("/admin"):
             rel = rel[len("/admin") :]
+        if request.session.get("admin_mfa_pending"):
+            if rel.startswith(("/two-factor", "/statics", "/logout")):
+                return True
+            return RedirectResponse("/admin/two-factor", status_code=302)
         if request.session.get("admin_must_change"):
             if rel.startswith(("/change-password", "/statics", "/logout")):
                 return True
@@ -550,6 +557,30 @@ class UserAdmin(AdminOnlyModelView, model=User):
     )
     async def verify_kyc(self, request: Request) -> RedirectResponse:
         return await self._kyc_decide(request, True)
+
+    @action(
+        name="reset-2fa",
+        label="Reset two-factor (lost phone)",
+        confirmation_message=(
+            "Turn OFF two-factor authentication for the selected user(s)? Only do this after "
+            "confirming the person's identity. They will be emailed and must set it up again."
+        ),
+        add_in_detail=True,
+        add_in_list=False,
+    )
+    async def reset_2fa(self, request: Request) -> RedirectResponse:
+        pks = [p for p in request.query_params.get("pks", "").split(",") if p]
+        actor = request.session.get("admin_id")
+        actor_uuid = uuid.UUID(actor) if actor else None
+        async with session_scope() as session:
+            for pk in pks:
+                try:
+                    await mfa_service.admin_reset(
+                        session, user_id=uuid.UUID(pk), actor_id=actor_uuid
+                    )
+                except (AppError, ValueError):
+                    continue
+        return _back(request)
 
     @action(
         name="reject_kyc",
@@ -1546,6 +1577,52 @@ _UPLOAD_PAGE = """<!doctype html><html><head><meta charset="utf-8">
 </div></body></html>"""
 
 
+class TwoFactorView(BaseView):
+    """Second sign-in step for panel users with two-factor authentication on."""
+
+    name = "Two-factor sign-in"
+    icon = "fa-solid fa-shield-halved"
+
+    def is_visible(self, request: Request) -> bool:
+        return False
+
+    def is_accessible(self, request: Request) -> bool:
+        return bool(request.session.get("admin_id"))
+
+    @expose("/two-factor", methods=["GET", "POST"])
+    async def two_factor(self, request: Request):
+        actor = request.session.get("admin_id")
+        if not actor:
+            return RedirectResponse("/admin/login", status_code=302)
+        if not request.session.get("admin_mfa_pending"):
+            return RedirectResponse("/admin/", status_code=302)
+        error = ""
+        if request.method == "POST":
+            form = await request.form()
+            code = str(form.get("code") or "").strip()
+            # A plain session (not session_scope): the service commits the failure counter
+            # itself before raising, so a wrong code still counts toward the lockout.
+            async with get_sessionmaker()() as session:
+                user = await session.get(User, uuid.UUID(actor))
+                if user is None:
+                    return RedirectResponse("/admin/logout", status_code=302)
+                try:
+                    await mfa_service.verify_second_factor(session, user, code)
+                    await session.commit()
+                except AppError as exc:
+                    await session.rollback()
+                    error = exc.message
+            if not error:
+                request.session["admin_mfa_pending"] = False
+                must_change = request.session.get("admin_must_change")
+                nxt = "/admin/change-password" if must_change else "/admin/"
+                return RedirectResponse(nxt, status_code=303)
+        page = TWO_FACTOR_PAGE.replace(
+            "__ERR__", f'<div class="err">{_html.escape(error)}</div>' if error else ""
+        )
+        return HTMLResponse(page, status_code=400 if error else 200)
+
+
 class PasswordChangeView(BaseView):
     """Change the signed-in panel user's password. Mandatory (nothing else opens) while the
     account still carries a staff-issued one-time password."""
@@ -1847,6 +1924,7 @@ def setup_admin(app) -> Admin:
         DocumentUploadView,
         ListingEditorView,
         PasswordChangeView,
+        TwoFactorView,
         RoleDocView,
         *ASSISTANT_VIEWS,
     ):

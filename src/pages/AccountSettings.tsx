@@ -14,6 +14,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { profileApi, authApi, notificationApi, ApiError } from "@/lib/api";
 import type { NotificationPreferences as ApiNotificationPreferences } from "@/lib/api";
 import { RoleAccessCard } from "@/components/account/RoleAccessCard";
+import { TwoFactorSettings } from "@/components/account/TwoFactorSettings";
 import {
   Settings,
   User,
@@ -520,16 +521,7 @@ const AccountSettings = () => {
                 </Badge>
               </div>
 
-              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg opacity-75">
-                <div className="flex items-center gap-3">
-                  <Smartphone className="h-5 w-5 text-muted-foreground" />
-                  <div>
-                    <p className="font-medium text-foreground">Two-Factor Authentication</p>
-                    <p className="text-sm text-muted-foreground">Not available yet</p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm" disabled>Enable</Button>
-              </div>
+              <TwoFactorSettings />
 
               <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg opacity-75">
                 <div className="flex items-center gap-3">
