@@ -54,7 +54,9 @@ SOURCES: tuple[Source, ...] = (
         "ar",
         "علاقة كابي مكس بروبشير بمنظومة كابي مكس (2026)",
     ),
-    Source("partners", "partners_register_2026.md", "en", "PropShare partners page register (2026)"),
+    Source(
+        "partners", "partners_register_2026.md", "en", "PropShare partners page register (2026)"
+    ),
     Source(
         "entities",
         "operating_entities_2026.md",

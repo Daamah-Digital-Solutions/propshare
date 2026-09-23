@@ -103,9 +103,7 @@ async def test_passages_removed_from_the_sources_are_retired(client, db, monkeyp
     assert await seed._seed(email) == 0
     gone = full[-1]
     assert db("SELECT status FROM kb_articles WHERE slug=:s", s=gone.slug) == [("retired",)]
-    assert (
-        db("SELECT count(*) FROM kb_articles WHERE status='approved'")[0][0] == len(full) - 1
-    )
+    assert db("SELECT count(*) FROM kb_articles WHERE status='approved'")[0][0] == len(full) - 1
 
 
 @pytest.mark.parametrize(
