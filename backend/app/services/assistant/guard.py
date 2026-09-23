@@ -69,6 +69,7 @@ DEEP_LINKS: dict[str, tuple[str, str]] = {
     "wallet": ("/dashboard?tab=wallet", "Open your wallet"),
     "deposit": ("/dashboard?tab=wallet", "Add funds from your wallet"),
     "withdraw": ("/dashboard?tab=wallet", "Request a withdrawal from your wallet"),
+    "statement": ("/dashboard?tab=wallet", "Download an account statement (PDF or Excel)"),
     "portfolio": ("/dashboard?tab=investments", "Open your investments"),
     "installments": ("/dashboard?tab=installments", "Your installment plans"),
     "returns": ("/dashboard?tab=returns", "Your returns and distributions"),

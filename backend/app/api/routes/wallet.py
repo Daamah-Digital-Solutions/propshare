@@ -4,6 +4,7 @@
 - POST /wallet/deposit       create a deposit intent -> hosted checkout URL.
                              KYC-gated (verified users only); Idempotency-Key required.
 - GET  /wallet/transactions  paginated ledger.
+- GET  /wallet/statement     account statement for a chosen period (PDF or Excel).
 
 Deposits are credited ONLY by the provider webhook (see routes/payments.py), never
 here — this endpoint just creates the intent.
@@ -11,11 +12,16 @@ here — this endpoint just creates the intent.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query, Request
+import datetime as dt
+from typing import Annotated, Literal
+
+from fastapi import APIRouter, Query, Request, Response
 
 from app.api.deps import KycVerifiedDep, PrincipalDep, SessionDep
+from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.errors import AppError
+from app.core.ratelimit import STATEMENT_LIMIT, limiter
 from app.schemas.payout_methods import BankClaimIn, PlatformBankAccountOut
 from app.schemas.wallet import (
     DepositIn,
@@ -29,10 +35,52 @@ from app.services import (
     manual_deposit_service,
     payment_service,
     platform_accounts_service,
+    statement_render,
+    statement_service,
     wallet_service,
 )
 
 router = APIRouter(prefix="/api/v1/wallet", tags=["wallet"])
+
+_STATEMENT_TYPES = {
+    "pdf": "application/pdf",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+@router.get("/statement")
+@limiter.limit(STATEMENT_LIMIT)
+async def statement(
+    request: Request,
+    principal: PrincipalDep,
+    session: SessionDep,
+    start: Annotated[dt.date, Query(description="First day, inclusive (UTC)")],
+    end: Annotated[dt.date, Query(description="Last day, inclusive (UTC)")],
+    format: Annotated[Literal["pdf", "xlsx"], Query()] = "pdf",  # noqa: A002
+):
+    """The signed-in user's own account statement. Only their ledger is ever read."""
+    stmt = await statement_service.build_statement(session, principal.user_id, start, end)
+    body = (
+        statement_render.render_pdf(stmt) if format == "pdf" else statement_render.render_xlsx(stmt)
+    )
+    await write_audit(
+        session,
+        action="statement.exported",
+        entity_type="user",
+        entity_id=str(principal.user_id),
+        actor_id=principal.user_id,
+        after={"start": start.isoformat(), "end": end.isoformat(), "format": format},
+    )
+    return Response(
+        content=body,
+        media_type=_STATEMENT_TYPES[format],
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{statement_service.filename(stmt, format)}"'
+            ),
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/me", response_model=WalletOut)

@@ -96,8 +96,12 @@ payouts are switched on, an eligible debit card can receive the money within min
 small fee that is shown before you confirm and deducted from the amount; if an instant payout
 cannot go through it is sent at standard speed instead, never lost. You see every withdrawal,
 its speed, fee and status in your wallet and are notified when it is paid or rejected
-(rejected funds return to your wallet). If a payment looks stuck, the assistant can show its
-current status and open a support ticket with the reference for a person to follow up.""",
+(rejected funds return to your wallet). An account statement for any period you choose (up to
+three years at a time) can be downloaded as a PDF or an Excel file from the Account statement
+card on the wallet page: opening and closing balance, every movement with a running balance,
+totals by type and your holdings at the end of the period. If a payment looks stuck, the
+assistant can show its current status and open a support ticket with the reference for a
+person to follow up.""",
     ),
     (
         "fees-overview",
@@ -352,7 +356,10 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 والمملكة المتحدة والمنطقة الاقتصادية الأوروبية وكندا وسويسرا). وحيث يكون السحب الفوري مفعّلًا،
 يمكن أن يصل المبلغ إلى بطاقة خصم مؤهلة خلال دقائق مقابل رسم صغير يُعرض قبل التأكيد ويُخصم من
 المبلغ؛ وإن تعذّر الصرف الفوري يُرسل بالسرعة العادية ولا يضيع. ترى كل سحب وسرعته ورسمه وحالته في
-المحفظة ويصلك إشعار عند الصرف أو الرفض (المبلغ المرفوض يعود لمحفظتك). إن بدا دفع متوقفًا،
+المحفظة ويصلك إشعار عند الصرف أو الرفض (المبلغ المرفوض يعود لمحفظتك). ويمكنك تنزيل كشف حساب لأي
+فترة تختارها (حتى ثلاث سنوات في المرة) بصيغة PDF أو Excel من بطاقة "كشف الحساب" في صفحة المحفظة:
+الرصيد الافتتاحي والختامي، وكل حركة مع الرصيد بعدها، والإجماليات حسب النوع، وحيازاتك في نهاية
+الفترة. إن بدا دفع متوقفًا،
 يستطيع المساعد عرض حالته الحالية وفتح تذكرة دعم بالمرجع ليتابعها شخص من الفريق.""",
     ),
     (

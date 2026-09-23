@@ -1,8 +1,8 @@
 /**
  * Second sign-in step. The password already passed; no session exists until a code does.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { complete, fail, FakeApiError } = vi.hoisted(() => ({
   complete: vi.fn(),
@@ -38,6 +38,13 @@ const typeCode = (code: string) => {
 };
 
 describe("MfaChallenge", () => {
+  // input-otp schedules 0/10/50 ms timers on every value change and never clears them;
+  // let them fire while the DOM still exists, or they throw after teardown.
+  afterEach(async () => {
+    cleanup();
+    await new Promise((r) => setTimeout(r, 80));
+  });
+
   beforeEach(() => {
     complete.mockReset();
     fail.error = null;

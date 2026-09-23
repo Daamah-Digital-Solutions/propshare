@@ -26,3 +26,4 @@ TICKET_LIMIT = "5/minute"  # public support form, per IP
 RESEND_VERIFY_LIMIT = "3/minute"
 # second sign-in step + 2FA management; the per-account lockout is the real brute-force guard
 MFA_LIMIT = "10/minute"
+STATEMENT_LIMIT = "10/minute"  # statement downloads (PDF/Excel rendering), per IP

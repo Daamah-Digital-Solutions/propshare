@@ -118,7 +118,17 @@ export async function fetchBlob(path: string, _retried = false): Promise<Blob> {
     const ok = await refreshAccessToken();
     if (ok) return fetchBlob(path, true);
   }
-  if (!resp.ok) throw new ApiError("DOWNLOAD_FAILED", `Download failed (${resp.status})`, resp.status);
+  if (!resp.ok) {
+    // surface the server's own message (e.g. "choose a shorter period") when it sent one
+    const body = await resp.json().catch(() => null);
+    const err = body?.error;
+    throw new ApiError(
+      err?.code ?? "DOWNLOAD_FAILED",
+      err?.message ?? `Download failed (${resp.status})`,
+      resp.status,
+      err?.details,
+    );
+  }
   return resp.blob();
 }
 
@@ -615,9 +625,16 @@ export interface PaymentStatus {
   created_at: string;
 }
 
+export type StatementFormat = "pdf" | "xlsx";
+
 export const walletApi = {
   getMe(): Promise<WalletResponse> {
     return apiRequest<WalletResponse>("/api/v1/wallet/me");
+  },
+  /** Account statement for a period (YYYY-MM-DD, both days included, UTC) as PDF or Excel. */
+  downloadStatement(start: string, end: string, format: StatementFormat): Promise<Blob> {
+    const q = new URLSearchParams({ start, end, format });
+    return fetchBlob(`/api/v1/wallet/statement?${q.toString()}`);
   },
   transactions(limit = 50, offset = 0): Promise<TransactionListResponse> {
     return apiRequest<TransactionListResponse>(

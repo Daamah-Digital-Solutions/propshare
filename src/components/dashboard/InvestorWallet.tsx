@@ -36,6 +36,7 @@ import {
   Star,
 } from "lucide-react";
 import { ExitButton } from "@/components/exit/ExitButton";
+import { AccountStatementCard } from "@/components/dashboard/AccountStatementCard";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   walletApi,
@@ -1049,6 +1050,8 @@ export const InvestorWallet = () => {
           </CardContent>
         </Card>
       </div>
+
+      <AccountStatementCard />
     </div>
   );
 };

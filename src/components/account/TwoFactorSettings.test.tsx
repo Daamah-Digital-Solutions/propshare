@@ -3,9 +3,9 @@
  * row: enrol with a QR code + first code, recovery codes shown once and acknowledged,
  * turn off with password + code (code only for Google accounts).
  */
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const { api } = vi.hoisted(() => ({
   api: {
@@ -45,6 +45,13 @@ function mount() {
 }
 
 describe("TwoFactorSettings", () => {
+  // input-otp schedules 0/10/50 ms timers on every value change and never clears them;
+  // let them fire while the DOM still exists, or they throw after teardown.
+  afterEach(async () => {
+    cleanup();
+    await new Promise((r) => setTimeout(r, 80));
+  });
+
   beforeEach(() => Object.values(api).forEach((m) => m.mockReset()));
 
   it("enrols: QR + key, first code, then recovery codes that must be acknowledged", async () => {
