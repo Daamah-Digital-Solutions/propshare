@@ -22,6 +22,7 @@ import dataclasses
 import datetime as dt
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -286,6 +287,18 @@ def _safe_text(lang: str) -> str:
     return SAFE_MODE_TEXT["ar" if lang.startswith("ar") else "en"]
 
 
+_SIGN_IN_RE = re.compile(
+    r"sign(ed)?[\s-]?in|log[\s-]?in|create (an|a free) account|sign[\s-]?up|"
+    r"تسجيل الدخول|سجّ?ل (الدخول|دخولك)|سجل دخول|انشئ حساب|أنشئ حساب|إنشاء حساب",
+    re.I,
+)
+
+
+def _needs_sign_in(text: str, tool_log: list[dict[str, Any]]) -> bool:
+    """A visitor's answer that asks them to sign in (or a tool refused them): offer the way in."""
+    return bool(_SIGN_IN_RE.search(text)) or any(not t.get("ok", True) for t in tool_log)
+
+
 def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -> dict | None:
     """Server-built cards from a successful tool result. The model never authors these."""
     if name == "prepare_deep_link":
@@ -531,6 +544,16 @@ async def run_turn(
                 card = {"kind": "link", "path": link["path"], "label": link["label"]}
                 cards.append(card)
                 yield _event("card", **card)
+        # a visitor told to sign in always gets the buttons, whatever the model wrote
+        if ctx.is_visitor and _needs_sign_in(final_text, tool_log):
+            arabic = bool(re.search(r"[\u0600-\u06ff]", final_text))
+            for route_id in ("sign_in", "register"):
+                link = guard.make_link(route_id)
+                label = guard.SIGN_IN_LABELS_AR[route_id] if arabic else link["label"]
+                if not any(c.get("path") == link["path"] for c in cards):
+                    card = {"kind": "link", "path": link["path"], "label": label}
+                    cards.append(card)
+                    yield _event("card", **card)
 
     latency_ms = int((time.monotonic() - started_at) * 1000)
     assistant_row = AssistantMessage(

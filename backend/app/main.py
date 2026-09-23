@@ -7,6 +7,7 @@ from Phase 1 onward.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
@@ -66,7 +67,14 @@ async def lifespan(_: FastAPI):
     settings = get_settings()
     logging.basicConfig(level=settings.log_level)
     logger.info("starting capimax-backend v%s (env=%s)", __version__, settings.environment)
+    warm_task = None
+    if settings.assistant_configured:
+        from app.services.assistant import cache_warm
+
+        warm_task = asyncio.create_task(cache_warm.run_forever())
     yield
+    if warm_task is not None:
+        warm_task.cancel()
     await dispose_engine()
     await close_redis()
     logger.info("shutdown complete")

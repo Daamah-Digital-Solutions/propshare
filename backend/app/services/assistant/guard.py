@@ -62,6 +62,8 @@ def authorize(spec: ToolSpec, ctx: AgentContext) -> None:
 # Every path here MUST be a real route of the SPA (src/App.tsx) and every ``?tab=`` a tab the
 # page actually opens from the URL — test_assistant_deep_links.py enforces both.
 DEEP_LINKS: dict[str, tuple[str, str]] = {
+    "sign_in": ("/auth", "Sign in"),
+    "register": ("/auth?tab=register", "Create a free account"),
     "marketplace": ("/marketplace", "Browse properties"),
     "property": ("/property/{slug}", "Open the property page"),
     "developer": ("/developers/{slug}", "Open the developer's profile"),
@@ -282,6 +284,10 @@ FORBIDDEN_TERMS = (
 
 
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(\s*(/[^)\s]*)\s*\)")
+# a line holding only a link (optionally bulleted), e.g. "- [Sign in](/auth)"
+_LINK_ONLY_LINE_RE = re.compile(r"^[ \t>*\-\u2022]*\[([^\]]+)\]\(\s*(/[^)\s]*)\s*\)[ \t.:]*$", re.M)
+# the automatic sign-in buttons in the reply's language
+SIGN_IN_LABELS_AR = {"sign_in": "تسجيل الدخول", "register": "إنشاء حساب مجاني"}
 _BARE_PATH_RE = re.compile(
     r"(?<![\w/.])(/[a-z][a-z0-9-]*(?:/[a-z0-9][a-z0-9-]*)*(?:\?[a-z_]+=[a-z_]+)?)(?![\w/])"
 )
@@ -303,11 +309,26 @@ def postprocess_output(text: str) -> tuple[str, list[str], list[dict[str, str]]]
     """Strip links that are not ours, flag forbidden wording, and collect the platform
     routes the text refers to. Returns (text, flags, links).
 
-    The model is told to hand out pages only through ``prepare_deep_link``, but it still
-    types relative markdown links it has seen. An allow-listed path becomes a real link card
-    (``links``); anything else is reduced to its label so no unknown route reaches the user."""
+    The model links pages as markdown ``[label](path)``. An allow-listed path becomes a link
+    card (``links``) carrying the model's own label, so the button speaks the reply's
+    language; a line that was nothing but a link is removed (the button replaces it, instead
+    of the same words appearing twice). Anything not allow-listed is reduced to its label so
+    no unknown route reaches the user."""
     flags: list[str] = []
     links: list[dict[str, str]] = []
+
+    def _label(route_id: str, label: str) -> str:
+        label = re.sub(r"[*_`]", "", label).strip()
+        return label[:60] if label else DEEP_LINKS[route_id][1]
+
+    def _link_only_line(m: re.Match) -> str:
+        label, path = m.group(1), m.group(2)
+        route_id = allowed_route_for(path)
+        if route_id is None:
+            return m.group(0)  # handled (and flagged) by the inline pass below
+        if not any(link["path"] == path for link in links):
+            links.append({"route_id": route_id, "path": path, "label": _label(route_id, label)})
+        return ""
 
     def _link(m: re.Match) -> str:
         url = m.group(0)
@@ -323,10 +344,12 @@ def postprocess_output(text: str) -> tuple[str, list[str], list[dict[str, str]]]
             flags.append("unknown_route_removed")
             return label
         if not any(link["path"] == path for link in links):
-            links.append({"route_id": route_id, "path": path, "label": DEEP_LINKS[route_id][1]})
+            links.append({"route_id": route_id, "path": path, "label": _label(route_id, label)})
         return label
 
     cleaned = _URL_RE.sub(_link, text)
+    cleaned = _LINK_ONLY_LINE_RE.sub(_link_only_line, cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     cleaned = _MD_LINK_RE.sub(_md, cleaned)
     for m in _BARE_PATH_RE.finditer(cleaned):
         path = m.group(1)

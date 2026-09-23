@@ -147,4 +147,42 @@ describe("AssistantWidget", () => {
     await waitFor(() => expect(screen.getByText("Hello again")).toBeInTheDocument());
     expect(api.messages).toHaveBeenCalledWith("conv-old");
   });
+  it("greets a visitor with the way in and one-tap questions that send themselves", async () => {
+    authState.isAuthenticated = false;
+    try {
+      const visitor = { ...enabled, visitor_allowed: true };
+      api.status.mockResolvedValue(visitor);
+      stream.events = [
+        { event: "started", data: { conversation_id: "conv-1" } },
+        { event: "delta", data: { text: "Units are shares of one property." } },
+        { event: "done", data: { message_id: "m1", confidence: "normal", safe_mode: null } },
+      ];
+      renderIt(visitor);
+      open();
+      const signIn = await screen.findByRole("link", { name: /sign in/i });
+      expect(signIn).toHaveAttribute("href", "/auth");
+      expect(screen.getByRole("link", { name: /create a free account/i })).toHaveAttribute(
+        "href",
+        "/auth?tab=register",
+      );
+      const starters = screen.getByTestId("assistant-starters");
+      expect(starters).toHaveTextContent(/how does fractional ownership work/i);
+      expect(starters).not.toHaveTextContent(/my balance/i);
+      fireEvent.click(screen.getByRole("button", { name: /how does fractional ownership work/i }));
+      await screen.findByText("How does fractional ownership work?", { selector: "p, div, span" });
+      await screen.findByText(/units are shares of one property/i);
+      expect(screen.queryByTestId("assistant-starters")).toBeNull(); // gone once the chat starts
+    } finally {
+      authState.isAuthenticated = true;
+    }
+  });
+
+  it("offers a member account questions and no sign-in buttons", async () => {
+    api.status.mockResolvedValue(enabled);
+    renderIt(enabled);
+    open();
+    const starters = await screen.findByTestId("assistant-starters");
+    expect(starters).toHaveTextContent(/what is my balance/i);
+    expect(screen.queryByRole("link", { name: /sign in/i })).toBeNull();
+  });
 });

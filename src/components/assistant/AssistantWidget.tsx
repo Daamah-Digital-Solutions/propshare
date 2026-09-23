@@ -47,6 +47,24 @@ const WELCOME_EN =
 const WELCOME_AR =
   "أهلًا! أقدر أشرح لك كيف تعمل Capimax PropShare، وأراجع حسابك، وأوصّلك للصفحة الصحيحة. كيف أساعدك؟";
 
+/** One-tap questions under the welcome message, so nobody faces an empty box. */
+const STARTERS = {
+  visitor: {
+    en: ["How does fractional ownership work?", "Show me properties in Dubai", "What fees will I pay?", "How do I start investing?"],
+    ar: ["إزاي الملكية الجزئية بتشتغل؟", "وريني العقارات المتاحة في دبي", "إيه الرسوم اللي هدفعها؟", "أبدأ استثمار إزاي؟"],
+  },
+  member: {
+    en: ["What is my balance?", "Show my investments", "I need an account statement", "How do I withdraw my money?"],
+    ar: ["رصيدي كام؟", "وريني استثماراتي", "عايز كشف حساب", "أسحب فلوسي إزاي؟"],
+  },
+} as const;
+
+/** A visitor sees the way in from the first message, not only after asking. */
+const VISITOR_WELCOME_CARDS: AssistantCard[] = [
+  { kind: "link", path: "/auth", label: "Sign in" },
+  { kind: "link", path: "/auth?tab=register", label: "Create a free account" },
+];
+
 function isArabic(text: string): boolean {
   const letters = text.replace(/[^\p{L}]/gu, "");
   if (!letters) return false;
@@ -150,8 +168,14 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
   const abortRef = useRef<AbortController | null>(null);
 
   const welcome = useCallback(
-    (): Msg => ({ id: "welcome", role: "assistant", text: lang === "ar" ? WELCOME_AR : WELCOME_EN, cards: [], tools: [] }),
-    [lang],
+    (): Msg => ({
+      id: "welcome",
+      role: "assistant",
+      text: lang === "ar" ? WELCOME_AR : WELCOME_EN,
+      cards: isAuthenticated ? [] : VISITOR_WELCOME_CARDS,
+      tools: [],
+    }),
+    [lang, isAuthenticated],
   );
 
   // Restore (or start) this identity's conversation when the panel opens.
@@ -250,8 +274,8 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
     }
   }, [status.policy_version, welcome]);
 
-  const send = useCallback(async () => {
-    const text = input.trim();
+  const send = useCallback(async (preset?: string) => {
+    const text = (preset ?? input).trim();
     if (!text || busy) return;
     setError("");
     const turnLang: "en" | "ar" = isArabic(text) ? "ar" : lang;
@@ -445,6 +469,22 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                   {m.cards.map((c, i) => (
                     <AssistantCardView key={`${m.id}-c${i}`} card={c} onClose={() => setOpen(false)} />
                   ))}
+                  {m.id === "welcome" && messages.length === 1 && !needsConsent && !blocked && (
+                    <div className="mt-2 flex flex-wrap gap-1.5" data-testid="assistant-starters">
+                      {STARTERS[isAuthenticated ? "member" : "visitor"][lang === "ar" ? "ar" : "en"].map((q) => (
+                        <button
+                          key={q}
+                          type="button"
+                          dir="auto"
+                          disabled={busy}
+                          onClick={() => void send(q)}
+                          className="rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs text-primary hover:bg-primary/10 disabled:opacity-50"
+                        >
+                          {q}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {m.role === "assistant" && m.done && (
                     <div className="mt-1 flex items-center gap-1 text-muted-foreground">
                       <button type="button" aria-label="Helpful" onClick={() => void feedback(m, "up")} className={cn("rounded p-1 hover:text-primary", m.feedback === "up" && "text-primary")}>

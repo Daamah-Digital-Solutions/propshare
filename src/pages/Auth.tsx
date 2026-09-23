@@ -22,6 +22,9 @@ import {
   Apple,
 } from "lucide-react";
 
+// Tabs a link may open directly (the assistant links to ?tab=register).
+const AUTH_TABS = ["login", "register"];
+
 const Auth = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -231,7 +234,10 @@ const Auth = () => {
                 }}
               />
             ) : (
-            <Tabs defaultValue="login" className="space-y-6">
+            <Tabs
+              defaultValue={AUTH_TABS.includes(searchParams.get("tab") ?? "") ? searchParams.get("tab")! : "login"}
+              className="space-y-6"
+            >
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="login">Sign In</TabsTrigger>
                 <TabsTrigger value="register">Register</TabsTrigger>

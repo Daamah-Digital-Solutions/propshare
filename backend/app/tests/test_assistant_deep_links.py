@@ -24,6 +24,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 APP_TSX = ROOT / "src" / "App.tsx"
 DASHBOARD_TSX = ROOT / "src" / "pages" / "InvestorDashboard.tsx"
 SETTINGS_TSX = ROOT / "src" / "pages" / "AccountSettings.tsx"
+AUTH_TSX = ROOT / "src" / "pages" / "Auth.tsx"
 
 
 def _spa_routes() -> list[re.Pattern]:
@@ -40,6 +41,7 @@ def _tabs(source: pathlib.Path, const: str) -> set[str]:
 TAB_SOURCES = {
     "/dashboard": (DASHBOARD_TSX, "validTabs"),
     "/settings": (SETTINGS_TSX, "SETTINGS_TABS"),
+    "/auth": (AUTH_TSX, "AUTH_TABS"),
 }
 
 
