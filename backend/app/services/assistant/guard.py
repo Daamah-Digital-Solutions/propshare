@@ -59,29 +59,50 @@ def authorize(spec: ToolSpec, ctx: AgentContext) -> None:
 # --------------------------------------------------------------------------- #
 # Deep links: the ONLY URLs the model may hand out
 # --------------------------------------------------------------------------- #
+# Every path here MUST be a real route of the SPA (src/App.tsx) and every ``?tab=`` a tab the
+# page actually opens from the URL — test_assistant_deep_links.py enforces both.
 DEEP_LINKS: dict[str, tuple[str, str]] = {
     "marketplace": ("/marketplace", "Browse properties"),
     "property": ("/property/{slug}", "Open the property page"),
-    "wallet": ("/wallet", "Open your wallet"),
-    "deposit": ("/wallet?tab=deposit", "Add funds"),
-    "withdraw": ("/wallet?tab=withdraw", "Request a withdrawal"),
-    "portfolio": ("/portfolio", "Open your portfolio"),
-    "kyc": ("/account?tab=verification", "Start or continue identity verification"),
-    "account": ("/account", "Open your account settings"),
-    "installments": ("/portfolio?tab=installments", "Your installment plans"),
+    "developer": ("/developers/{slug}", "Open the developer's profile"),
+    "dashboard": ("/dashboard", "Open your dashboard"),
+    "wallet": ("/dashboard?tab=wallet", "Open your wallet"),
+    "deposit": ("/dashboard?tab=wallet", "Add funds from your wallet"),
+    "withdraw": ("/dashboard?tab=wallet", "Request a withdrawal from your wallet"),
+    "portfolio": ("/dashboard?tab=investments", "Open your investments"),
+    "installments": ("/dashboard?tab=installments", "Your installment plans"),
+    "returns": ("/dashboard?tab=returns", "Your returns and distributions"),
+    "certificates": ("/dashboard?tab=certificates", "Your investment certificates"),
+    "documents": ("/dashboard?tab=documents", "Your documents"),
+    "verification_center": ("/dashboard?tab=verification", "Verification Center"),
+    "my_exits": ("/dashboard?tab=exits", "Your exit requests"),
+    "family": ("/dashboard?tab=family", "Family investment group"),
+    "kyc": ("/kyc", "Start or continue identity verification"),
+    "account": ("/settings", "Open your account settings"),
+    "security": ("/settings?tab=security", "Password and two-factor authentication"),
+    "roles": ("/settings", "Request another role (Account settings)"),
+    "reports": ("/reports", "Reports"),
     "secondary_market": ("/secondary-market", "Secondary market"),
     "liquidity_market": ("/liquidity-market", "Liquidity provider market"),
     "exit": ("/exit-mechanisms", "How to exit an investment"),
     "notifications": ("/notifications", "Your notifications"),
     "support": ("/support", "Contact support"),
+    "tickets": ("/support/tickets", "Your support tickets"),
     "fees": ("/fees", "Fees"),
     "how_it_works": ("/how-it-works", "How it works"),
     "faq": ("/faq", "Frequently asked questions"),
-    "family": ("/family", "Family investment group"),
-    "broker": ("/broker", "Broker dashboard"),
-    "roles": ("/account?tab=roles", "Request another role"),
+    "broker": ("/broker-dashboard", "Broker dashboard"),
+    "owner": ("/owner-dashboard", "Owner dashboard"),
+    "liquidity_dashboard": ("/liquidity-dashboard", "Liquidity provider dashboard"),
 }
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,120}$")
+# developer slugs keep non-Latin letters (an Arabic company name stays Arabic)
+_DEV_SLUG_RE = re.compile(r"^[^\W_][\w-]{0,120}$")
+
+
+def _slug_ok(route_id: str, slug: str) -> bool:
+    pattern = _DEV_SLUG_RE if route_id == "developer" else _SLUG_RE
+    return bool(pattern.match(slug))
 
 
 def make_link(route_id: str, slug: str | None = None) -> dict[str, str]:
@@ -89,8 +110,8 @@ def make_link(route_id: str, slug: str | None = None) -> dict[str, str]:
         raise AppError("UNKNOWN_ROUTE", f"No link for {route_id!r}.", status_code=422)
     path, label = DEEP_LINKS[route_id]
     if "{slug}" in path:
-        if not slug or not _SLUG_RE.match(slug):
-            raise AppError("BAD_SLUG", "A valid property slug is required.", status_code=422)
+        if not slug or not _slug_ok(route_id, slug):
+            raise AppError("BAD_SLUG", "A valid slug is required.", status_code=422)
         path = path.replace("{slug}", slug)
     return {"route_id": route_id, "path": path, "label": label}
 
@@ -260,7 +281,9 @@ FORBIDDEN_TERMS = (
 
 
 _MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(\s*(/[^)\s]*)\s*\)")
-_BARE_PATH_RE = re.compile(r"(?<![\w/.])(/[a-z][a-z0-9-]*(?:\?[a-z_]+=[a-z_]+)?)(?![\w/])")
+_BARE_PATH_RE = re.compile(
+    r"(?<![\w/.])(/[a-z][a-z0-9-]*(?:/[a-z0-9][a-z0-9-]*)*(?:\?[a-z_]+=[a-z_]+)?)(?![\w/])"
+)
 
 
 def allowed_route_for(path: str) -> str | None:
@@ -268,7 +291,7 @@ def allowed_route_for(path: str) -> str | None:
     for route_id, (pattern, _label) in DEEP_LINKS.items():
         if "{slug}" in pattern:
             prefix = pattern.split("{slug}")[0]
-            if path.startswith(prefix) and _SLUG_RE.match(path[len(prefix) :] or ""):
+            if path.startswith(prefix) and _slug_ok(route_id, path[len(prefix) :]):
                 return route_id
         elif path == pattern:
             return route_id

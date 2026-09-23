@@ -21,3 +21,8 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: () => {},
   }),
 });
+
+// jsdom lacks elementFromPoint, which input-otp (the 2FA code field) polls on a timer.
+if (!document.elementFromPoint) {
+  document.elementFromPoint = () => null;
+}

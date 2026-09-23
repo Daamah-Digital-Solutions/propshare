@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,9 +57,15 @@ interface NotificationPreferences {
   smsSecurityAlerts: boolean;
 }
 
+// Tabs a link may open directly (the assistant links to ?tab=security).
+const SETTINGS_TABS = ["profile", "security", "notifications"];
+
 const AccountSettings = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab") ?? "";
+  const activeTab = SETTINGS_TABS.includes(tabParam) ? tabParam : "profile";
   const { user, isAuthenticated } = useAuth();
   const emailVerified = !!user?.email_verified;
   const kycVerified = user?.kyc_status === "verified";
@@ -253,7 +259,7 @@ const AccountSettings = () => {
         </div>
       </div>
 
-      <Tabs defaultValue="profile" className="space-y-6">
+      <Tabs value={activeTab} onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })} className="space-y-6">
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="profile" className="gap-2">
             <User className="h-4 w-4" />

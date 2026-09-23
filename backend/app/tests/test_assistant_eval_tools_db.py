@@ -79,7 +79,7 @@ def _result(**over) -> dict:
         "answer": "Your balance is $2,500.00 and your verification is verified.",
         "tools": ["get_my_wallet"],
         "tool_errors": [],
-        "cards": [{"kind": "link", "path": "/wallet"}],
+        "cards": [{"kind": "link", "path": "/dashboard?tab=wallet"}],
         "raw_results": [{"balance": "2500.00", "kyc_status": "verified"}],
         "platform_context": "signed_in: true\ntoday: 2026-09-20 (UTC)",
         "usage": {"cost_usd": "0.001"},

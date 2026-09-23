@@ -24,6 +24,7 @@ from app.services import (
     platform_accounts_service,
     property_service,
     settings_service,
+    withdrawal_service,
 )
 from app.services.assistant import guard
 from app.services.assistant.context import AgentContext
@@ -68,11 +69,21 @@ class DepositRails(ToolOutput):
     bank_transfer: bool
 
 
+class WithdrawalRails(ToolOutput):
+    bank: str  # "automatic" (paid through the provider on request) or "reviewed" (by the team)
+    crypto: str
+    instant_enabled: bool
+    instant_fee_pct: str
+    instant_max_amount: str
+    note: str
+
+
 class PlatformSettingsOut(ToolOutput):
     fees: Fees
     discounts: Discounts
     installment: InstallmentTerms
     deposit_rails: DepositRails
+    withdrawal_rails: WithdrawalRails
     currency: str
     as_of: str
 
@@ -113,16 +124,43 @@ async def _get_platform_settings(session: AsyncSession, ctx: AgentContext, args)
             "crypto": payment_service.provider_configured("crypto"),
             "bank_transfer": len(banks) > 0,
         },
+        "withdrawal_rails": await _withdrawal_rails(session),
         "currency": get_settings().wallet_currency,
         "as_of": _now(),
+    }
+
+
+async def _withdrawal_rails(session: AsyncSession) -> dict:
+    config = await withdrawal_service.payout_config(session)
+    modes = {
+        m: "reviewed" if v["mode"] == "manual" else "automatic"
+        for m, v in config["methods"].items()
+    }
+    instant = modes.get("bank") == "automatic" and await withdrawal_service._instant_enabled(
+        session
+    )
+    return {
+        "bank": modes.get("bank", "reviewed"),
+        "crypto": modes.get("crypto", "reviewed"),
+        "instant_enabled": instant,
+        "instant_fee_pct": str(await withdrawal_service._instant_fee_pct(session)),
+        "instant_max_amount": str(await withdrawal_service._instant_max(session)),
+        "note": (
+            "Automatic bank withdrawals go to the bank account the investor linked through "
+            "Stripe (US, UK, EEA, Canada, Switzerland); others are reviewed and paid by the "
+            "team. Instant = to an eligible debit card within minutes for the fee above, "
+            "deducted from the amount; whether a given investor can use it is shown on "
+            "their wallet page. Reviewed withdrawals are paid after the team's check."
+        ),
     }
 
 
 register(
     ToolSpec(
         "get_platform_settings",
-        "Live platform fees, discounts, the standard installment plan terms and which deposit "
-        "methods are available right now. Use this for ANY question about fees or terms.",
+        "Live platform fees, discounts, the standard installment plan terms, which deposit "
+        "methods are available and how withdrawals are paid (automatic, reviewed, instant "
+        "and its fee) right now. Use this for ANY question about fees, terms or payouts.",
         NoArgs,
         PlatformSettingsOut,
         "informational",
@@ -168,6 +206,7 @@ class PropertyCard(ToolOutput):
     funding_progress: float | None
     available_units: int
     developer_name: str | None
+    developer_slug: str | None
 
 
 class SearchPropertiesOut(ToolOutput):
@@ -198,6 +237,7 @@ def _card(row: dict) -> dict:
         "funding_progress": row["funding_progress"],
         "available_units": row["available_units"],
         "developer_name": row["developer_name"],
+        "developer_slug": row.get("developer_slug"),
     }
 
 
@@ -387,7 +427,10 @@ register(
 class DeepLinkIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     route_id: str = Field(description="One of: " + ", ".join(sorted(guard.DEEP_LINKS)))
-    slug: str | None = Field(default=None, description="Property slug (route_id=property)")
+    slug: str | None = Field(
+        default=None,
+        description="Property slug (route_id=property) or developer slug (route_id=developer)",
+    )
 
 
 class DeepLinkOut(ToolOutput):

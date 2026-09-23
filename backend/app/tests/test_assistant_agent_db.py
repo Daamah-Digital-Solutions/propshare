@@ -368,7 +368,11 @@ async def test_cards_and_confirmation_token_reach_the_user_not_the_model_or_db(
     )
     events = await _turn(asession, ctx, "open a ticket about my payment", llm)
     cards = [e["data"] for e in events if e["event"] == "card"]
-    assert cards[0] == {"kind": "link", "path": "/wallet", "label": "Open your wallet"}
+    assert cards[0] == {
+        "kind": "link",
+        "path": "/dashboard?tab=wallet",
+        "label": "Open your wallet",
+    }
     confirm = cards[1]
     assert confirm["kind"] == "confirm_action" and confirm["action"] == "create_support_ticket"
     token, pid = confirm["token"], uuid.UUID(confirm["proposal_id"])

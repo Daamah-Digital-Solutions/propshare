@@ -26,6 +26,7 @@ from app.services import (
     investment_service,
     kyc_service,
     liquidity_service,
+    mfa_service,
     notification_service,
     payment_service,
     secondary_service,
@@ -76,6 +77,7 @@ class AccountOut(ToolOutput):
     active_role: str | None
     kyc_status: str
     email_verified: bool
+    two_factor_enabled: bool
 
 
 async def _get_my_account(session: AsyncSession, ctx: AgentContext, args) -> dict:
@@ -90,6 +92,7 @@ async def _get_my_account(session: AsyncSession, ctx: AgentContext, args) -> dic
         "active_role": ctx.active_role,
         "kyc_status": ctx.kyc_status,
         "email_verified": bool(user.email_verified),
+        "two_factor_enabled": await mfa_service.is_enabled(session, user.id),
     }
 
 
@@ -97,7 +100,7 @@ register(
     ToolSpec(
         "get_my_account",
         "The signed-in user's account: name, masked email, roles, active role, "
-        "verification status.",
+        "verification status, whether two-factor authentication is on.",
         NoArgs,
         AccountOut,
         "read_own",
@@ -288,6 +291,9 @@ class WithdrawalOut(ToolOutput):
     amount: str
     method: str
     status: str
+    speed: str
+    fee: str
+    net_amount: str
     destination_masked: str | None
     failure_reason: dict[str, str] | None
     created_at: str
@@ -318,6 +324,9 @@ async def _list_my_withdrawals(session: AsyncSession, ctx: AgentContext, args) -
                 "amount": str(w.amount),
                 "method": w.method,
                 "status": w.status,
+                "speed": w.speed or "standard",
+                "fee": str(w.fee or 0),
+                "net_amount": str(w.amount - (w.fee or 0)),
                 "destination_masked": _mask_destination(w.destination),
                 "failure_reason": guard.wrap_untrusted(w.failure_reason),
                 "created_at": _iso(w.created_at),
@@ -331,7 +340,8 @@ async def _list_my_withdrawals(session: AsyncSession, ctx: AgentContext, args) -
 register(
     ToolSpec(
         "list_my_withdrawals",
-        "The signed-in user's withdrawal requests and their status. Destinations are masked.",
+        "The signed-in user's withdrawal requests: status, speed (standard or instant), "
+        "fee and the net amount paid out. Destinations are masked.",
         NoArgs,
         WithdrawalsOut,
         "read_own",

@@ -86,12 +86,18 @@ send you to the right page, but it never invests, deposits or withdraws for you.
         """Your wallet holds your available balance and any amount on hold (for example a
 withdrawal that is being processed). Deposits: card payments and crypto are credited
 automatically when the payment provider confirms them; a bank transfer must be matched to the
-reference shown on the deposit page and is credited by the team after review. Withdrawals go
-to a saved payout method (bank account or crypto wallet). A withdrawal request holds the
-amount immediately and is reviewed and paid by the team; you see its status under Wallet and
-receive a notification when it is paid or if it is rejected (rejected funds return to your
-wallet). If a payment looks stuck, the assistant can show its current status and open a
-support ticket with the reference for a person to follow up.""",
+reference shown on the deposit page and is credited by the team after review.
+Withdrawals: a request holds the amount immediately. Depending on how the platform is set up
+for each method (the assistant reads this live), a withdrawal is either paid automatically
+through the payment provider as soon as you request it, or reviewed and paid by the team.
+Automatic bank withdrawals go to a bank account you link once through Stripe from the wallet
+page (available for accounts in the US, UK, EEA, Canada and Switzerland). Where instant
+payouts are switched on, an eligible debit card can receive the money within minutes for a
+small fee that is shown before you confirm and deducted from the amount; if an instant payout
+cannot go through it is sent at standard speed instead, never lost. You see every withdrawal,
+its speed, fee and status in your wallet and are notified when it is paid or rejected
+(rejected funds return to your wallet). If a payment looks stuck, the assistant can show its
+current status and open a support ticket with the reference for a person to follow up.""",
     ),
     (
         "fees-overview",
@@ -224,11 +230,42 @@ from Account -> Roles and reviewed by the team.""",
         """The assistant answers from the platform's approved information and your own live
 account data. It can show balances, statuses, investments, plans, holdings, notifications and
 tickets; explain how things work; hand you the exact page; and, with your confirmation, resend
-your verification email, mark notifications read, or open a support ticket. It never moves
-money or changes settings, and it does not give personal investment advice. When it cannot
+your verification email, mark notifications read, update your notification preferences, cancel
+an unsold secondary-market listing, cancel a pending liquidity exit request, cancel a scheduled
+family gift, or open a support ticket. It never moves money, never changes security settings
+such as your password or two-factor authentication, and it does not give personal investment
+advice. When it cannot
 answer, it records the question for the team and offers the support link. Support tickets are
 followed up by a person; you can see and reply to your tickets from the Support page, and you
 are notified of each reply.""",
+    ),
+    (
+        "account-security-2fa",
+        "Account security and two-factor authentication",
+        "account",
+        150,
+        """You can protect your account with two-factor authentication (2FA) from Account settings
+-> Security. Scan the QR code with an authenticator app (Google Authenticator, Microsoft
+Authenticator, Authy or similar), enter the six-digit code to confirm, and save the recovery
+codes shown once: each one works a single time if you lose your phone. From then on, signing in
+with your password or with Google asks for the current code from the app. Several wrong codes
+in a row lock the second step for a short while. You can turn 2FA off or create new recovery
+codes from the same page after confirming a current code. If you lost both your phone and your
+recovery codes, open a support ticket: after the team verifies your identity an administrator
+can reset 2FA so you can set it up again. The assistant can tell you whether 2FA is on, but it
+never turns it on or off and never asks you for a code or password.""",
+    ),
+    (
+        "developers-and-verification-center",
+        "Developer profiles and the Verification Center",
+        "basics",
+        160,
+        """Each property page names its developer; View Profile opens the developer's public page
+with what the platform has recorded about them (about, website, track record, verifications)
+and their listings that are open on the platform. The Verification Center tab in your investor
+dashboard lists the reference number of each of your investment certificates and links to
+Capimax Trust, where a certificate, a property record or a developer can be checked
+independently. Certificates themselves are downloaded from the Certificates tab.""",
     ),
 ]
 
@@ -287,9 +324,14 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
         40,
         """تحتفظ محفظتك بالرصيد المتاح وأي مبلغ محجوز (مثل سحب قيد المعالجة). الإيداع: مدفوعات
 البطاقة والعملات الرقمية تُقيَّد تلقائيًا عند تأكيد مزوّد الدفع؛ أما التحويل البنكي فيجب مطابقته
-مع المرجع المعروض في صفحة الإيداع ويقيّده الفريق بعد المراجعة. السحب يذهب إلى وسيلة صرف محفوظة
-(حساب بنكي أو محفظة عملات رقمية). يحجز طلب السحب المبلغ فورًا ويراجعه الفريق ويصرفه؛ ترى حالته
-في المحفظة ويصلك إشعار عند الصرف أو الرفض (المبلغ المرفوض يعود لمحفظتك). إن بدا دفع متوقفًا،
+مع المرجع المعروض في صفحة الإيداع ويقيّده الفريق بعد المراجعة.
+السحب: يحجز الطلب المبلغ فورًا. وحسب إعداد المنصة لكل وسيلة (يقرؤه المساعد مباشرة) إمّا أن يُصرف
+السحب تلقائيًا عبر مزوّد الدفع لحظة طلبه، أو يراجعه الفريق ويصرفه. السحب البنكي التلقائي يذهب إلى
+حساب بنكي تربطه مرة واحدة عبر Stripe من صفحة المحفظة (متاح للحسابات في الولايات المتحدة
+والمملكة المتحدة والمنطقة الاقتصادية الأوروبية وكندا وسويسرا). وحيث يكون السحب الفوري مفعّلًا،
+يمكن أن يصل المبلغ إلى بطاقة خصم مؤهلة خلال دقائق مقابل رسم صغير يُعرض قبل التأكيد ويُخصم من
+المبلغ؛ وإن تعذّر الصرف الفوري يُرسل بالسرعة العادية ولا يضيع. ترى كل سحب وسرعته ورسمه وحالته في
+المحفظة ويصلك إشعار عند الصرف أو الرفض (المبلغ المرفوض يعود لمحفظتك). إن بدا دفع متوقفًا،
 يستطيع المساعد عرض حالته الحالية وفتح تذكرة دعم بالمرجع ليتابعها شخص من الفريق.""",
     ),
     (
@@ -407,10 +449,38 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
         140,
         """يجيب المساعد من معلومات المنصة المعتمدة ومن بيانات حسابك الحيّة. يستطيع عرض الأرصدة
 والحالات والاستثمارات والخطط والحيازات والإشعارات والتذاكر؛ وشرح كيف تعمل الأمور؛ وإعطاءك الصفحة
-المطلوبة تحديدًا؛ وبتأكيدك: إعادة إرسال رسالة التفعيل، أو تعليم الإشعارات كمقروءة، أو فتح تذكرة
-دعم. لا يحرّك مالًا ولا يغيّر إعدادات، ولا يقدّم نصيحة استثمارية شخصية. عندما لا يستطيع الإجابة
+المطلوبة تحديدًا؛ وبتأكيدك: إعادة إرسال رسالة التفعيل، أو تعليم الإشعارات كمقروءة، أو تعديل
+تفضيلات الإشعارات، أو إلغاء عرض لم يُبع في السوق الثانوي، أو إلغاء طلب خروج معلّق في سوق السيولة،
+أو إلغاء هدية عائلية مجدولة، أو فتح تذكرة دعم. لا يحرّك مالًا أبدًا، ولا يغيّر إعدادات الأمان مثل
+كلمة المرور أو التحقق بخطوتين، ولا يقدّم نصيحة استثمارية شخصية. عندما لا يستطيع الإجابة
 يسجّل السؤال للفريق ويعرض رابط الدعم. تذاكر الدعم يتابعها شخص؛ يمكنك رؤية تذاكرك والرد عليها من
 صفحة الدعم، ويصلك إشعار بكل رد.""",
+    ),
+    (
+        "account-security-2fa",
+        "أمان الحساب والتحقق بخطوتين",
+        "account",
+        150,
+        """يمكنك حماية حسابك بالتحقق بخطوتين (2FA) من إعدادات الحساب ← الأمان. امسح رمز QR بتطبيق
+مصادقة (Google Authenticator أو Microsoft Authenticator أو Authy أو ما يشبهها)، واكتب الرمز
+المكوّن من ستة أرقام للتأكيد، واحفظ رموز الاسترداد التي تظهر مرة واحدة فقط: كل رمز منها يعمل مرة
+واحدة إن فقدت هاتفك. بعد ذلك يطلب منك الدخول بكلمة المرور أو بحساب Google الرمز الحالي من
+التطبيق. عدة رموز خاطئة متتالية توقف الخطوة الثانية لفترة قصيرة. يمكنك إيقاف التحقق بخطوتين أو
+إنشاء رموز استرداد جديدة من الصفحة نفسها بعد إدخال رمز حالي. إن فقدت هاتفك ورموز الاسترداد معًا
+افتح تذكرة دعم: بعد أن يتحقق الفريق من هويتك يستطيع المسؤول إعادة ضبط التحقق بخطوتين لتفعّله من
+جديد. يستطيع المساعد إخبارك هل التحقق بخطوتين مفعّل أم لا، لكنه لا يفعّله ولا يوقفه أبدًا ولا يطلب
+منك رمزًا أو كلمة مرور.""",
+    ),
+    (
+        "developers-and-verification-center",
+        "صفحات المطوّرين ومركز التحقق",
+        "basics",
+        160,
+        """تذكر كل صفحة عقار اسم المطوّر؛ وزر "عرض الملف" يفتح صفحة المطوّر العامة بما سجّلته المنصة
+عنه (نبذة، الموقع الإلكتروني، سجل الأعمال، التحققات) وعقاراته المعروضة حاليًا على المنصة. تبويب
+"مركز التحقق" في لوحة المستثمر يعرض الرقم المرجعي لكل شهادة استثمار لديك ورابطًا إلى Capimax Trust
+حيث يمكن التحقق بشكل مستقل من الشهادة أو سجل العقار أو المطوّر. أما الشهادات نفسها فتُنزَّل من
+تبويب الشهادات.""",
     ),
 ]
 

@@ -199,6 +199,7 @@ async def test_read_own_tools_return_only_allow_listed_fields(client, db, asessi
         assert not SENSITIVE.search(blob), f"{name} leaks: {SENSITIVE.search(blob).group(0)}"
     assert outputs["get_my_account"]["email_masked"] == "ow***@x.com"
     assert outputs["get_my_account"]["kyc_status"] == "verified"
+    assert outputs["get_my_account"]["two_factor_enabled"] is False
     assert outputs["get_my_kyc_status"]["status"] == "verified"
     assert outputs["get_my_wallet"]["balance"] == "5000.00"
     tx = outputs["list_my_transactions"]["items"][0]
@@ -366,8 +367,8 @@ async def test_kb_search_returns_approved_articles_only_as_untrusted_text(client
 def test_deep_links_are_allow_listed():
     assert guard.make_link("deposit") == {
         "route_id": "deposit",
-        "path": "/wallet?tab=deposit",
-        "label": "Add funds",
+        "path": "/dashboard?tab=wallet",
+        "label": "Add funds from your wallet",
     }
     assert guard.make_link("property", "live-tower")["path"] == "/property/live-tower"
     for bad in (("admin",), ("property", "../etc"), ("property", None)):
@@ -395,12 +396,12 @@ def test_output_postprocessing_removes_foreign_links_and_flags_wording(monkeypat
     # hand-typed relative links: allow-listed routes become link cards, unknown ones are
     # reduced to their label; a bare allowed path is picked up too
     text, flags, links = guard.postprocess_output(
-        "Go to [Start verification](/account?tab=verification) or [admin](/admin/users). "
-        "Property: [Eval Tower](/property/eval-tower). Also see /wallet?tab=deposit and /nope."
+        "Go to [Start verification](/kyc) or [admin](/admin/users). "
+        "Property: [Eval Tower](/property/eval-tower). Also see /dashboard?tab=wallet and /nope."
     )
     assert "(/admin/users)" not in text and "admin" in text and "unknown_route_removed" in flags
-    assert "Start verification" in text and "](/account" not in text
-    assert [link["route_id"] for link in links] == ["kyc", "property", "deposit"]
+    assert "Start verification" in text and "](/kyc" not in text
+    assert [link["route_id"] for link in links] == ["kyc", "property", "wallet"]
     assert links[1]["path"] == "/property/eval-tower"
 
 
@@ -518,3 +519,57 @@ async def test_knowledge_gap_ticket_never_contains_the_question(client, db, ases
     )[0]
     assert row[0] == "knowledge_gap" and row[1] == "kyc"
     assert str(cid) in json.dumps(row[4]) and "transcript_url" in row[4]
+
+
+@pytest.mark.asyncio
+async def test_tools_know_payout_speed_fee_rails_and_two_factor(client, db, asession, monkeypatch):
+    """The assistant reads the features added after Phase 1 from live data: a withdrawal's
+    speed, fee and net amount; how each method is paid out right now (automatic, reviewed,
+    instant with its fee); and whether the user's 2FA is on (never the secret)."""
+    from app.core.config import get_settings
+
+    uid = await _user(client, db, "payout@x.com")
+    db(
+        "INSERT INTO withdrawals (user_id, amount, method, provider, speed, fee, status) "
+        "VALUES (:u, 200, 'bank', 'stripe', 'instant', 2.00, 'completed')",
+        u=uid,
+    )
+    db(
+        "INSERT INTO user_mfa (user_id, secret_enc, enabled_at) VALUES (:u, :s, now())",
+        u=uid,
+        s=b"ciphertext-never-shown",
+    )
+    for key, value in (
+        ("payout_auto_methods", "bank"),
+        ("payout_instant_enabled", "true"),
+        ("payout_instant_fee_pct", "1.5"),
+        ("payout_instant_max", "5000"),
+    ):
+        db(
+            "INSERT INTO platform_settings (key, value) VALUES (:k,:v) "
+            "ON CONFLICT (key) DO UPDATE SET value=:v",
+            k=key,
+            v=value,
+        )
+    s = get_settings()
+    monkeypatch.setattr(s, "stripe_secret_key", "sk_test", raising=False)
+    monkeypatch.setattr(s, "stripe_webhook_secret", "whsec_t", raising=False)
+    ctx = await _ctx(asession, uid)
+
+    async def run(name: str) -> dict:
+        spec = REGISTRY[name]
+        return await call_tool(spec, asession, ctx, parse_args(spec, "{}"))
+
+    wd = (await run("list_my_withdrawals"))["items"][0]
+    assert (wd["speed"], wd["fee"], wd["net_amount"]) == ("instant", "2.00", "198.00")
+    account = await run("get_my_account")
+    assert account["two_factor_enabled"] is True
+    assert "ciphertext" not in json.dumps(account)
+    rails = (await run("get_platform_settings"))["withdrawal_rails"]
+    assert rails["bank"] == "automatic" and rails["instant_enabled"] is True
+    assert (rails["instant_fee_pct"], rails["instant_max_amount"]) == ("1.5", "5000")
+
+    # instant is only offered when bank payouts are automatic
+    db("UPDATE platform_settings SET value='' WHERE key='payout_auto_methods'")
+    rails = (await run("get_platform_settings"))["withdrawal_rails"]
+    assert rails["bank"] == "reviewed" and rails["instant_enabled"] is False
