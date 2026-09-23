@@ -34,6 +34,7 @@ import InvestmentCalculator from "@/components/property/InvestmentCalculator";
 import InstallmentCalculator from "@/components/property/InstallmentCalculator";
 import PropertyDocuments from "@/components/property/PropertyDocuments";
 import PropertyTimeline from "@/components/property/PropertyTimeline";
+import UnderConstructionView from "@/components/property/UnderConstructionView";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { Loader2 } from "lucide-react";
 import { assetUrl, propertyApi, type PropertyDetail } from "@/lib/api";
@@ -159,6 +160,56 @@ const PropertyDetails = () => {
     );
   }
 
+  const previewBanner =
+    preview && data && data.status !== "active" && data.status !== "funded" ? (
+      <div
+        data-testid="preview-banner"
+        className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800"
+      >
+        <strong>Preview</strong> — this listing is <strong>{data.status.replace("_", " ")}</strong> and
+        not visible to investors. This is exactly how the page will look once published.
+      </div>
+    ) : null;
+
+  // Under-construction listings get their own page (the design the client knew, restored on
+  // real data); ready listings keep this layout. Investing is the same calculator in both.
+  if (data && propertyData.type === "under_construction") {
+    return (
+      <>
+        {previewBanner}
+        <UnderConstructionView
+          detail={data}
+          preview={preview}
+          fees={propertyData.fees}
+          documentsPanel={<PropertyDocuments propertyId={propertyData.id} preview={preview} />}
+          investPanel={
+            <InstallmentCalculator
+              propertyId={propertyData.id}
+              propertyData={propertyData}
+              investmentAmount={investmentAmount || propertyData.minInvestment}
+              setInvestmentAmount={setInvestmentAmount}
+              propertyTitle={propertyData.title}
+            />
+          }
+          sidebarExtra={
+            <div className="rounded-xl border bg-card p-4">
+              <div className="text-sm font-semibold mb-1">Already own units in this property?</div>
+              <p className="text-xs text-muted-foreground mb-3">
+                Exit via the secondary market or through a liquidity provider — fully tracked in your dashboard.
+              </p>
+              <ExitButton
+                variant="outline"
+                className="w-full"
+                label="Exit Ownership Position"
+                initialPositionId={propertyData.id}
+              />
+            </div>
+          }
+        />
+      </>
+    );
+  }
+
   const hasFeatures =
     propertyData.bedrooms != null ||
     propertyData.bathrooms != null ||
@@ -179,15 +230,7 @@ const PropertyDetails = () => {
   return (
     <div className="min-h-screen bg-background">
       <main>
-        {preview && data && data.status !== "active" && data.status !== "funded" && (
-          <div
-            data-testid="preview-banner"
-            className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800"
-          >
-            <strong>Preview</strong> — this listing is <strong>{data.status.replace("_", " ")}</strong> and
-            not visible to investors. This is exactly how the page will look once published.
-          </div>
-        )}
+        {previewBanner}
         {/* Breadcrumb */}
         <div className="bg-secondary/30 border-b border-border">
           <div className="container mx-auto px-4 py-4">

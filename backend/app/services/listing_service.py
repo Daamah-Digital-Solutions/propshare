@@ -7,7 +7,15 @@ of the blob untouched. Every save writes an audit row.
 
 Sections and the JSON they own:
   details   -> content.details.{bedrooms, bathrooms, area, parking, maxInvestment, amenities[]}
-  developer -> content.developer.{name, logo, rating, projectsCompleted, about, website}
+  developer -> content.developer.{name, logo, rating, projectsCompleted, about, website,
+               verified, yearsExperience, onTimeDelivery, previousProjects[], verifications[]}
+  under-construction page (restored design, every block optional and hidden when empty):
+    valuation         -> content.valuation.{provider, reportDate, value, impactNote, summary}
+    construction      -> content.construction.{engineeringStatus, auditStatus}
+    cashflow          -> content.cashflow.{rentalProjection, costs, exitProjection}
+    ownershipStructure / investmentStructure / marketAnalysis -> [{label, value}]
+    scenarios         -> [{label, outcome, tone}]    risks -> [{label, level, note}]
+    exitMechanisms    -> [{name, eta, description}]  compliance -> [str]
   spv       -> content.spv.{jurisdiction, trustee, auditor}
   terms     -> content.terms.{distributionFrequency, investmentTerm, exitOptions}
                + content.fees.{performance, exit}
@@ -899,6 +907,9 @@ def parse_milestone(form: Any) -> dict[str, Any]:
             status_code=422,
         )
     progress = _opt_int(form.get("progress_pct"), "Progress %", hi=100)
+    # Price index at this stage (100 = launch price). Drives the "price progression" figures
+    # on the under-construction page; blank = no price step at this milestone.
+    value_index = _opt_int(form.get("value_index"), "Price index", lo=1, hi=1000)
     target = parse_core_value(
         FieldSpec("target_date", "Target date", "", "2027-03-31", kind="date"),
         form.get("target_date"),
@@ -909,6 +920,7 @@ def parse_milestone(form: Any) -> dict[str, Any]:
         "status": status,
         "progress_pct": progress,
         "target_date": target,
+        "value_index": value_index,
     }
 
 
@@ -976,6 +988,7 @@ async def add_milestone(
         status=MilestoneStatus(data["status"]),
         progress_pct=data.get("progress_pct"),
         target_date=data.get("target_date"),
+        value_index=data.get("value_index"),
         sort_index=(max((r.sort_index for r in rows), default=-1) + 1),
         created_by=actor_id,
     )
@@ -1001,6 +1014,7 @@ async def update_milestone(
     m.description = data.get("description")
     m.progress_pct = data.get("progress_pct")
     m.target_date = data.get("target_date")
+    m.value_index = data.get("value_index")
     new_status = data["status"]
     was_completed = m.status == MilestoneStatus.completed
     m.status = MilestoneStatus(new_status)
@@ -1215,6 +1229,14 @@ def with_developer(content: dict, form: dict, *, logo_url: str | None = None) ->
     # shown on the public developer profile (/developers/{slug})
     _put(d, "about", _opt_text(form.get("about"), "about"))
     _put(d, "website", _opt_website(form.get("website")))
+    # A "Verified" badge is a claim: it appears only when an admin ticks it.
+    _put(d, "verified", True if str(form.get("verified") or "") == "1" else None)
+    _put(
+        d, "yearsExperience", _opt_int(form.get("years_experience"), "Years of experience", hi=200)
+    )
+    _put(d, "onTimeDelivery", _opt_num(form.get("on_time_delivery"), "On-time delivery %", hi=100))
+    _put(d, "previousProjects", parse_lines(form.get("previous_projects"), "Previous projects", 12))
+    _put(d, "verifications", parse_lines(form.get("verifications"), "Verification points", 8))
     if logo_url is not None:
         _put(d, "logo", logo_url)
     elif str(form.get("clear_logo") or "") == "1":
@@ -1228,7 +1250,181 @@ def with_spv(content: dict, form: dict) -> dict:
     d = _section(c, "spv")
     for key in ("jurisdiction", "trustee", "auditor"):
         _put(d, key, _opt_str(form.get(key), key))
+    _put(d, "assetHolding", _opt_str(form.get("asset_holding"), "Asset holding"))
+    _put(d, "investorAllocation", _opt_str(form.get("investor_allocation"), "Investor allocation"))
     _put(c, "spv", d)
+    return c
+
+
+# --------------------------------------------------------------------------- #
+# Under-construction page sections (restored design). A non-technical owner edits rows as
+# plain text, one per line, columns separated by "|" — the help text shows an example.
+# --------------------------------------------------------------------------- #
+TONES = ("positive", "neutral", "negative")
+RISK_LEVELS = ("low", "medium", "high")
+
+
+def parse_lines(raw: Any, field: str, max_items: int, *, max_len: int = 160) -> list[str]:
+    out: list[str] = []
+    for line in str(raw or "").splitlines():
+        item = " ".join(line.split()).lstrip("-•* ").strip()
+        if not item or item in out:
+            continue
+        if len(item) > max_len:
+            raise _bad(field, f"each line must be at most {max_len} characters")
+        out.append(item)
+    if len(out) > max_items:
+        raise _bad(field, f"at most {max_items} lines")
+    return out
+
+
+def parse_rows(
+    raw: Any,
+    field: str,
+    keys: tuple[str, ...],
+    max_items: int,
+    *,
+    choices: dict[str, tuple[str, ...]] | None = None,
+    required: int | None = None,
+    max_len: int = 240,
+) -> list[dict[str, str]]:
+    """``Label | Value`` lines → ``[{key: value}]``. The first ``required`` columns must be
+    filled (default: all); a column listed in ``choices`` must use one of those words."""
+    need = len(keys) if required is None else required
+    choices = choices or {}
+    rows: list[dict[str, str]] = []
+    for n, line in enumerate(str(raw or "").splitlines(), start=1):
+        if not line.strip():
+            continue
+        parts = [" ".join(x.split()) for x in line.split("|")]
+        if len(parts) > len(keys):
+            raise _bad(field, f"line {n} has too many '|' separators (expected {len(keys)} parts)")
+        parts += [""] * (len(keys) - len(parts))
+        row: dict[str, str] = {}
+        for i, key in enumerate(keys):
+            val = parts[i]
+            if i < need and not val:
+                raise _bad(field, f"line {n} needs {need} parts separated by '|'")
+            if len(val) > max_len:
+                raise _bad(field, f"line {n} is too long (max {max_len} characters per part)")
+            if key in choices and val:
+                val = val.lower()
+                if val not in choices[key]:
+                    raise _bad(
+                        field, f"line {n}: '{parts[i]}' must be one of {', '.join(choices[key])}"
+                    )
+            if val:
+                row[key] = val
+        rows.append(row)
+    if len(rows) > max_items:
+        raise _bad(field, f"at most {max_items} lines")
+    return rows
+
+
+def rows_to_text(rows: Any, keys: tuple[str, ...]) -> str:
+    """The inverse of ``parse_rows`` for pre-filling the admin textareas."""
+    if not isinstance(rows, list):
+        return ""
+    lines = []
+    for r in rows:
+        if isinstance(r, dict):
+            lines.append(" | ".join(str(r.get(k) or "") for k in keys).rstrip(" |"))
+    return "\n".join(lines)
+
+
+ROW_SECTIONS: dict[str, dict[str, Any]] = {
+    # content key -> form field, columns, limit, choices, required columns
+    "ownershipStructure": {"form": "ownership_structure", "keys": ("label", "value"), "max": 10},
+    "investmentStructure": {"form": "investment_structure", "keys": ("label", "value"), "max": 12},
+    "marketAnalysis": {"form": "market_analysis", "keys": ("label", "value"), "max": 12},
+    "scenarios": {
+        "form": "scenarios",
+        "keys": ("label", "outcome", "tone"),
+        "max": 4,
+        "choices": {"tone": TONES},
+        "required": 2,
+    },
+    "risks": {
+        "form": "risks",
+        "keys": ("label", "level", "note"),
+        "max": 10,
+        "choices": {"level": RISK_LEVELS},
+        "required": 2,
+    },
+    "exitMechanisms": {
+        "form": "exit_mechanisms",
+        "keys": ("name", "eta", "description"),
+        "max": 6,
+        "required": 1,
+    },
+}
+ROW_LABELS = {
+    "ownershipStructure": "Ownership structure",
+    "investmentStructure": "Financial projections",
+    "marketAnalysis": "Market analysis",
+    "scenarios": "Scenarios",
+    "risks": "Risk disclosures",
+    "exitMechanisms": "Exit mechanisms",
+}
+
+
+def with_rows(content: dict, form: dict, section: str) -> dict:
+    spec = ROW_SECTIONS[section]
+    c = copy.deepcopy(content or {})
+    rows = parse_rows(
+        form.get(spec["form"]),
+        ROW_LABELS[section],
+        spec["keys"],
+        spec["max"],
+        choices=spec.get("choices"),
+        required=spec.get("required"),
+    )
+    _put(c, section, rows)
+    return c
+
+
+def with_valuation(content: dict, form: dict) -> dict:
+    c = copy.deepcopy(content or {})
+    d = _section(c, "valuation")
+    _put(d, "provider", _opt_str(form.get("valuation_provider"), "Valuation provider"))
+    _put(d, "reportDate", _opt_str(form.get("valuation_date"), "Report date", max_len=60))
+    _put(d, "value", _opt_num(form.get("valuation_value"), "Latest valuation"))
+    _put(d, "impactNote", _opt_str(form.get("valuation_impact"), "Development impact", max_len=240))
+    _put(d, "summary", _opt_text(form.get("valuation_summary"), "Market analysis", max_len=800))
+    _put(c, "valuation", d)
+    return c
+
+
+def with_construction_status(content: dict, form: dict) -> dict:
+    c = copy.deepcopy(content or {})
+    d = _section(c, "construction")
+    _put(
+        d, "engineeringStatus", _opt_str(form.get("engineering_status"), "Engineering", max_len=60)
+    )
+    _put(d, "auditStatus", _opt_str(form.get("audit_status"), "Milestone audit", max_len=60))
+    _put(c, "construction", d)
+    return c
+
+
+def with_cashflow(content: dict, form: dict) -> dict:
+    c = copy.deepcopy(content or {})
+    d = _section(c, "cashflow")
+    _put(
+        d,
+        "rentalProjection",
+        _opt_text(form.get("rental_projection"), "Rental / income", max_len=400),
+    )
+    _put(d, "costs", _opt_text(form.get("costs"), "Development & operating costs", max_len=400))
+    _put(
+        d, "exitProjection", _opt_text(form.get("exit_projection"), "Exit projection", max_len=400)
+    )
+    _put(c, "cashflow", d)
+    return c
+
+
+def with_compliance(content: dict, form: dict) -> dict:
+    c = copy.deepcopy(content or {})
+    _put(c, "compliance", parse_lines(form.get("compliance"), "Compliance points", 10))
     return c
 
 

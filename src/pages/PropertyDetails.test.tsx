@@ -13,7 +13,9 @@ import PropertyDetails from "./PropertyDetails";
 const getMock = vi.fn();
 vi.mock("@/lib/api", () => ({
   propertyApi: { get: (...a: unknown[]) => getMock(...a) },
+  documentsApi: { listForProperty: async () => [] },
   assetUrl: (u: string) => u,
+  apiUrl: (u: string) => u,
 }));
 vi.mock("@/components/property/PropertyGallery", () => ({ default: () => <div data-testid="gallery" /> }));
 vi.mock("@/components/property/InvestmentCalculator", () => ({ default: () => <div data-testid="invest-calc" /> }));
@@ -137,11 +139,21 @@ describe("PropertyDetails — no invented content", () => {
     expect(text).toMatch(/Performance Fee/);
   });
 
-  it("routes an installment-model listing to the same data-driven page with the installment calculator", async () => {
+  it("gives an installment listing the restored under-construction page, with the real calculator", async () => {
     getMock.mockResolvedValue({ ...base, model: "installment", title: "Thames Bay Listing" });
     renderIt();
     await screen.findByRole("heading", { level: 1, name: "Thames Bay Listing" });
+    expect(screen.getByTestId("under-construction-view")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("installment-calc")).toBeTruthy());
+    expect(screen.getByRole("tab", { name: /developer/i })).toBeInTheDocument(); // the 6th tab
+  });
+
+  it("keeps the ready-property layout for ready listings", async () => {
+    getMock.mockResolvedValue({ ...base, model: "ready-income", title: "Ready One" });
+    renderIt();
+    await screen.findByRole("heading", { level: 1, name: "Ready One" });
+    expect(screen.queryByTestId("under-construction-view")).toBeNull();
+    expect(screen.getByTestId("invest-calc")).toBeInTheDocument();
   });
 });
 

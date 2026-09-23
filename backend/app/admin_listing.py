@@ -335,6 +335,11 @@ _PAGE = _env.from_string(
    <div data-field="projects_completed"><label for="f_dev_projects">Projects completed</label><input id="f_dev_projects" type="number" name="projects_completed" min="0" placeholder="120" value="{{ developer.projectsCompleted if developer.projectsCompleted is not none }}"><div class="help">Whole number; blank hides it. <span class="eg">Example: 120</span></div></div>
    <div data-field="website"><label for="f_dev_website">Website</label><input id="f_dev_website" type="text" name="website" maxlength="200" value="{{ developer.website or '' }}" placeholder="https://www.emaar.com"><div class="help">Opens from the developer profile; blank hides it. <span class="eg">Example: https://www.emaar.com</span></div></div>
    <div data-field="about" style="grid-column:1/-1"><label for="f_dev_about">About the developer</label><textarea id="f_dev_about" name="about" rows="4" maxlength="1200" placeholder="Founded in 1997, Emaar has delivered more than 100 projects across the Gulf…">{{ developer.about or '' }}</textarea><div class="help">Two or three short paragraphs for the profile page; facts you can stand behind, no promises of returns. Blank hides the section. <span class="eg">Example: Founded in 1997, delivered 120 projects in Dubai and Riyadh.</span></div></div>
+   <div data-field="years_experience"><label for="f_dev_years">Years of experience</label><input id="f_dev_years" type="number" name="years_experience" min="0" max="200" placeholder="12" value="{{ developer.yearsExperience if developer.yearsExperience is not none }}"><div class="help">Blank hides it. <span class="eg">Example: 12</span></div></div>
+   <div data-field="on_time_delivery"><label for="f_dev_ontime">On-time delivery (%)</label><input id="f_dev_ontime" type="number" name="on_time_delivery" min="0" max="100" step="0.1" placeholder="96" value="{{ developer.onTimeDelivery if developer.onTimeDelivery is not none }}"><div class="help">Share of past projects delivered on schedule — only a figure you can document. Blank hides it. <span class="eg">Example: 96</span></div></div>
+   <div data-field="previous_projects" style="grid-column:1/-1"><label for="f_dev_prev">Previous projects</label><textarea id="f_dev_prev" name="previous_projects" rows="3" placeholder="Marina Heights Tower&#10;Creek Harbour Villas">{{ (developer.previousProjects or []) | join('\n') }}</textarea><div class="help">One project per line (max 12). Blank hides the list. <span class="eg">Example: Marina Heights Tower</span></div></div>
+   <div data-field="verifications" style="grid-column:1/-1"><label for="f_dev_ver">Verification points</label><textarea id="f_dev_ver" name="verifications" rows="3" placeholder="Trade license verified&#10;Audited financial statements on file">{{ (developer.verifications or []) | join('\n') }}</textarea><div class="help">What Capimax checked about this developer, one per line (max 8). Blank hides the list. <span class="eg">Example: Trade license verified</span></div></div>
+   <div data-field="verified" style="grid-column:1/-1"><label class="inline" style="font-weight:600"><input type="checkbox" name="verified" value="1" {{ 'checked' if developer.verified }}> Show a “Verified developer” badge</label><div class="help">Tick only after Capimax has actually verified this developer.</div></div>
    <div data-field="logo"><label for="f_dev_logo">Logo</label><input id="f_dev_logo" type="file" name="logo" accept="image/jpeg,image/png,image/webp">
      <div class="help">Square image looks best; blank keeps the current logo or shows the initial letter. <span class="eg">Example: emaar-logo.png</span></div>
      {% if developer.logo %}<div class="muted" style="margin-top:4px"><img src="{{ developer.logo }}" alt="logo" style="height:32px;vertical-align:middle;border-radius:6px"> <label class="inline" style="font-weight:400"><input type="checkbox" name="clear_logo" value="1"> remove logo</label></div>{% endif %}
@@ -352,6 +357,8 @@ _PAGE = _env.from_string(
    <div data-field="jurisdiction"><label for="f_jurisdiction">Jurisdiction</label><input id="f_jurisdiction" type="text" name="jurisdiction" maxlength="200" value="{{ spv.jurisdiction or '' }}" placeholder="DIFC, Dubai"><div class="help">Where the SPV is registered. <span class="eg">Example: DIFC, Dubai</span></div></div>
    <div data-field="trustee"><label for="f_trustee">Trustee</label><input id="f_trustee" type="text" name="trustee" maxlength="200" value="{{ spv.trustee or '' }}" placeholder="Gulf Corporate Trustees LLC"><div class="help">Blank hides the row. <span class="eg">Example: Gulf Corporate Trustees LLC</span></div></div>
    <div data-field="auditor"><label for="f_auditor">Auditor</label><input id="f_auditor" type="text" name="auditor" maxlength="200" value="{{ spv.auditor or '' }}" placeholder="KPMG Lower Gulf"><div class="help">Blank hides the row. <span class="eg">Example: KPMG Lower Gulf</span></div></div>
+   <div data-field="asset_holding"><label for="f_asset_holding">Asset holding</label><input id="f_asset_holding" type="text" name="asset_holding" maxlength="200" value="{{ spv.assetHolding or '' }}" placeholder="100% title held by the SPV"><div class="help">How the SPV holds the property. Blank hides the row. <span class="eg">Example: 100% title held by the SPV</span></div></div>
+   <div data-field="investor_allocation"><label for="f_investor_allocation">Investor allocation</label><input id="f_investor_allocation" type="text" name="investor_allocation" maxlength="200" value="{{ spv.investorAllocation or '' }}" placeholder="Pro-rata digital share certificates"><div class="help">What each investor holds. Blank hides the row. <span class="eg">Example: Pro-rata digital share certificates</span></div></div>
   </div>
   <button class="primary" type="submit" style="margin-top:8px">Save SPV &amp; legal</button>
  </form>
@@ -373,8 +380,82 @@ _PAGE = _env.from_string(
 </div>
 
 <div class="card" data-profiles="offplan_single offplan_portfolio"{% if profile not in ('offplan_single', 'offplan_portfolio') %} hidden{% endif %}>
+ <h2>Overview tab — ownership, scenarios &amp; risks</h2>
+ <p class="lead">Blocks of the under-construction page. Write one row per line, parts separated by <b>|</b>. A block with no rows is hidden.</p>
+  <form method="post" style="margin-top:10px"><input type="hidden" name="action" value="save_rows"><input type="hidden" name="section" value="ownershipStructure">
+   <div data-field="ownership_structure"><label for="f_ownership_structure">Ownership structure</label><textarea id="f_ownership_structure" name="ownership_structure" rows="4" placeholder="Ownership vehicle | DIFC SPV&#10;Title transfer | On full settlement">{{ rows_text.ownershipStructure }}</textarea><div class="help">Label | value, max 10 lines. Also shown in the sidebar and the SPV tab. <span class="eg">Example: Ownership vehicle | DIFC SPV</span></div></div>
+   <button class="primary" type="submit" style="margin-top:6px">Save ownership structure</button>
+  </form>
+  <form method="post" style="margin-top:10px"><input type="hidden" name="action" value="save_rows"><input type="hidden" name="section" value="scenarios">
+   <div data-field="scenarios"><label for="f_scenarios">Scenarios</label><textarea id="f_scenarios" name="scenarios" rows="4" placeholder="On-time delivery | About 18% appreciation by handover | positive&#10;3-month delay | Schedule extended, no extra cost | neutral">{{ rows_text.scenarios }}</textarea><div class="help">Name | outcome | positive, neutral or negative — max 4 lines. Outcomes are projections, never promises. <span class="eg">Example: On-time delivery | About 18% appreciation by handover | positive</span></div></div>
+   <button class="primary" type="submit" style="margin-top:6px">Save scenarios</button>
+  </form>
+  <form method="post" style="margin-top:10px"><input type="hidden" name="action" value="save_rows"><input type="hidden" name="section" value="risks">
+   <div data-field="risks"><label for="f_risks">Risk disclosures</label><textarea id="f_risks" name="risks" rows="4" placeholder="Construction delay | medium | Escrow and milestone audits">{{ rows_text.risks }}</textarea><div class="help">Risk | low, medium or high | how it is mitigated — max 10 lines. <span class="eg">Example: Construction delay | medium | Escrow and milestone audits</span></div></div>
+   <button class="primary" type="submit" style="margin-top:6px">Save risk disclosures</button>
+  </form>
+</div>
+
+<div class="card" data-profiles="offplan_single offplan_portfolio"{% if profile not in ('offplan_single', 'offplan_portfolio') %} hidden{% endif %}>
+ <h2>Financials tab — projections, market, cash flow &amp; exit</h2>
+ <p class="lead">Each block is hidden until it has content. Figures here are projections — say so in the wording.</p>
+  <form method="post" style="margin-top:10px"><input type="hidden" name="action" value="save_rows"><input type="hidden" name="section" value="investmentStructure">
+   <div data-field="investment_structure"><label for="f_investment_structure">Financial projections</label><textarea id="f_investment_structure" name="investment_structure" rows="4" placeholder="Final settlement | On handover">{{ rows_text.investmentStructure }}</textarea><div class="help">Label | value, max 12 lines. <span class="eg">Example: Final settlement | On handover</span></div></div>
+   <button class="primary" type="submit" style="margin-top:6px">Save financial projections</button>
+  </form>
+  <form method="post" style="margin-top:10px"><input type="hidden" name="action" value="save_rows"><input type="hidden" name="section" value="marketAnalysis">
+   <div data-field="market_analysis"><label for="f_market_analysis">Market analysis</label><textarea id="f_market_analysis" name="market_analysis" rows="4" placeholder="Area pipeline | 12 active towers">{{ rows_text.marketAnalysis }}</textarea><div class="help">Label | value, max 12 lines. <span class="eg">Example: Area pipeline | 12 active towers</span></div></div>
+   <button class="primary" type="submit" style="margin-top:6px">Save market analysis</button>
+  </form>
+  <form method="post" style="margin-top:10px"><input type="hidden" name="action" value="save_cashflow">
+   <div class="cols">
+    <div data-field="rental_projection"><label for="f_rental">Rental / income projection</label><textarea id="f_rental" name="rental_projection" rows="3" maxlength="400" placeholder="Income-producing once delivered; distributions paid monthly.">{{ cashflow.rentalProjection or '' }}</textarea><div class="help">Blank hides it. <span class="eg">Example: Income-producing once delivered.</span></div></div>
+    <div data-field="costs"><label for="f_costs">Development &amp; operating costs</label><textarea id="f_costs" name="costs" rows="3" maxlength="400" placeholder="Land, construction, SPV administration and valuation costs are in the offering memorandum.">{{ cashflow.costs or '' }}</textarea><div class="help">Blank hides it.</div></div>
+    <div data-field="exit_projection"><label for="f_exitproj">Exit projection</label><textarea id="f_exitproj" name="exit_projection" rows="3" maxlength="400" placeholder="Sale on the secondary market after handover.">{{ cashflow.exitProjection or '' }}</textarea><div class="help">Blank hides it.</div></div>
+   </div>
+   <button class="primary" type="submit" style="margin-top:6px">Save cash flow notes</button>
+  </form>
+  <form method="post" style="margin-top:10px"><input type="hidden" name="action" value="save_rows"><input type="hidden" name="section" value="exitMechanisms">
+   <div data-field="exit_mechanisms"><label for="f_exit_mechanisms">Exit mechanisms</label><textarea id="f_exit_mechanisms" name="exit_mechanisms" rows="4" placeholder="Secondary market | After handover | Sell units to other investors">{{ rows_text.exitMechanisms }}</textarea><div class="help">Name | timing | description, max 6 lines. <span class="eg">Example: Secondary market | After handover | Sell units to other investors</span></div></div>
+   <button class="primary" type="submit" style="margin-top:6px">Save exit mechanisms</button>
+  </form>
+</div>
+
+<div class="card" data-profiles="offplan_single offplan_portfolio"{% if profile not in ('offplan_single', 'offplan_portfolio') %} hidden{% endif %}>
+ <h2>Construction status &amp; independent valuation</h2>
+ <p class="lead">The Construction Progress and Independent Valuation cards. Each field is hidden when blank; the valuation card is hidden until a provider or a valuation is entered.</p>
+ <form method="post"><input type="hidden" name="action" value="save_construction_status">
+  <div class="cols">
+   <div data-field="engineering_status"><label for="f_eng">Engineering status</label><input id="f_eng" type="text" name="engineering_status" maxlength="60" value="{{ construction.engineeringStatus or '' }}" placeholder="Certified"><div class="help">As stated in the latest engineering report. <span class="eg">Example: Certified</span></div></div>
+   <div data-field="audit_status"><label for="f_audit">Milestone audit</label><input id="f_audit" type="text" name="audit_status" maxlength="60" value="{{ construction.auditStatus or '' }}" placeholder="On track"><div class="help">Latest milestone audit result. <span class="eg">Example: On track</span></div></div>
+  </div>
+  <button class="primary" type="submit" style="margin-top:6px">Save construction status</button>
+ </form>
+ <form method="post" style="margin-top:10px"><input type="hidden" name="action" value="save_valuation">
+  <div class="cols">
+   <div data-field="valuation_provider"><label for="f_val_prov">Valuation provider</label><input id="f_val_prov" type="text" name="valuation_provider" maxlength="200" value="{{ valuation.provider or '' }}" placeholder="Knight Frank"><div class="help"><span class="eg">Example: Knight Frank</span></div></div>
+   <div data-field="valuation_date"><label for="f_val_date">Report date</label><input id="f_val_date" type="text" name="valuation_date" maxlength="60" value="{{ valuation.reportDate or '' }}" placeholder="June 2026"><div class="help"><span class="eg">Example: June 2026</span></div></div>
+   <div data-field="valuation_value"><label for="f_val_value">Latest valuation (USD)</label><input id="f_val_value" type="number" name="valuation_value" min="0" step="1" value="{{ valuation.get('value')|int if valuation.get('value') is not none else '' }}" placeholder="1520000"><div class="help">The figure in the signed report. <span class="eg">Example: 1520000</span></div></div>
+   <div data-field="valuation_impact"><label for="f_val_impact">Development impact</label><input id="f_val_impact" type="text" name="valuation_impact" maxlength="240" value="{{ valuation.impactNote or '' }}" placeholder="+5% since foundation sign-off"><div class="help"><span class="eg">Example: +5% since foundation sign-off</span></div></div>
+   <div data-field="valuation_summary" style="grid-column:1/-1"><label for="f_val_summary">Market analysis</label><textarea id="f_val_summary" name="valuation_summary" rows="3" maxlength="800" placeholder="Prime-area supply is limited; comparable off-plan units sold 8% higher this quarter.">{{ valuation.summary or '' }}</textarea><div class="help">A short paragraph from the report.</div></div>
+  </div>
+  <div class="note">Upload the report itself in <b>Documents</b> with the category <i>Valuation</i> — the page's “Download valuation report” button then opens it.</div>
+  <button class="primary" type="submit" style="margin-top:6px">Save valuation</button>
+ </form>
+</div>
+
+<div class="card" data-profiles="offplan_single offplan_portfolio"{% if profile not in ('offplan_single', 'offplan_portfolio') %} hidden{% endif %}>
+ <h2>Compliance points</h2>
+ <p class="lead">The Compliance &amp; Legal Framework list on the SPV tab and the Compliance card in the sidebar. Only list what is actually in place.</p>
+ <form method="post"><input type="hidden" name="action" value="save_compliance">
+  <div data-field="compliance"><label for="f_compliance">Compliance points</label><textarea id="f_compliance" name="compliance" rows="4" placeholder="SPV holds direct, ring-fenced ownership of the asset&#10;Independent escrow agent secures all capital flows">{{ (content_compliance or []) | join('\n') }}</textarea><div class="help">One per line, max 10. Blank hides the list. <span class="eg">Example: KYC / AML verified investor base</span></div></div>
+  <button class="primary" type="submit" style="margin-top:6px">Save compliance points</button>
+ </form>
+</div>
+
+<div class="card" data-profiles="offplan_single offplan_portfolio"{% if profile not in ('offplan_single', 'offplan_portfolio') %} hidden{% endif %}>
  <h2>Construction &amp; timeline</h2>
- <p class="lead">For off-plan listings: the expected completion date appears in the investment sidebar and the milestones in the Timeline tab.</p>
+ <p class="lead">For off-plan listings: the expected completion date appears in the investment sidebar and the milestones in the Timeline tab and the Construction Progress card. Give milestones a <b>Price index</b> (100 = launch price) to show the Price &amp; Appreciation card; without it that card stays hidden.</p>
  <form method="post"><input type="hidden" name="action" value="save_construction">
   <div class="cols">{% for f in construction_fields %}{{ field(f, core_values.get(f.name), profile) }}{% endfor %}</div>
   <button class="primary" type="submit" style="margin-top:8px">Save completion date</button>
@@ -389,6 +470,7 @@ _PAGE = _env.from_string(
     <div data-field="ms_status"><label for="ms_status_{{ loop.index }}">Status</label><select id="ms_status_{{ loop.index }}" name="status">{% for v,l in ms_statuses %}<option value="{{ v }}" {{ 'selected' if v == m.status.value }}>{{ l }}</option>{% endfor %}</select><div class="help">Planned → In progress → Completed.</div></div>
     <div data-field="ms_progress"><label for="ms_prog_{{ loop.index }}">Progress %</label><input id="ms_prog_{{ loop.index }}" type="number" name="progress_pct" min="0" max="100" placeholder="40" value="{{ m.progress_pct if m.progress_pct is not none }}"><div class="help">Only matters for the In-progress one. <span class="eg">Example: 40</span></div></div>
     <div data-field="ms_date"><label for="ms_date_{{ loop.index }}">Target date</label><input id="ms_date_{{ loop.index }}" type="date" name="target_date" value="{{ m.target_date.isoformat() if m.target_date else '' }}"><div class="help"><span class="eg">Example: 2027-03-31</span></div></div>
+    <div data-field="ms_value_index"><label for="ms_vi_{{ loop.index }}">Price index</label><input id="ms_vi_{{ loop.index }}" type="number" name="value_index" min="1" max="1000" placeholder="105" value="{{ m.value_index if m.value_index is not none }}"><div class="help">Expected unit price at this stage, 100 = launch price. Blank = no price step. <span class="eg">Example: 105 (5% above launch)</span></div></div>
    </div>
    <div data-field="ms_description"><label for="ms_desc_{{ loop.index }}">Description</label><input id="ms_desc_{{ loop.index }}" type="text" name="description" maxlength="500" value="{{ m.description or '' }}" placeholder="Piling and raft foundation signed off by the engineer"><div class="help">One sentence, optional. <span class="eg">Example: Piling and raft foundation signed off by the engineer</span></div></div>
    <div class="actions" style="margin-top:8px">
@@ -408,6 +490,7 @@ _PAGE = _env.from_string(
    <div data-field="ms_status"><label for="ms_new_status">Status</label><select id="ms_new_status" name="status">{% for v,l in ms_statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select><div class="help">Planned → In progress → Completed.</div></div>
    <div data-field="ms_progress"><label for="ms_new_prog">Progress %</label><input id="ms_new_prog" type="number" name="progress_pct" min="0" max="100" placeholder="0"><div class="help"><span class="eg">Example: 40</span></div></div>
    <div data-field="ms_date"><label for="ms_new_date">Target date</label><input id="ms_new_date" type="date" name="target_date"><div class="help"><span class="eg">Example: 2027-03-31</span></div></div>
+   <div data-field="ms_value_index"><label for="ms_new_vi">Price index</label><input id="ms_new_vi" type="number" name="value_index" min="1" max="1000" placeholder="105"><div class="help">100 = launch price. Blank = no price step. <span class="eg">Example: 105</span></div></div>
   </div>
   <div data-field="ms_description"><label for="ms_new_desc">Description</label><input id="ms_new_desc" type="text" name="description" maxlength="500" placeholder="Concrete frame to roof level"><div class="help">One sentence, optional. <span class="eg">Example: Concrete frame to roof level</span></div></div>
   <button class="primary" type="submit" style="margin-top:8px">Add milestone</button>
@@ -734,6 +817,14 @@ class ListingEditorView(BaseView):
                 amenities_text="\n".join((content.get("details") or {}).get("amenities") or []),
                 developer=content.get("developer") or {},
                 spv=content.get("spv") or {},
+                valuation=content.get("valuation") or {},
+                construction=content.get("construction") or {},
+                cashflow=content.get("cashflow") or {},
+                content_compliance=content.get("compliance") or [],
+                rows_text={
+                    key: listing_service.rows_to_text(content.get(key), spec["keys"])
+                    for key, spec in listing_service.ROW_SECTIONS.items()
+                },
                 terms=content.get("terms") or {},
                 fees=content.get("fees") or {},
                 milestones=milestones,
@@ -884,6 +975,39 @@ class ListingEditorView(BaseView):
                 session, prop=prop, new_content=new, section="spv", actor_id=actor
             )
             return "SPV & legal structure saved.", preview_token
+        if action == "save_rows":
+            section = str(form.get("section") or "")
+            if section not in listing_service.ROW_SECTIONS:
+                raise ValueError("That section is not recognised. Please reload the page.")
+            new = listing_service.with_rows(prop.content or {}, form, section)
+            await listing_service.apply_content(
+                session, prop=prop, new_content=new, section=section, actor_id=actor
+            )
+            return f"{listing_service.ROW_LABELS[section]} saved.", preview_token
+        if action == "save_valuation":
+            new = listing_service.with_valuation(prop.content or {}, form)
+            await listing_service.apply_content(
+                session, prop=prop, new_content=new, section="valuation", actor_id=actor
+            )
+            return "Valuation saved.", preview_token
+        if action == "save_construction_status":
+            new = listing_service.with_construction_status(prop.content or {}, form)
+            await listing_service.apply_content(
+                session, prop=prop, new_content=new, section="construction", actor_id=actor
+            )
+            return "Construction status saved.", preview_token
+        if action == "save_cashflow":
+            new = listing_service.with_cashflow(prop.content or {}, form)
+            await listing_service.apply_content(
+                session, prop=prop, new_content=new, section="cashflow", actor_id=actor
+            )
+            return "Cash flow notes saved.", preview_token
+        if action == "save_compliance":
+            new = listing_service.with_compliance(prop.content or {}, form)
+            await listing_service.apply_content(
+                session, prop=prop, new_content=new, section="compliance", actor_id=actor
+            )
+            return "Compliance points saved.", preview_token
         if action == "save_terms":
             new = listing_service.with_terms(prop.content or {}, form)
             await listing_service.apply_content(

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { INSTALLMENT_DURATIONS } from "@/lib/installments";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
@@ -99,12 +100,8 @@ const paymentMethods: {
   { id: "pronova", icon: Coins, label: "Pronova Token", discount: 0, disabled: true, badge: "Coming soon" },
 ];
 
-const installmentDurations = [
-  { value: "6", label: "6 Months", downPaymentPercent: 30 },
-  { value: "12", label: "12 Months", downPaymentPercent: 25 },
-  { value: "18", label: "18 Months", downPaymentPercent: 20 },
-  { value: "24", label: "24 Months", downPaymentPercent: 15 },
-];
+// One table for the calculator and the property page (mirrors the backend).
+const installmentDurations = INSTALLMENT_DURATIONS;
 
 const InstallmentCalculator = ({
   propertyId,
