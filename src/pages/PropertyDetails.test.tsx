@@ -144,3 +144,33 @@ describe("PropertyDetails — no invented content", () => {
     await waitFor(() => expect(screen.getByTestId("installment-calc")).toBeTruthy());
   });
 });
+
+describe("PropertyDetails — developer card", () => {
+  beforeEach(() => getMock.mockReset());
+
+  it("View Profile opens the developer's public profile", async () => {
+    getMock.mockResolvedValue({ ...base, developer_slug: "crestmark" });
+    renderIt();
+    const link = await screen.findByRole("link", { name: /view profile/i });
+    expect(link).toHaveAttribute("href", "/developers/crestmark");
+  });
+
+  it("encodes a non-latin developer slug in the link", async () => {
+    getMock.mockResolvedValue({
+      ...base,
+      developer_name: "إعمار",
+      developer_slug: "إعمار",
+    });
+    renderIt();
+    const link = await screen.findByRole("link", { name: /view profile/i });
+    expect(link).toHaveAttribute("href", `/developers/${encodeURIComponent("إعمار")}`);
+  });
+
+  it("stays disabled only when the listing names no developer", async () => {
+    getMock.mockResolvedValue({ ...base, developer_name: null, developer_slug: null });
+    renderIt();
+    const btn = await screen.findByRole("button", { name: /view profile/i });
+    expect(btn).toBeDisabled();
+    expect(screen.queryByRole("link", { name: /view profile/i })).toBeNull();
+  });
+});

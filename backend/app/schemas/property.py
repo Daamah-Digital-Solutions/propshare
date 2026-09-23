@@ -112,6 +112,8 @@ class PropertySummaryOut(BaseModel):
     available_units: int
     investors_count: int
     developer_name: str | None
+    # URL key of the developer's public profile (/developers/{slug}); None when unnamed.
+    developer_slug: str | None = None
 
 
 class PropertyDetailOut(PropertySummaryOut):
@@ -141,3 +143,25 @@ class PropertyListOut(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class DeveloperStatsOut(BaseModel):
+    listings: int
+    active: int
+    funded: int
+    total_raised: float
+    investors: int
+
+
+class DeveloperProfileOut(BaseModel):
+    """A developer's public profile: facts entered on its listings + live listing figures."""
+
+    slug: str
+    name: str | None
+    logo: str | None
+    about: str | None
+    website: str | None
+    rating: float | None
+    projects_completed: int | None
+    stats: DeveloperStatsOut
+    properties: list[PropertySummaryOut]

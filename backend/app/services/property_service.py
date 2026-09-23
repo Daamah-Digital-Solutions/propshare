@@ -10,6 +10,7 @@ Every admin moderation action is written to the append-only audit log.
 from __future__ import annotations
 
 import re
+import unicodedata
 import uuid
 from decimal import Decimal
 
@@ -62,6 +63,19 @@ def _developer_name(prop: Property, owner_names: dict[uuid.UUID, str | None]) ->
     return None
 
 
+def developer_slug(name: str | None) -> str | None:
+    """URL key of a developer profile, derived from the developer name every listing shows.
+
+    Unicode-aware so an Arabic company name keeps its letters instead of collapsing to "".
+    The same function builds the link on the property page and resolves the profile, so the
+    two can never disagree."""
+    if not name:
+        return None
+    norm = unicodedata.normalize("NFKC", name).casefold()
+    slug = re.sub(r"[^\w]+", "-", norm, flags=re.UNICODE).replace("_", "-").strip("-")
+    return slug[:80] or None
+
+
 def serialize_summary(prop: Property, owner_names: dict[uuid.UUID, str | None]) -> dict:
     images = prop.images or []
     return {
@@ -89,6 +103,7 @@ def serialize_summary(prop: Property, owner_names: dict[uuid.UUID, str | None]) 
         "available_units": prop.available_units,
         "investors_count": prop.investors_count,
         "developer_name": _developer_name(prop, owner_names),
+        "developer_slug": developer_slug(_developer_name(prop, owner_names)),
     }
 
 
@@ -189,6 +204,57 @@ async def list_public(
 
     rows = list((await session.execute(stmt)).scalars().all())
     return rows, int(total)
+
+
+async def public_developer_profile(session: AsyncSession, slug: str) -> dict:
+    """Everything the platform can honestly say about one developer: the facts entered on its
+    listings (name, logo, about, website, rating, projects) and the live figures of every
+    PUBLIC listing it has here. Drafts and closed listings never leak through."""
+    wanted = developer_slug(slug)
+    if not wanted:
+        raise AppError("DEVELOPER_NOT_FOUND", "Developer not found.", status_code=404)
+    rows = list(
+        (
+            await session.execute(
+                select(Property)
+                .where(Property.status.in_(PUBLIC_STATUSES))
+                .order_by(Property.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    owner_names = await _owner_names(session, rows)
+    mine = [p for p in rows if developer_slug(_developer_name(p, owner_names)) == wanted]
+    if not mine:
+        raise AppError("DEVELOPER_NOT_FOUND", "Developer not found.", status_code=404)
+
+    def first(key: str):
+        """The newest listing that filled a field wins; nothing is invented."""
+        for p in mine:
+            dev = (p.content or {}).get("developer") if isinstance(p.content, dict) else None
+            if isinstance(dev, dict) and dev.get(key) not in (None, ""):
+                return dev[key]
+        return None
+
+    summaries = [serialize_summary(p, owner_names) for p in mine]
+    return {
+        "slug": wanted,
+        "name": summaries[0]["developer_name"],
+        "logo": first("logo"),
+        "about": first("about"),
+        "website": first("website"),
+        "rating": first("rating"),
+        "projects_completed": first("projectsCompleted"),
+        "stats": {
+            "listings": len(mine),
+            "active": sum(1 for p in mine if p.status == PropertyStatus.active),
+            "funded": sum(1 for p in mine if p.status == PropertyStatus.funded),
+            "total_raised": float(sum((p.funded_amount or 0) for p in mine)),
+            "investors": sum(int(p.investors_count or 0) for p in mine),
+        },
+        "properties": summaries,
+    }
 
 
 # --- Preview-before-publish ------------------------------------------------- #

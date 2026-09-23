@@ -7,7 +7,7 @@ of the blob untouched. Every save writes an audit row.
 
 Sections and the JSON they own:
   details   -> content.details.{bedrooms, bathrooms, area, parking, maxInvestment, amenities[]}
-  developer -> content.developer.{name, logo, rating, projectsCompleted}
+  developer -> content.developer.{name, logo, rating, projectsCompleted, about, website}
   spv       -> content.spv.{jurisdiction, trustee, auditor}
   terms     -> content.terms.{distributionFrequency, investmentTerm, exitOptions}
                + content.fees.{performance, exit}
@@ -18,9 +18,11 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import decimal
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1137,6 +1139,31 @@ def _opt_str(raw: Any, field: str, *, max_len: int = 200) -> str:
     return s
 
 
+def _opt_text(raw: Any, field: str, *, max_len: int = 1200) -> str:
+    """Multi-line free text: keeps paragraph breaks, trims each line, drops blank runs."""
+    lines = [" ".join(line.split()) for line in str(raw or "").splitlines()]
+    text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    if len(text) > max_len:
+        raise _bad(field, f"must be at most {max_len} characters")
+    return text
+
+
+def _opt_website(raw: Any, field: str = "website") -> str:
+    """An http(s) link with a real host, or blank. Rendered as a clickable link on the public
+    developer profile, so anything else (javascript:, data:, a bare word) is refused."""
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    if len(s) > 200:
+        raise _bad(field, "must be at most 200 characters")
+    if "://" not in s:
+        s = "https://" + s
+    parsed = urlparse(s)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or "." not in parsed.hostname:
+        raise _bad(field, "must be a web address such as https://www.example.com")
+    return s
+
+
 def parse_amenities(raw: Any) -> list[str]:
     """One amenity per line (or comma-separated); trimmed, de-duplicated, capped."""
     text = str(raw or "").replace(",", "\n")
@@ -1185,6 +1212,9 @@ def with_developer(content: dict, form: dict, *, logo_url: str | None = None) ->
     _put(d, "name", _opt_str(form.get("name"), "name", max_len=120))
     _put(d, "rating", _opt_num(form.get("rating"), "rating", lo=0, hi=5))
     _put(d, "projectsCompleted", _opt_int(form.get("projects_completed"), "projects_completed"))
+    # shown on the public developer profile (/developers/{slug})
+    _put(d, "about", _opt_text(form.get("about"), "about"))
+    _put(d, "website", _opt_website(form.get("website")))
     if logo_url is not None:
         _put(d, "logo", logo_url)
     elif str(form.get("clear_logo") or "") == "1":

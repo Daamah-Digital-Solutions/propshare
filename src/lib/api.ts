@@ -333,6 +333,8 @@ export interface PropertySummary {
   available_units: number;
   investors_count: number;
   developer_name: string | null;
+  /** URL key of the developer's public profile (/developers/:slug); null when unnamed. */
+  developer_slug?: string | null;
 }
 
 export interface PropertyMilestone {
@@ -420,6 +422,34 @@ function buildQuery(params: Record<string, unknown>): string {
   const s = q.toString();
   return s ? `?${s}` : "";
 }
+
+/** A developer's public profile: facts the admin entered on its listings + live figures
+ * of every PUBLIC listing it has on the platform. Nothing here is invented. */
+export interface DeveloperProfile {
+  slug: string;
+  name: string | null;
+  logo: string | null;
+  about: string | null;
+  website: string | null;
+  rating: number | null;
+  projects_completed: number | null;
+  stats: {
+    listings: number;
+    active: number;
+    funded: number;
+    total_raised: number;
+    investors: number;
+  };
+  properties: PropertySummary[];
+}
+
+export const developerApi = {
+  get(slug: string): Promise<DeveloperProfile> {
+    return apiRequest<DeveloperProfile>(`/api/v1/developers/${encodeURIComponent(slug)}`, {
+      auth: false,
+    });
+  },
+};
 
 export const propertyApi = {
   list(params: PropertyFilterParams = {}): Promise<PropertyListResponse> {

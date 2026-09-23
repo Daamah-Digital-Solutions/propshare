@@ -327,12 +327,14 @@ _PAGE = _env.from_string(
 
 <div class="card">
  <h2>Developer</h2>
- <p class="lead">The developer card in the Overview tab. Shown only when a name is set; rating and projects appear only when filled.</p>
+ <p class="lead">The developer card in the Overview tab, and the developer's public profile page that its <b>View Profile</b> button opens. Every listing with the same developer name shares one profile. Shown only when a name is set; the other fields appear only when filled.</p>
  <form method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="save_developer">
   <div class="cols">
    <div data-field="name"><label for="f_dev_name">Developer name</label><input id="f_dev_name" type="text" name="name" maxlength="120" value="{{ developer.name or '' }}" placeholder="Emaar Properties"><div class="help">Company name as investors know it. <span class="eg">Example: Emaar Properties</span></div></div>
    <div data-field="rating"><label for="f_dev_rating">Rating (0–5)</label><input id="f_dev_rating" type="number" name="rating" min="0" max="5" step="0.1" placeholder="4.6" value="{{ developer.rating if developer.rating is not none }}"><div class="help">Your own assessment; blank hides it. <span class="eg">Example: 4.6</span></div></div>
    <div data-field="projects_completed"><label for="f_dev_projects">Projects completed</label><input id="f_dev_projects" type="number" name="projects_completed" min="0" placeholder="120" value="{{ developer.projectsCompleted if developer.projectsCompleted is not none }}"><div class="help">Whole number; blank hides it. <span class="eg">Example: 120</span></div></div>
+   <div data-field="website"><label for="f_dev_website">Website</label><input id="f_dev_website" type="text" name="website" maxlength="200" value="{{ developer.website or '' }}" placeholder="https://www.emaar.com"><div class="help">Opens from the developer profile; blank hides it. <span class="eg">Example: https://www.emaar.com</span></div></div>
+   <div data-field="about" style="grid-column:1/-1"><label for="f_dev_about">About the developer</label><textarea id="f_dev_about" name="about" rows="4" maxlength="1200" placeholder="Founded in 1997, Emaar has delivered more than 100 projects across the Gulf…">{{ developer.about or '' }}</textarea><div class="help">Two or three short paragraphs for the profile page; facts you can stand behind, no promises of returns. Blank hides the section. <span class="eg">Example: Founded in 1997, delivered 120 projects in Dubai and Riyadh.</span></div></div>
    <div data-field="logo"><label for="f_dev_logo">Logo</label><input id="f_dev_logo" type="file" name="logo" accept="image/jpeg,image/png,image/webp">
      <div class="help">Square image looks best; blank keeps the current logo or shows the initial letter. <span class="eg">Example: emaar-logo.png</span></div>
      {% if developer.logo %}<div class="muted" style="margin-top:4px"><img src="{{ developer.logo }}" alt="logo" style="height:32px;vertical-align:middle;border-radius:6px"> <label class="inline" style="font-weight:400"><input type="checkbox" name="clear_logo" value="1"> remove logo</label></div>{% endif %}

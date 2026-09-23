@@ -92,6 +92,8 @@ const toViewModel = (d: PropertyDetail) => {
     },
     developer: {
       name: asStr(dev.name) || d.developer_name || "—",
+      // Built server-side by the same function that resolves /developers/:slug.
+      slug: d.developer_slug ?? null,
       // No stock placeholder: when the listing has no logo the card shows an initial avatar.
       logo: assetUrl(asStr(dev.logo)),
       projectsCompleted: asNum(dev.projectsCompleted),
@@ -341,7 +343,17 @@ const PropertyDetails = () => {
                           </div>
                         )}
                       </div>
-                      <Button variant="outline" size="sm" disabled title="Developer profiles are not available yet">View Profile</Button>
+                      {propertyData.developer.slug ? (
+                        <Button asChild variant="outline" size="sm">
+                          <Link to={`/developers/${encodeURIComponent(propertyData.developer.slug)}`}>
+                            View Profile
+                          </Link>
+                        </Button>
+                      ) : (
+                        <Button variant="outline" size="sm" disabled title="No developer is named on this listing">
+                          View Profile
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </TabsContent>

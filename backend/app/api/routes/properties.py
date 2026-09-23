@@ -2,6 +2,7 @@
 
 - GET  /properties                 PUBLIC marketplace list (active/funded only).
 - GET  /properties/{id_or_slug}    PUBLIC detail (active/funded only).
+- GET  /developers/{slug}          PUBLIC developer profile (its public listings only).
 - POST /properties                 owner: create a draft.
 - PATCH /properties/{id}           owner: edit while draft/under_review.
 - POST /properties/{id}/submit     owner: draft -> under_review.
@@ -18,6 +19,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 
 from app.api.deps import Principal, SessionDep, require_active_role_db
 from app.schemas.property import (
+    DeveloperProfileOut,
     OwnerPropertyOut,
     PropertyCreateIn,
     PropertyDetailOut,
@@ -110,6 +112,12 @@ async def get_property(id_or_slug: str, session: SessionDep, preview: str | None
     data["milestones"] = [milestone_service.serialize(m) for m in milestones]
     data["construction_progress"] = milestone_service.construction_progress_from_rows(milestones)
     return PropertyDetailOut(**data)
+
+
+@router.get("/developers/{slug}", response_model=DeveloperProfileOut)
+async def get_developer(slug: str, session: SessionDep):
+    """Public developer profile, reached from the Developer card on a property page."""
+    return DeveloperProfileOut(**await property_service.public_developer_profile(session, slug))
 
 
 @router.post("/properties", response_model=OwnerPropertyOut, status_code=201)
