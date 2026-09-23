@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { certificateRef, saveBlob } from "@/lib/certificates";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,16 +32,7 @@ import {
  * figure (units, ownership %, value) is real, the SPV reference + jurisdiction come from the
  * property record, and the certificate reference is a stable derived id (never random).
  */
-function saveBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
+
 
 const usd0 = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -216,9 +208,7 @@ export const InvestmentCertificates = () => {
                 const value = h.units * Number(h.unit_price || 0);
                 const tu = totalUnitsById.get(h.property_id);
                 const ownership = tu && tu > 0 ? (h.units / tu) * 100 : null;
-                const certRef = (
-                  "CMX-" + h.property_id.slice(0, 4) + (user?.id ?? "0000").slice(0, 4)
-                ).toUpperCase();
+                const certRef = certificateRef(h.property_id, user?.id);
                 const spv = `${h.title ?? "Property"} SPV`;
                 return (
                   <div key={h.property_id} className="rounded-xl border border-border p-4">

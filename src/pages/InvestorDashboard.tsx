@@ -13,6 +13,7 @@ import { SecondaryMarketTab } from "@/components/dashboard/SecondaryMarketTab";
 import { ProShareCards } from "@/components/dashboard/ProShareCards";
 import { ReinvestReturns } from "@/components/dashboard/ReinvestReturns";
 import { FamilyInvestment } from "@/components/dashboard/FamilyInvestment";
+import { VerificationTab } from "@/components/dashboard/VerificationTab";
 import {
   LayoutDashboard,
   Building2,
@@ -29,13 +30,14 @@ import {
   LogOut,
   Home,
   Plus,
-  FolderOpen
+  FolderOpen,
+  ShieldCheck
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExitRequestsPanel } from "@/components/exit/ExitRequestsPanel";
 import { ExitButton } from "@/components/exit/ExitButton";
 
-const validTabs = ["overview", "investments", "returns", "installments", "wallet", "cards", "market", "reinvest", "family", "certificates", "documents", "exits"];
+const validTabs = ["overview", "investments", "returns", "installments", "wallet", "cards", "market", "reinvest", "family", "certificates", "documents", "verification", "exits"];
 
 const InvestorDashboard = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -203,6 +205,14 @@ const InvestorDashboard = () => {
                   <span className="sm:hidden">Docs</span>
                 </TabsTrigger>
                 <TabsTrigger
+                  value="verification"
+                  className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                  <span className="hidden sm:inline">Verification Center</span>
+                  <span className="sm:hidden">Verify</span>
+                </TabsTrigger>
+                <TabsTrigger
                   value="exits"
                   className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
                 >
@@ -250,6 +260,10 @@ const InvestorDashboard = () => {
 
               <TabsContent value="documents" className="space-y-6">
                 <InvestorDocuments />
+              </TabsContent>
+
+              <TabsContent value="verification" className="space-y-6">
+                <VerificationTab />
               </TabsContent>
 
               <TabsContent value="market" className="space-y-6">

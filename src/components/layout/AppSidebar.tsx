@@ -168,6 +168,7 @@ const investorNavigation: NavSection[] = [
       },
       { title: "Reports & Analytics", url: "/reports", icon: BarChart3 },
       { title: "Documents Center", url: "/dashboard?tab=documents", icon: FolderOpen },
+      { title: "Verification Center", url: "/dashboard?tab=verification", icon: ShieldCheck },
       { title: "Wallet", url: "/dashboard?tab=wallet", icon: Wallet },
       { title: "Property Types", url: "/property-types", icon: Layers },
       { title: "Secondary Market", url: "/secondary-market", icon: ArrowLeftRight },

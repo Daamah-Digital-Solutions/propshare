@@ -1,7 +1,10 @@
 import { Link } from "react-router-dom";
-import { ShieldCheck, ExternalLink, FileCheck2, ListChecks, Download, ScrollText } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { ShieldCheck } from "lucide-react";
+import {
+  TrustCapabilities,
+  TrustGatewayCard,
+  TrustScopeNote,
+} from "@/components/verification/CapimaxTrustGateway";
 
 /**
  * Verification Center — a GATEWAY page (no verification logic lives here). Every document,
@@ -11,16 +14,6 @@ import { Card, CardContent } from "@/components/ui/card";
  * explains that and hands the user off to Capimax Trust. (Group-wide requirement — the same
  * page exists on every Capimax platform; each one links to the single Capimax Trust source.)
  */
-
-// The central Capimax Trust verification gateway. Single source of truth for the destination.
-const CAPIMAX_TRUST_URL = "https://www.capimax.pro";
-
-const CAPABILITIES = [
-  { icon: FileCheck2, title: "Verify authenticity", text: "Confirm that a document or certificate is genuine and was officially issued." },
-  { icon: ListChecks, title: "Review status", text: "See the current status of any registered document or record." },
-  { icon: Download, title: "Download the official copy", text: "Obtain the authoritative, official version of the document." },
-  { icon: ScrollText, title: "View verification data", text: "Inspect the verification details attached to each document." },
-];
 
 export default function VerificationCenter() {
   return (
@@ -57,71 +50,13 @@ export default function VerificationCenter() {
       </section>
 
       <div className="container mx-auto px-4 py-14 max-w-4xl space-y-12">
-        {/* Capimax Trust gateway card + primary CTA */}
-        <Card className="border-primary/20 overflow-hidden">
-          <div className="bg-gradient-to-br from-primary/10 to-transparent p-8 md:p-12 text-center">
-            {/* Official Capimax Trust logo on a clean white plate (the artwork has a light ground). */}
-            <div className="mx-auto mb-6 inline-flex items-center justify-center rounded-2xl bg-white p-6 shadow-sm ring-1 ring-border">
-              <img
-                src="/capimax-trust-logo.png"
-                alt="Capimax Trust — Verified · Secured · Connected"
-                className="h-24 md:h-28 w-auto"
-              />
-            </div>
-            <h2 className="sr-only">Capimax Trust</h2>
-            <p className="mt-1 text-sm font-medium tracking-wide text-primary uppercase">
-              Central Verification Gateway
-            </p>
-            <p className="mx-auto mt-4 max-w-xl text-muted-foreground">
-              Continue to Capimax Trust to verify a document, review its status, and download the
-              official copy.
-            </p>
-            <div className="mt-7">
-              <Button asChild size="lg" className="gap-2 text-base">
-                <a href={CAPIMAX_TRUST_URL} target="_blank" rel="noopener noreferrer">
-                  Go to Capimax Trust <ExternalLink className="h-4 w-4" />
-                </a>
-              </Button>
-            </div>
-            <a
-              href={CAPIMAX_TRUST_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-4 inline-block text-sm text-primary underline underline-offset-4 hover:text-primary/80"
-            >
-              www.capimax.pro
-            </a>
-          </div>
-        </Card>
+        {/* Capimax Trust gateway card + primary CTA (shared with the dashboard tab) */}
+        <TrustGatewayCard />
 
-        {/* What you can do on Capimax Trust */}
-        <div>
-          <h3 className="text-center text-xl font-semibold text-foreground mb-6">
-            On Capimax Trust you can
-          </h3>
-          <div className="grid gap-4 sm:grid-cols-2">
-            {CAPABILITIES.map((c) => (
-              <Card key={c.title}>
-                <CardContent className="flex items-start gap-4 p-5">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <c.icon className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <div className="font-semibold text-foreground">{c.title}</div>
-                    <p className="mt-1 text-sm text-muted-foreground">{c.text}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
+        <TrustCapabilities />
 
         {/* Honest scope note — verification never happens on this platform */}
-        <p className="text-center text-sm text-muted-foreground max-w-2xl mx-auto">
-          To keep verification consistent and trustworthy across the group, all document
-          verification for the Capimax ecosystem is handled exclusively by Capimax Trust. This page
-          is a secure gateway to that central service.
-        </p>
+        <TrustScopeNote />
 
         <div className="text-center">
           <Link to="/" className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-4">
