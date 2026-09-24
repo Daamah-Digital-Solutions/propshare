@@ -1,7 +1,8 @@
 """Stripe rail (cards / Apple Pay / Google Pay) — D2.
 
-Uses Stripe Checkout Sessions (hosted) so the SPA only redirects; no Stripe.js
-card handling. The wallet is credited ONLY by the signature-verified webhook
+Payments use Stripe Checkout Sessions (hosted), so the SPA only redirects. Saving a card
+uses Stripe's Payment Element in the SPA on a SetupIntent: card data goes from Stripe's form
+to Stripe and never reaches us. The wallet is credited ONLY by the signature-verified webhook
 (``checkout.session.completed``), never on the browser redirect. Signature
 verification is the standard Stripe ``Stripe-Signature`` HMAC-SHA256 scheme,
 implemented directly (no SDK dependency).
@@ -13,6 +14,7 @@ import decimal
 import hashlib
 import hmac
 import json
+import logging
 import uuid
 
 import httpx
@@ -28,6 +30,34 @@ from app.services.integrations.payments import (
 
 _API = "https://api.stripe.com/v1/checkout/sessions"
 _API_BASE = "https://api.stripe.com/v1"
+logger = logging.getLogger(__name__)
+
+
+def _refused(resp: httpx.Response, code: str, what: str) -> AppError:
+    """Stripe said no. Log its own reason: with a restricted key a 403 names the permission to
+    add, which is otherwise invisible from our side."""
+    try:
+        err = resp.json().get("error") or {}
+    except ValueError:
+        err = {}
+    logger.warning(
+        "Stripe refused %s: %s %s",
+        what,
+        resp.status_code,
+        str(err.get("message") or resp.text)[:300],
+    )
+    return AppError(
+        code,
+        f"Stripe error ({resp.status_code}).",
+        status_code=502,
+        details={"body": resp.text[:300], "code": err.get("code"), "param": err.get("param")},
+    )
+
+
+def is_unknown_customer(exc: AppError) -> bool:
+    """A refusal because the customer id does not exist for this key (keys were switched)."""
+    details = exc.details or {}
+    return details.get("code") == "resource_missing" and details.get("param") == "customer"
 
 
 def is_configured() -> bool:
@@ -49,7 +79,10 @@ async def create_checkout(
     cancel_url: str,
     idempotency_key: str | None,
     product_name: str = "Capimax wallet deposit",
+    customer_id: str | None = None,
 ) -> CheckoutResult:
+    """Hosted Checkout for one payment. With the investor's Stripe customer, Checkout lists the
+    cards they saved in the wallet so they can pay with one."""
     if not is_configured():
         raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)
     settings = get_settings()
@@ -66,6 +99,8 @@ async def create_checkout(
         "metadata[payment_id]": str(payment_id),
         "payment_intent_data[metadata][payment_id]": str(payment_id),
     }
+    if customer_id:
+        data["customer"] = customer_id
     headers = {}
     if idempotency_key:
         headers["Idempotency-Key"] = idempotency_key
@@ -73,19 +108,35 @@ async def create_checkout(
         resp = await client.post(
             _API, data=data, headers=headers, auth=(settings.stripe_secret_key, "")
         )
+        if customer_id and _unknown_customer(resp):
+            # A customer from another Stripe mode or account (keys were switched): take the
+            # payment without the saved cards rather than refusing it. A new idempotency key,
+            # because Stripe binds a key to the parameters it was first used with.
+            data.pop("customer")
+            if idempotency_key:
+                headers["Idempotency-Key"] = f"{idempotency_key}-no-customer"
+            resp = await client.post(
+                _API, data=data, headers=headers, auth=(settings.stripe_secret_key, "")
+            )
     if resp.status_code >= 400:
-        raise AppError(
-            "PAYMENT_PROVIDER_ERROR",
-            f"Stripe error ({resp.status_code}).",
-            status_code=502,
-            details={"body": resp.text[:300]},
-        )
+        raise _refused(resp, "PAYMENT_PROVIDER_ERROR", "a checkout")
     session = resp.json()
     return CheckoutResult(
         provider_payment_id=str(session["id"]),
         checkout_url=str(session["url"]),
         status="pending",
     )
+
+
+def _unknown_customer(resp: httpx.Response) -> bool:
+    """Stripe's answer when the customer id does not exist for this key."""
+    if resp.status_code != 400:
+        return False
+    try:
+        err = resp.json().get("error") or {}
+    except ValueError:
+        return False
+    return err.get("code") == "resource_missing" and err.get("param") == "customer"
 
 
 def verify_and_parse(raw_body: bytes, signature: str | None) -> ParsedWebhook:
@@ -141,20 +192,43 @@ async def create_customer(*, email: str) -> str:
 
 
 async def create_setup_intent(*, customer_id: str) -> dict:
-    """A SetupIntent lets the SPA tokenize a card for future use (no charge)."""
+    """A SetupIntent lets the SPA tokenize a card for future use (no charge). on_session: a saved
+    card is only ever used by the investor at checkout, never charged in their absence, so Stripe
+    does not ask them to authorise future charges."""
     if not is_configured():
         raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)
     si = await _post(
         "setup_intents",
-        {"customer": customer_id, "usage": "off_session", "payment_method_types[]": "card"},
+        {"customer": customer_id, "usage": "on_session", "payment_method_types[]": "card"},
     )
     return {"id": str(si["id"]), "client_secret": str(si["client_secret"])}
 
 
-async def attach_payment_method(*, payment_method_id: str, customer_id: str) -> None:
+async def retrieve_setup_intent(setup_intent_id: str) -> dict:
+    """Stripe's own record of a card setup the browser says it finished: whose customer it
+    belongs to, whether it succeeded and which payment method it produced. The server trusts
+    this, never a payment-method id sent by the browser."""
     if not is_configured():
         raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)
-    await _post(f"payment_methods/{payment_method_id}/attach", {"customer": customer_id})
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(
+            f"{_API_BASE}/setup_intents/{setup_intent_id}",
+            auth=(settings.stripe_secret_key, ""),
+        )
+    if resp.status_code >= 400:
+        raise _refused(resp, "PAYMENT_PROVIDER_ERROR", "reading a card setup")
+    si = resp.json()
+
+    def _id(value):  # expandable fields arrive as an id or as the object
+        return value.get("id") if isinstance(value, dict) else value
+
+    return {
+        "id": str(si.get("id")),
+        "status": str(si.get("status")),
+        "customer": _id(si.get("customer")),
+        "payment_method": _id(si.get("payment_method")),
+    }
 
 
 async def retrieve_payment_method(payment_method_id: str) -> dict:
@@ -168,11 +242,10 @@ async def retrieve_payment_method(payment_method_id: str) -> dict:
             auth=(settings.stripe_secret_key, ""),
         )
     if resp.status_code >= 400:
-        raise AppError(
-            "PAYMENT_PROVIDER_ERROR", f"Stripe error ({resp.status_code}).", status_code=502
-        )
+        raise _refused(resp, "PAYMENT_PROVIDER_ERROR", "reading a card")
     pm = resp.json()
     card = pm.get("card") or {}
+    billing = pm.get("billing_details") or {}
     return {
         "id": str(pm.get("id")),
         "type": str(pm.get("type") or "card"),
@@ -180,7 +253,25 @@ async def retrieve_payment_method(payment_method_id: str) -> dict:
         "last4": card.get("last4"),
         "exp_month": card.get("exp_month"),
         "exp_year": card.get("exp_year"),
+        "billing_name": billing.get("name"),
+        "billing_email": billing.get("email"),
+        "allow_redisplay": pm.get("allow_redisplay"),
     }
+
+
+async def offer_again_at_checkout(
+    payment_method_id: str, *, name: str | None = None, email: str | None = None
+) -> None:
+    """Let hosted Checkout show a card the investor chose to save. Checkout only lists saved
+    cards marked allow_redisplay=always (a card saved through a SetupIntent is 'unspecified'),
+    and it prefills them only with a billing name and email, which the card form does not ask
+    for; missing ones are filled from the account."""
+    data = {"allow_redisplay": "always"}
+    if name:
+        data["billing_details[name]"] = name
+    if email:
+        data["billing_details[email]"] = email
+    await _post(f"payment_methods/{payment_method_id}", data)
 
 
 async def detach_payment_method(payment_method_id: str) -> None:
@@ -209,12 +300,7 @@ async def _post(
             f"{_API_BASE}/{path}", data=data, headers=headers, auth=(settings.stripe_secret_key, "")
         )
     if resp.status_code >= 400:
-        raise AppError(
-            "PAYOUT_PROVIDER_ERROR",
-            f"Stripe error ({resp.status_code}).",
-            status_code=502,
-            details={"body": resp.text[:300]},
-        )
+        raise _refused(resp, "PAYOUT_PROVIDER_ERROR", f"POST {path.split('/')[0]}")
     return resp.json()
 
 

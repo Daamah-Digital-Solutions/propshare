@@ -6,7 +6,7 @@ calls 503 cleanly when unconfigured.
 
 - GET    /wallet/payment-methods               list the caller's saved methods.
 - POST   /wallet/payment-methods/setup-intent  start tokenization (SetupIntent client secret).
-- POST   /wallet/payment-methods               save a tokenized method {payment_method_id}.
+- POST   /wallet/payment-methods               record the card a finished {setup_intent_id} saved.
 - DELETE /wallet/payment-methods/{id}          remove a saved method (detaches at Stripe).
 - POST   /wallet/payment-methods/{id}/default  mark a method as default.
 """
@@ -43,7 +43,7 @@ async def setup_intent(principal: PrincipalDep, session: SessionDep):
 
 @router.post("", response_model=SavedPaymentMethodOut, status_code=201)
 async def add_method(body: AddPaymentMethodIn, principal: PrincipalDep, session: SessionDep):
-    m = await payment_method_service.add(session, principal.user_id, body.payment_method_id)
+    m = await payment_method_service.add(session, principal.user_id, body.setup_intent_id)
     return SavedPaymentMethodOut(**payment_method_service.serialize(m))
 
 

@@ -24,7 +24,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import Payment, PaymentEvent
 from app.models.base import PaymentMethod
-from app.services import notification_service, wallet_service
+from app.services import notification_service, payment_method_service, wallet_service
 from app.services.integrations.payments import ParsedWebhook, nowpayments_gateway, stripe_gateway
 
 # "pronova" is a BRANDED rail that settles via Stripe card (D5 owner decision) — the buyer
@@ -114,6 +114,7 @@ async def create_deposit(
             success_url=success_url,
             cancel_url=cancel_url,
             idempotency_key=idempotency_key,
+            customer_id=await payment_method_service.checkout_customer(session, user_id),
         )
     else:
         result = await nowpayments_gateway.create_checkout(
@@ -190,6 +191,7 @@ async def create_investment_checkout(
             cancel_url=cancel_url,
             idempotency_key=None,
             product_name=_CHECKOUT_LABEL.get(method, "Capimax investment"),
+            customer_id=await payment_method_service.checkout_customer(session, user_id),
         )
     else:
         result = await nowpayments_gateway.create_checkout(

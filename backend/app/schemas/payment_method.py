@@ -28,5 +28,6 @@ class SetupIntentOut(BaseModel):
 
 
 class AddPaymentMethodIn(BaseModel):
-    # The Stripe payment_method token (pm_...) produced client-side by the SetupIntent.
-    payment_method_id: str = Field(min_length=3, max_length=255)
+    # The finished SetupIntent (seti_...) from Stripe's card form. The server reads the card it
+    # saved from Stripe itself; the browser never names a payment method.
+    setup_intent_id: str = Field(pattern=r"^seti_[A-Za-z0-9]{6,120}$")

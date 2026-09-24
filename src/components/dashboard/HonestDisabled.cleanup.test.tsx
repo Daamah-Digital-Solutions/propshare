@@ -131,19 +131,13 @@ describe("InvestorWallet payment methods (real tokenized vault, Group 3)", () =>
   it("empty vault: honest empty-states, add buttons ENABLED, no fake methods", async () => {
     pmList.mockResolvedValue([]);
     wrap(<InvestorWallet />);
-    expect(await screen.findByText(/secure payment page each time you pay/i)).toBeInTheDocument();
+    expect(await screen.findByText(/No saved cards/i)).toBeInTheDocument();
     expect(screen.getByText(/No saved bank account/i)).toBeInTheDocument();
     expect(screen.getByText(/No saved crypto wallet/i)).toBeInTheDocument();
     expect(screen.queryByText(/Emirates NBD/)).toBeNull();
     expect(screen.queryByText(/bc1q/)).toBeNull();
+    expect(screen.getByRole("button", { name: /add card/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /add bank account/i })).toBeEnabled();
-  });
-
-  it("offers no 'add card': there is no card form behind it, cards go in at Stripe's checkout", async () => {
-    pmList.mockResolvedValue([]);
-    wrap(<InvestorWallet />);
-    await screen.findByText(/secure payment page each time you pay/i);
-    expect(screen.queryByRole("button", { name: /add card/i })).toBeNull();
   });
 
   it("renders real saved methods (brand •••• last4 + Default), no card number stored", async () => {
