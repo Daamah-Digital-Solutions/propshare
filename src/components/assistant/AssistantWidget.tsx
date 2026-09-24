@@ -49,6 +49,9 @@ import { coveredPaths, greeting, pageStarters, toolLabel } from "@/components/as
 const CONV_KEY = "capimax_assistant_conversation";
 const LANG_KEY = "capimax_assistant_lang";
 const TEASER_KEY = "capimax_assistant_teaser_seen";
+// a visitor has no account to record consent on: the notice is acknowledged in this browser,
+// per policy version, before their first message leaves for the AI provider
+const VISITOR_NOTICE_KEY = "capimax_assistant_visitor_notice";
 
 type Role = "user" | "assistant";
 interface Msg {
@@ -199,6 +202,13 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [consenting, setConsenting] = useState(false);
+  const [visitorNoticed, setVisitorNoticed] = useState(() => {
+    try {
+      return localStorage.getItem(VISITOR_NOTICE_KEY) === initialStatus.policy_version;
+    } catch {
+      return false; // no storage: ask each visit
+    }
+  });
   const [error, setError] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -328,6 +338,15 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
     setError("");
   }, [identity, welcome]);
 
+  const acknowledgeVisitorNotice = useCallback(() => {
+    setVisitorNoticed(true);
+    try {
+      localStorage.setItem(VISITOR_NOTICE_KEY, status.policy_version);
+    } catch {
+      /* non-fatal: asked again next visit */
+    }
+  }, [status.policy_version]);
+
   const giveConsent = useCallback(async () => {
     setConsenting(true);
     try {
@@ -438,7 +457,8 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
   };
 
   const dir = lang === "ar" ? "rtl" : "ltr";
-  const needsConsent = isAuthenticated && status.consent_required;
+  const needsVisitorNotice = !isAuthenticated && status.enabled && !visitorNoticed;
+  const needsConsent = (isAuthenticated && status.consent_required) || needsVisitorNotice;
   const blocked = !status.enabled && !needsConsent;
 
   const firstName = (user?.full_name ?? "").trim().split(/\s+/)[0] || null;
@@ -541,9 +561,13 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                   {lang === "ar" ? "قبل أن نبدأ" : "Before we start"}
                 </div>
                 <p className="mt-1.5 text-muted-foreground">
-                  {lang === "ar"
-                    ? "يستخدم المساعد بيانات حسابك ويرسل نص المحادثة إلى مزوّد ذكاء اصطناعي خارجي. تُحفظ محادثاتك مشفّرة. اقرأ "
-                    : "The assistant uses your account data and sends the conversation text to an external AI provider. Your conversations are stored encrypted. Read the "}
+                  {needsVisitorNotice
+                    ? lang === "ar"
+                      ? "يرسل المساعد رسائلك إلى مزوّد ذكاء اصطناعي خارجي (OpenAI) ليجيب عنها. لا تكتب بيانات شخصية أو بيانات دفع. اقرأ "
+                      : "The assistant sends your messages to an external AI provider (OpenAI) to answer them. Please don't share personal or payment details. Read the "
+                    : lang === "ar"
+                      ? "يستخدم المساعد بيانات حسابك ويرسل نص المحادثة إلى مزوّد ذكاء اصطناعي خارجي (OpenAI). تُحفظ محادثاتك مشفّرة. اقرأ "
+                      : "The assistant uses your account data and sends the conversation text to an external AI provider (OpenAI). Your conversations are stored encrypted. Read the "}
                   <a href="/privacy" className="text-primary underline" target="_blank" rel="noreferrer">
                     {lang === "ar" ? "سياسة الخصوصية" : "Privacy Policy"}
                   </a>
@@ -552,12 +576,14 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                 </p>
                 <button
                   type="button"
-                  onClick={() => void giveConsent()}
+                  onClick={() => (needsVisitorNotice ? acknowledgeVisitorNotice() : void giveConsent())}
                   disabled={consenting}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-sm disabled:opacity-50"
                 >
                   {consenting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                  {lang === "ar" ? "أوافق وأكمل" : "I agree, continue"}
+                  {needsVisitorNotice
+                    ? lang === "ar" ? "فهمت، أكمل" : "I understand, continue"
+                    : lang === "ar" ? "أوافق وأكمل" : "I agree, continue"}
                 </button>
               </div>
             )}

@@ -13,6 +13,7 @@ the handler returns, long before the model has finished.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as dt
 import json
 import re
@@ -90,12 +91,25 @@ async def _gate(
             return settings, "SIGN_IN_REQUIRED"
         if not visitor_key:
             return settings, "VISITOR_KEY_REQUIRED"
+        # visitors are anonymous, so the platform-wide daily budget is what really bounds the
+        # spend; the per-browser cap only slows one person down
+        if (
+            settings.daily_message_cap
+            and await _messages_today(session, visitor_key=visitor_key)
+            >= settings.daily_message_cap
+        ):
+            return settings, "DAILY_CAP"
+        if (
+            settings.daily_token_budget
+            and await _tokens_today(session) >= settings.daily_token_budget
+        ):
+            return settings, "BUDGET_EXHAUSTED"
         return settings, None
     if settings.rollout == "admins" and "admin" not in principal.roles:
         return settings, "NOT_IN_ROLLOUT"
     if not await consent.has_consent(session, principal.user_id):
         return settings, "CONSENT_REQUIRED"
-    if settings.daily_message_cap and await _messages_today(session, principal.user_id) >= (
+    if settings.daily_message_cap and await _messages_today(session, user_id=principal.user_id) >= (
         settings.daily_message_cap
     ):
         return settings, "DAILY_CAP"
@@ -138,16 +152,19 @@ def _today() -> dt.datetime:
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-async def _messages_today(session: AsyncSession, user_id: uuid.UUID) -> int:
+async def _messages_today(
+    session: AsyncSession, *, user_id: uuid.UUID | None = None, visitor_key: str | None = None
+) -> int:
+    whose = (
+        AssistantConversation.user_id == user_id
+        if user_id is not None
+        else AssistantConversation.visitor_key == visitor_key
+    )
     n = await session.scalar(
         select(func.count())
         .select_from(AssistantMessage)
         .join(AssistantConversation, AssistantConversation.id == AssistantMessage.conversation_id)
-        .where(
-            AssistantConversation.user_id == user_id,
-            AssistantMessage.role == "user",
-            AssistantMessage.created_at >= _today(),
-        )
+        .where(whose, AssistantMessage.role == "user", AssistantMessage.created_at >= _today())
     )
     return int(n or 0)
 
@@ -183,7 +200,9 @@ async def status(request: Request, session: SessionDep):
         model_configured=bool(settings.model),
         encryption="ok" if crypto.is_configured() else "missing",
         policy_version=consent.current_version(),
-        consent_required=principal is not None and not given,
+        # only when consent is the one thing left: otherwise a user the assistant is not open
+        # to (off, admins-only rollout...) would be shown a consent screen for nothing
+        consent_required=reason == "CONSENT_REQUIRED",
         consent_given=given,
         visitor_allowed=settings.visitor_enabled and settings.rollout != "admins",
         rollout=settings.rollout,
@@ -308,6 +327,13 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
+# A reply can stay silent while the model thinks or a tool runs. nginx drops a proxied response
+# after 60 s without data (proxy_read_timeout), so a quiet stream sends an SSE comment every
+# KEEPALIVE_SECONDS; browsers and our client ignore comment lines.
+KEEPALIVE_SECONDS = 15.0
+_KEEPALIVE = ": keep-alive\n\n"
+
+
 async def _stream(
     ctx: AgentContext, text: str, settings: AssistantSettings, llm: LLMClient
 ) -> AsyncIterator[str]:
@@ -315,20 +341,37 @@ async def _stream(
     maker = get_sessionmaker()
     async with maker() as session:
         gen = agent.run_turn(session, ctx, text, llm, settings=settings)
+        pending: asyncio.Future | None = None
         try:
             while True:
-                try:
-                    ev = await asyncio.wait_for(gen.__anext__(), timeout)
-                except StopAsyncIteration:
-                    break
-                except TimeoutError:
+                pending = asyncio.ensure_future(gen.__anext__())
+                waited = 0.0
+                while not pending.done() and waited < timeout:
+                    step = min(KEEPALIVE_SECONDS, timeout - waited)
+                    await asyncio.wait({pending}, timeout=step)
+                    waited += step
+                    if not pending.done() and waited < timeout:
+                        yield _KEEPALIVE
+                if not pending.done():
                     yield _sse("error", {"code": "TIMEOUT", "message": agent.SAFE_MODE_TEXT["en"]})
+                    break
+                try:
+                    ev = pending.result()
+                except StopAsyncIteration:
                     break
                 except AppError as exc:
                     yield _sse("error", {"code": exc.code, "message": exc.message})
                     break
+                finally:
+                    if pending.done():
+                        pending = None
                 yield _sse(ev["event"], ev["data"])
         finally:
+            if pending is not None and not pending.done():
+                # timed out or the client went away: stop the turn before closing it
+                pending.cancel()
+                with contextlib.suppress(BaseException):
+                    await pending
             await gen.aclose()
 
 

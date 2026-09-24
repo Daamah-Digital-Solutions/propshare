@@ -1,7 +1,7 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Shield, Database, Lock, Eye, Users, Trash2 } from "lucide-react";
+import { Shield, Database, Lock, Eye, Users, Trash2, Bot } from "lucide-react";
 
 const Privacy = () => {
   const dataCategories = [
@@ -43,7 +43,7 @@ const Privacy = () => {
         </div>
         <h1 className="text-4xl font-bold text-foreground mb-4">Privacy Policy</h1>
         <p className="text-muted-foreground">
-          Last updated: January 2026
+          Last updated: September 2026
         </p>
       </div>
 
@@ -138,10 +138,56 @@ const Privacy = () => {
               <li><strong className="text-foreground">Legal Authorities:</strong> When required by law or court order</li>
               <li><strong className="text-foreground">Regulatory Bodies:</strong> To comply with financial regulations</li>
               <li><strong className="text-foreground">Service Providers:</strong> Cloud hosting, analytics (under strict agreements)</li>
+              <li><strong className="text-foreground">AI Provider:</strong> OpenAI, only for conversations you choose to have with PropShare AI (see below)</li>
             </ul>
             <p className="pt-4 font-medium text-foreground">
               We never sell your personal data to third parties.
             </p>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* AI assistant */}
+      <section className="mb-10" id="ai-assistant">
+        <h2 className="text-2xl font-bold text-foreground mb-6 flex items-center gap-3">
+          <Bot className="h-6 w-6 text-primary" />
+          PropShare AI Assistant
+        </h2>
+        <Card>
+          <CardContent className="p-6 space-y-4 text-muted-foreground">
+            <p>
+              PropShare AI answers questions about the platform and, when you are signed in, about
+              your own account. It can prepare a deposit, withdrawal, investment or sale for you, but
+              nothing happens until you confirm it yourself on the relevant page.
+            </p>
+            <ul className="list-disc pl-6 space-y-2">
+              <li>
+                <strong className="text-foreground">What is sent:</strong> the messages you type and,
+                for signed-in users, the account details needed to answer (such as your name, role,
+                verification status, and the balances or holdings you ask about) are sent to OpenAI,
+                our AI provider, to produce the reply. Visitors&apos; messages are sent without any
+                account details.
+              </li>
+              <li>
+                <strong className="text-foreground">Storage:</strong> conversations are stored
+                encrypted on our servers and deleted automatically after 180 days. OpenAI does not use
+                this data to train its models. It may keep request logs for up to 30 days to detect
+                abuse, even though we ask it not to store the replies.
+              </li>
+              <li>
+                <strong className="text-foreground">Access:</strong> our staff open a conversation
+                only to help you or to keep the platform safe, and every such access is logged.
+              </li>
+              <li>
+                <strong className="text-foreground">Your choice:</strong> signed-in users accept this
+                notice before the first message, and visitors see it before theirs. Using the assistant
+                is optional: you can always reach our team through the Support page instead.
+              </li>
+              <li>
+                <strong className="text-foreground">Please don&apos;t share</strong> passwords,
+                verification codes or full card numbers in the chat. We will never ask for them.
+              </li>
+            </ul>
           </CardContent>
         </Card>
       </section>

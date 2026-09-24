@@ -21,7 +21,7 @@ const Terms = () => {
         </div>
         <h1 className="text-4xl font-bold text-foreground mb-4">Terms & Conditions</h1>
         <p className="text-muted-foreground">
-          Last updated: January 2026
+          Last updated: September 2026
         </p>
       </div>
 
@@ -159,7 +159,27 @@ const Terms = () => {
         </section>
 
         <section>
-          <h2 className="text-xl font-bold text-foreground mb-4">7. Governing Law</h2>
+          <h2 className="text-xl font-bold text-foreground mb-4">7. PropShare AI Assistant</h2>
+          <Card>
+            <CardContent className="p-6 space-y-4 text-muted-foreground">
+              <p>
+                PropShare AI gives general information about the platform and your account and helps
+                you prepare actions. It is not investment, legal or tax advice. It never moves money
+                or makes an investment for you: every deposit, withdrawal, investment or sale happens
+                only when you confirm it yourself.
+              </p>
+              <p>
+                Its answers are generated automatically and can be incomplete or wrong. Check the
+                figures on the relevant page before you act, and contact our team through the Support
+                page if anything is unclear. How your conversations are handled is described in the
+                Privacy Policy.
+              </p>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section>
+          <h2 className="text-xl font-bold text-foreground mb-4">8. Governing Law</h2>
           <Card>
             <CardContent className="p-6 text-muted-foreground">
               <p>

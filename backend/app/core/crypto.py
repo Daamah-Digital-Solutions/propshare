@@ -82,8 +82,13 @@ def _load() -> tuple[dict[str, bytes], str]:
         )
     if not os.path.isfile(path):
         raise CryptoNotConfigured(f"Key file not found: {path}")
-    with open(path, encoding="utf-8") as fh:
-        keys = _parse_keys(fh.read())
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except (OSError, UnicodeDecodeError) as exc:
+        # e.g. wrong owner/mode on the server: the features switch off, the app still boots
+        raise CryptoNotConfigured(f"Key file not readable: {path} ({exc})") from exc
+    keys = _parse_keys(text)
     if active not in keys:
         raise CryptoNotConfigured(f"Active key {active!r} is not in the key file.")
     return keys, active

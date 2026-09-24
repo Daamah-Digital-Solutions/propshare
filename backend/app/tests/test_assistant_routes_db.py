@@ -129,6 +129,8 @@ async def _send(client, cid, text, headers) -> list[dict]:
         raw = (await r.aread()).decode()
     events = []
     for block in raw.strip().split("\n\n"):
+        if block.startswith(":"):  # SSE comment (keep-alive)
+            continue
         lines = dict(line.split(": ", 1) for line in block.splitlines())
         events.append({"event": lines["event"], "data": json.loads(lines["data"])})
     return events
@@ -661,3 +663,110 @@ def test_handoff_render_is_a_fixed_template():
     text = h.render()
     assert text.startswith("Category: payments\nPriority: high\nReferences: payment_id=abc\n")
     assert "Transcript (admin panel, audited): /admin/x" in text and "turns: 3" in text
+
+
+# --- release hardening (2026-09-24) -------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_a_quiet_stream_sends_keep_alives_and_still_finishes(
+    client, db, configured, monkeypatch
+):
+    """nginx drops a proxied response after 60 s without data; a slow model must not cut the
+    reply off, and the client ignores the comment lines."""
+    import asyncio
+
+    class SlowLLM(FakeLLM):
+        async def stream(self, req):
+            await asyncio.sleep(0.25)
+            async for ev in super().stream(req):
+                yield ev
+
+    monkeypatch.setattr(assistant_routes, "KEEPALIVE_SECONDS", 0.05)
+    llm = SlowLLM([FakeTurn(text="Hello after a pause.")])
+    monkeypatch.setattr(assistant_routes, "llm_factory", lambda provider: llm)
+    _enable(db)
+    tok, _ = await _user(client, db, "slow@test.io")
+    await _consent(client, tok)
+    cid = (await client.post("/api/v1/assistant/conversations", headers=_h(tok))).json()["id"]
+    async with client.stream(
+        "POST",
+        f"/api/v1/assistant/conversations/{cid}/messages",
+        json={"text": "hi"},
+        headers=_h(tok),
+    ) as r:
+        raw = (await r.aread()).decode()
+    assert ": keep-alive" in raw
+    events = [b for b in raw.split("\n\n") if b and not b.startswith(":")]
+    assert events[0].startswith("event: started") and events[-1].startswith("event: done")
+    assert any(b.startswith("event: delta") for b in events)
+
+
+@pytest.mark.asyncio
+async def test_consent_screen_only_for_users_the_assistant_is_open_to(client, db, configured):
+    """Admins-only rollout: an ordinary user must not be asked to consent to a feature they
+    cannot use (the widget would replace the site chat with a consent screen)."""
+    _enable(db, rollout="admins")
+    tok, _ = await _user(client, db, "notyet@test.io")
+    st = (await client.get("/api/v1/assistant/status", headers=_h(tok))).json()
+    assert (st["reason"], st["consent_required"]) == ("NOT_IN_ROLLOUT", False)
+    _enable(db, rollout="all")
+    st = (await client.get("/api/v1/assistant/status", headers=_h(tok))).json()
+    assert (st["reason"], st["consent_required"]) == ("CONSENT_REQUIRED", True)
+
+
+@pytest.mark.asyncio
+async def test_no_chat_text_is_stored_readable(client, db, configured, monkeypatch):
+    """Conversation rows are plaintext: the user's words must never be copied into them."""
+    _enable(db)
+    tok, _ = await _user(client, db, "plain@test.io")
+    await _consent(client, tok)
+    _fake(monkeypatch, FakeTurn(text="Sure."))
+    cid = (await client.post("/api/v1/assistant/conversations", headers=_h(tok))).json()["id"]
+    await _send(client, cid, f"my secret plan {SENTINEL}", _h(tok))
+    row = db("SELECT title, visitor_key, status FROM assistant_conversations WHERE id=:i", i=cid)[0]
+    assert all(SENTINEL not in str(v) for v in row)
+
+
+@pytest.mark.asyncio
+async def test_switches_accept_every_value_the_admin_panel_accepts(client, db, configured):
+    _enable(db)
+    _setting(db, "assistant_enabled", "yes")
+    tok, _ = await _user(client, db, "yes@test.io")
+    await _consent(client, tok)
+    assert (await client.get("/api/v1/assistant/status", headers=_h(tok))).json()["enabled"] is True
+
+
+def test_an_unreadable_key_file_switches_features_off_instead_of_crashing(monkeypatch, tmp_path):
+    s = get_settings()
+    monkeypatch.setattr(
+        s, "assistant_encryption_keys_file", _write_keys(tmp_path, "k1"), raising=False
+    )
+    monkeypatch.setattr(s, "assistant_encryption_active_key", "k1", raising=False)
+
+    def denied(*a, **kw):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(crypto, "open", denied, raising=False)
+    crypto.reset_cache()
+    try:
+        assert crypto.is_configured() is False
+    finally:
+        crypto.reset_cache()
+
+
+@pytest.mark.asyncio
+async def test_visitors_are_capped_and_share_the_daily_budget(client, db, configured, monkeypatch):
+    """Visitors are anonymous: without these limits, open visitor mode would let anyone spend
+    the platform's AI budget without bound."""
+    _enable(db, visitors=True, cap="1")
+    _fake(monkeypatch, FakeTurn(text="One answer."))
+    v = {"X-Visitor-Key": VKEY}
+    cid = (await client.post("/api/v1/assistant/conversations", headers=v)).json()["id"]
+    await _send(client, cid, "first", v)
+    st = (await client.get("/api/v1/assistant/status", headers=v)).json()
+    assert st["reason"] == "DAILY_CAP"
+    # a new browser key gets its own cap, but not past the platform's daily token budget
+    other = {"X-Visitor-Key": VKEY + "zz"}
+    assert (await client.get("/api/v1/assistant/status", headers=other)).json()["enabled"] is True
+    _setting(db, "assistant_daily_token_budget", "1")
+    st = (await client.get("/api/v1/assistant/status", headers=other)).json()
+    assert st["reason"] == "BUDGET_EXHAUSTED"

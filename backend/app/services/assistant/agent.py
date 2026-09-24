@@ -104,6 +104,9 @@ class AssistantSettings:
         return bool(self.model)
 
 
+_ON = frozenset({"true", "1", "yes", "on"})
+
+
 async def load_settings(session: AsyncSession) -> AssistantSettings:
     async def s(key: str) -> str:
         return (await settings_service.get_setting(session, key)).strip()
@@ -116,8 +119,9 @@ async def load_settings(session: AsyncSession) -> AssistantSettings:
         pricing = {}
     disabled = {t.strip() for t in (await s("assistant_disabled_tools")).split(",") if t.strip()}
     return AssistantSettings(
-        enabled=(await s("assistant_enabled")).lower() == "true",
-        visitor_enabled=(await s("assistant_visitor_enabled")).lower() == "true",
+        # the admin panel accepts true/1/yes/on for a switch, so all of them must mean on
+        enabled=(await s("assistant_enabled")).lower() in _ON,
+        visitor_enabled=(await s("assistant_visitor_enabled")).lower() in _ON,
         provider=await s("assistant_provider") or "openai",
         model=await s("assistant_model"),
         effort=await s("assistant_reasoning_effort") or "low",
@@ -725,8 +729,8 @@ async def run_turn(
     conv.model = settings.model
     conv.provider = getattr(llm, "provider", settings.provider)
     conv.last_message_at = now
-    if not conv.title:
-        conv.title = clean_text[:80]
+    # no title from the user's words: that column is plaintext, and chat text is only ever
+    # stored encrypted (it would otherwise sit readable in every dump and backup)
     await session.flush()
     await session.commit()
 

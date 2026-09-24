@@ -161,6 +161,12 @@ describe("AssistantWidget", () => {
       ];
       renderIt(visitor);
       open();
+      // before a visitor's first message leaves for the AI provider, they are told so, once
+      const notice = await screen.findByTestId("consent-gate");
+      expect(notice).toHaveTextContent(/OpenAI/);
+      expect(screen.queryByTestId("assistant-starters")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /i understand, continue/i }));
+      expect(localStorage.getItem("capimax_assistant_visitor_notice")).toBe(visitor.policy_version);
       const signIn = await screen.findByRole("link", { name: /sign in/i });
       expect(signIn).toHaveAttribute("href", "/auth");
       expect(screen.getByRole("link", { name: /create a free account/i })).toHaveAttribute(
@@ -174,6 +180,21 @@ describe("AssistantWidget", () => {
       await screen.findByText("How does fractional ownership work?", { selector: "p, div, span" });
       await screen.findByText(/units are shares of one property/i);
       expect(screen.queryByTestId("assistant-starters")).toBeNull(); // gone once the chat starts
+    } finally {
+      authState.isAuthenticated = true;
+    }
+  });
+
+  it("does not show the visitor notice again once acknowledged in this browser", async () => {
+    authState.isAuthenticated = false;
+    try {
+      const visitor = { ...enabled, visitor_allowed: true };
+      localStorage.setItem("capimax_assistant_visitor_notice", visitor.policy_version);
+      api.status.mockResolvedValue(visitor);
+      renderIt(visitor);
+      open();
+      await screen.findByTestId("assistant-starters");
+      expect(screen.queryByTestId("consent-gate")).toBeNull();
     } finally {
       authState.isAuthenticated = true;
     }
