@@ -21,7 +21,7 @@ const { authState, api, stream } = vi.hoisted(() => ({
     cancel: vi.fn(),
     feedback: vi.fn(),
   },
-  stream: { events: [] as unknown[] },
+  stream: { events: [] as unknown[], calls: [] as unknown[][] },
 }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => authState }));
 vi.mock("@/lib/assistantApi", async (orig) => {
@@ -29,7 +29,8 @@ vi.mock("@/lib/assistantApi", async (orig) => {
   return {
     ...real,
     assistantApi: api,
-    sendMessage: async function* () {
+    sendMessage: async function* (...args: unknown[]) {
+      stream.calls.push(args);
       for (const ev of stream.events) yield ev;
     },
   };
@@ -48,9 +49,9 @@ const enabled: AssistantStatus = {
   rollout: "all",
 };
 
-function renderIt(status: AssistantStatus) {
+function renderIt(status: AssistantStatus, url = "/") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[url]}>
       <AssistantWidget status={status} />
     </MemoryRouter>,
   );
@@ -65,6 +66,7 @@ describe("AssistantWidget", () => {
     api.messages.mockResolvedValue([]);
     api.feedback.mockResolvedValue(null);
     stream.events = [];
+    stream.calls = [];
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -272,6 +274,48 @@ describe("AssistantWidget", () => {
     );
     expect(screen.queryByRole("link", { name: /^eval tower$/i })).toBeNull();
   });
+  it("knows the page: property questions on a property page, sent with the page path", async () => {
+    api.status.mockResolvedValue(enabled);
+    stream.events = [
+      { event: "started", data: { conversation_id: "conv-1" } },
+      { event: "delta", data: { text: "Your order is ready." } },
+      { event: "done", data: { message_id: "m1", confidence: "normal", safe_mode: null } },
+    ];
+    renderIt(enabled, "/property/eval-tower?preview=tok");
+    open();
+    const starters = await screen.findByTestId("assistant-starters");
+    expect(screen.getByText("About this property")).toBeInTheDocument();
+    expect(starters).not.toHaveTextContent(/what is my balance/i);
+    fireEvent.click(screen.getByRole("button", { name: /prepare 10 units of this property/i }));
+    await screen.findByText(/your order is ready/i);
+    const [, text, , , page] = stream.calls[0];
+    expect(text).toBe("Prepare 10 units of this property");
+    expect(page).toBe("/property/eval-tower?preview=tok"); // the server keeps only what it trusts
+  });
+
+  it("offers wallet actions on the wallet page and drops a plain wallet button beside a wallet card", async () => {
+    api.status.mockResolvedValue(enabled);
+    stream.events = [
+      { event: "started", data: { conversation_id: "conv-1" } },
+      { event: "delta", data: { text: "Your deposit is ready." } },
+      { event: "card", data: { kind: "deposit", amount: "1000.00", currency: "USD", method: "card", method_label: "Card", notes: [], ready: true, path: "/dashboard?tab=wallet&action=deposit&amount=1000.00&method=card" } },
+      { event: "card", data: { kind: "link", path: "/dashboard?tab=wallet", label: "Open your wallet" } },
+      { event: "done", data: { message_id: "m1", confidence: "normal", safe_mode: null } },
+    ];
+    renderIt(enabled, "/dashboard?tab=wallet");
+    open();
+    const starters = await screen.findByTestId("assistant-starters");
+    expect(starters).toHaveTextContent(/statement for the last 3 months/i);
+    fireEvent.click(screen.getByRole("button", { name: /add \$1,000 to my wallet by card/i }));
+    await screen.findByTestId("deposit-card");
+    expect(screen.getByRole("link", { name: /continue to payment/i })).toHaveAttribute(
+      "href",
+      "/dashboard?tab=wallet&action=deposit&amount=1000.00&method=card",
+    );
+    expect(screen.queryByRole("link", { name: /open your wallet/i })).toBeNull();
+    expect(stream.calls[0][4]).toBe("/dashboard?tab=wallet");
+  });
+
   it("does not pop the teaser after the panel was opened before its timer fired", async () => {
     vi.useFakeTimers();
     try {

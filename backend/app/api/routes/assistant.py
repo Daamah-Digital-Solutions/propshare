@@ -213,6 +213,7 @@ async def _context(
     *,
     lang: str = "en",
     conversation_id: uuid.UUID | None = None,
+    page: str | None = None,
 ) -> AgentContext:
     return await load_context(
         session,
@@ -220,6 +221,7 @@ async def _context(
         visitor_key=visitor_key,
         lang=lang,
         conversation_id=conversation_id,
+        page=page,
     )
 
 
@@ -340,7 +342,12 @@ async def send_message(
     if reason:
         _raise_gate(reason)
     ctx = await _context(
-        session, principal, visitor_key, lang=body.lang, conversation_id=conversation_id
+        session,
+        principal,
+        visitor_key,
+        lang=body.lang,
+        conversation_id=conversation_id,
+        page=body.page,
     )
     await agent.get_conversation(session, ctx, conversation_id)  # ownership check
     llm = llm_factory(settings.provider)

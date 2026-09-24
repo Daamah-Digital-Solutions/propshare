@@ -28,6 +28,7 @@ import uuid
 from collections.abc import AsyncIterator
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
+from urllib.parse import urlencode
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -353,6 +354,45 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
             "notes": list(result.get("eligibility_notes") or [])[:4],
             "ready": bool(result.get("ready_to_pay")),
             "path": path,
+        }
+    if name == "prepare_deposit":
+        query = {"tab": "wallet", "action": "deposit"}
+        query |= {"amount": result["amount"], "method": result["method"]}
+        return {
+            "kind": "deposit",
+            "amount": result["amount"],
+            "currency": result["currency"],
+            "method": result["method"],
+            "method_label": result["method_label"],
+            "notes": list(result.get("notes") or [])[:4],
+            "ready": bool(result.get("ready")),
+            "path": f"/dashboard?{urlencode(query)}",
+        }
+    if name == "prepare_withdrawal":
+        query = {"tab": "wallet", "action": "withdraw"}
+        query |= {"amount": result["amount"], "method": result["method"]}
+        if result["speed"] == "instant":
+            query["speed"] = "instant"
+        return {
+            "kind": "withdrawal",
+            **{
+                k: result[k] for k in ("amount", "currency", "method", "speed", "fee", "net_amount")
+            },
+            "destination": result.get("destination"),
+            "timing": result.get("timing"),
+            "notes": list(result.get("notes") or [])[:4],
+            "ready": bool(result.get("ready")),
+            "path": f"/dashboard?{urlencode(query)}",
+        }
+    if name == "prepare_statement":
+        return {
+            "kind": "statement",
+            **{
+                k: result[k]
+                for k in ("start", "end", "format", "movements", "currency")
+                + ("opening_balance", "closing_balance", "money_in", "money_out")
+            },
+            "path": guard.make_link("statement")["path"],
         }
     if name == "propose_action":
         issued = next((t for t in tokens if t["proposal_id"] == result["proposal_id"]), None)

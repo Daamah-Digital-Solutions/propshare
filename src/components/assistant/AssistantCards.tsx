@@ -2,24 +2,33 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertCircle,
+  ArrowDownToLine,
   ArrowRight,
   Building2,
   Check,
+  FileSpreadsheet,
+  FileText,
   Loader2,
   MapPin,
   Receipt,
   ShieldCheck,
+  Wallet,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import type {
   AssistantCard,
   CheckoutCard,
   ConfirmActionCard,
+  DepositCard,
   LinkCard,
   Proposal,
+  StatementCard,
+  WithdrawalCard,
 } from "@/lib/assistantApi";
 import { assistantApi } from "@/lib/assistantApi";
-import { ApiError, assetUrl } from "@/lib/api";
+import { ApiError, assetUrl, walletApi, type StatementFormat } from "@/lib/api";
+import { saveBlob } from "@/lib/certificates";
 import { cn } from "@/lib/utils";
 import { linkIcon } from "@/components/assistant/assistantUi";
 
@@ -194,6 +203,199 @@ export function CheckoutOrderCard({ card, onClose }: { card: CheckoutCard; onClo
   );
 }
 
+type Row = [label: string, value: string];
+
+/** The frame every prepared card shares: what was prepared, the figures, what still needs
+ * doing, and the one next step. The step itself always happens on the platform's own page. */
+function PreparedShell({
+  testId,
+  icon: Icon,
+  title,
+  rows,
+  total,
+  notes,
+  children,
+  footnote,
+}: {
+  testId: string;
+  icon: LucideIcon;
+  title: string;
+  rows: Row[];
+  total?: Row;
+  notes: string[];
+  children: React.ReactNode;
+  footnote: string;
+}) {
+  return (
+    <div className="mt-2 overflow-hidden rounded-2xl border border-primary/30 bg-card shadow-sm" data-testid={testId}>
+      <div className="flex items-center gap-2 border-b border-primary/15 bg-primary/5 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-primary">
+        <Icon className="h-3.5 w-3.5" />
+        {title}
+      </div>
+      <div className="space-y-1.5 px-3 pt-3 text-xs">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-baseline justify-between gap-3">
+            <span className="shrink-0 text-muted-foreground">{k}</span>
+            <span className="text-right font-medium text-foreground">{v}</span>
+          </div>
+        ))}
+        {total && (
+          <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border pt-2">
+            <span className="font-semibold text-foreground">{total[0]}</span>
+            <span className="text-base font-bold text-foreground">{total[1]}</span>
+          </div>
+        )}
+      </div>
+      {notes.length > 0 && (
+        <ul className="mx-3 mt-2 space-y-1 rounded-xl bg-accent/10 px-3 py-2 text-[11px] text-foreground/80">
+          {notes.map((n) => (
+            <li key={n} className="flex gap-1.5">
+              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-accent" />
+              {n}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="p-3">
+        {children}
+        <div className="mt-1.5 text-center text-[10.5px] text-muted-foreground">{footnote}</div>
+      </div>
+    </div>
+  );
+}
+
+const CTA =
+  "flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2.5 text-xs font-semibold text-primary-foreground shadow-[0_6px_16px_-8px_hsl(var(--primary)/0.8)] transition hover:brightness-110 disabled:opacity-60";
+
+function CtaLink({ to, label, onClose }: { to: string; label: string; onClose?: () => void }) {
+  return (
+    <Link to={to} onClick={onClose} className={CTA}>
+      {label}
+      <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
+    </Link>
+  );
+}
+
+/** A deposit the assistant prepared: the wallet opens with it filled in, the user deposits. */
+export function DepositPreparedCard({ card, onClose }: { card: DepositCard; onClose?: () => void }) {
+  const bank = card.method === "bank";
+  return (
+    <PreparedShell
+      testId="deposit-card"
+      icon={Wallet}
+      title={card.ready ? "Your deposit is ready" : "Deposit prepared: one step first"}
+      rows={[
+        ["Method", card.method_label],
+        ["Credited to", "Your PropShare wallet"],
+      ]}
+      total={["You add", money(card.amount)]}
+      notes={card.notes}
+      footnote={
+        bank
+          ? "Opens your wallet with the transfer details. Nothing moves until you send it."
+          : "Opens your wallet with this deposit filled in. Nothing is charged until you confirm."
+      }
+    >
+      <CtaLink
+        to={card.path}
+        onClose={onClose}
+        label={!card.ready ? "Open wallet" : bank ? "Continue to bank transfer" : "Continue to payment"}
+      />
+    </PreparedShell>
+  );
+}
+
+/** A withdrawal the assistant prepared, fee and net worked out; the user presses Withdraw. */
+export function WithdrawalPreparedCard({ card, onClose }: { card: WithdrawalCard; onClose?: () => void }) {
+  const instant = card.speed === "instant";
+  const rows: Row[] = [
+    ["Amount", money(card.amount)],
+    ["Speed", instant ? "Instant (minutes)" : "Standard"],
+    ["Fee", Number(card.fee) > 0 ? money(card.fee) : "Free"],
+  ];
+  if (card.destination) rows.push(["To", card.destination]);
+  if (card.timing) rows.push(["Arrives", card.timing]);
+  return (
+    <PreparedShell
+      testId="withdrawal-card"
+      icon={ArrowDownToLine}
+      title={card.ready ? "Your withdrawal is ready" : "Withdrawal prepared: one step first"}
+      rows={rows}
+      total={["You receive", money(card.net_amount)]}
+      notes={card.notes}
+      footnote="Opens your wallet with this withdrawal filled in. Nothing is sent until you confirm."
+    >
+      <CtaLink to={card.path} onClose={onClose} label={card.ready ? "Review & withdraw" : "Open wallet"} />
+    </PreparedShell>
+  );
+}
+
+const day = (iso: string) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+/** An account statement for a period: downloads straight from the chat. */
+export function StatementPreparedCard({ card }: { card: StatementCard }) {
+  const [busy, setBusy] = useState<StatementFormat | null>(null);
+  const [problem, setProblem] = useState("");
+  const download = async (format: StatementFormat) => {
+    setBusy(format);
+    setProblem("");
+    try {
+      const blob = await walletApi.downloadStatement(card.start, card.end, format);
+      saveBlob(blob, `capimax-statement-${card.start}-to-${card.end}.${format}`);
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : "Could not create the statement. Please try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const order: StatementFormat[] = card.format === "xlsx" ? ["xlsx", "pdf"] : ["pdf", "xlsx"];
+  return (
+    <PreparedShell
+      testId="statement-card"
+      icon={FileText}
+      title="Your statement is ready"
+      rows={[
+        ["Period", `${day(card.start)} – ${day(card.end)}`],
+        ["Movements", String(card.movements)],
+        ["Opening balance", money(card.opening_balance)],
+        ["Money in", money(card.money_in)],
+        ["Money out", money(card.money_out)],
+      ]}
+      total={["Closing balance", money(card.closing_balance)]}
+      notes={problem ? [problem] : []}
+      footnote="Downloads straight to your device. Dates are UTC, both days included."
+    >
+      <div className="flex gap-2">
+        {order.map((f, i) => {
+          const Icon = f === "pdf" ? FileText : FileSpreadsheet;
+          return (
+            <button
+              key={f}
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void download(f)}
+              className={cn(
+                i === 0
+                  ? CTA
+                  : "flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-background px-3 py-2.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60",
+              )}
+            >
+              {busy === f ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
+              {f === "pdf" ? "Download PDF" : "Download Excel"}
+            </button>
+          );
+        })}
+      </div>
+    </PreparedShell>
+  );
+}
+
 /** A page button. The first button of a reply is the primary call to action. */
 export function LinkButton({
   card,
@@ -316,5 +518,8 @@ export function AssistantCardView({
   }
   if (card.kind === "confirm_action") return <ConfirmCard card={card} onDecided={onDecided} />;
   if (card.kind === "checkout") return <CheckoutOrderCard card={card} onClose={onClose} />;
+  if (card.kind === "deposit") return <DepositPreparedCard card={card} onClose={onClose} />;
+  if (card.kind === "withdrawal") return <WithdrawalPreparedCard card={card} onClose={onClose} />;
+  if (card.kind === "statement") return <StatementPreparedCard card={card} />;
   return null;
 }

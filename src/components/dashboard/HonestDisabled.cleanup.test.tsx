@@ -7,6 +7,7 @@
  *  - InvestorWallet "Payment Methods": no fake saved cards/banks on the money page.
  */
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { InvestmentCertificates } from "./InvestmentCertificates";
@@ -69,7 +70,12 @@ vi.mock("@/components/dashboard/ReinvestReturns", () => ({
 
 function wrap(node: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>);
+  // the wallet reads prepared deposits / withdrawals from the URL, so it needs a router
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>{node}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 describe("InvestmentCertificates (real per-holding certificates)", () => {

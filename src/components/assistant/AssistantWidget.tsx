@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   ArrowUp,
   Building2,
@@ -33,7 +34,7 @@ import {
   type TurnDone,
 } from "@/lib/assistantApi";
 import { AssistantCardView, LinkButton } from "@/components/assistant/AssistantCards";
-import { greeting, toolLabel } from "@/components/assistant/assistantUi";
+import { greeting, pageStarters, toolLabel } from "@/components/assistant/assistantUi";
 
 /**
  * Capimax assistant v2 — the in-platform agent (plan Phase 1 §6).
@@ -86,6 +87,9 @@ const STARTER_ICONS: Record<"visitor" | "member", LucideIcon[]> = {
   visitor: [HelpCircle, Building2, Receipt, TrendingUp],
   member: [Wallet, TrendingUp, FileText, Receipt],
 };
+
+/** Cards that already open the wallet: a plain "Open your wallet" button beside them is noise. */
+const WALLET_CARD_KINDS = new Set(["deposit", "withdrawal", "statement"]);
 
 /** A visitor sees the way in from the first message, not only after asking. */
 const VISITOR_WELCOME_CARDS: AssistantCard[] = [
@@ -175,6 +179,9 @@ function inline(text: string, keyBase: string) {
 
 export function AssistantWidget({ status: initialStatus }: { status: AssistantStatus }) {
   const { isAuthenticated, user } = useAuth();
+  // the page the user has open travels with each message ("this property", "my wallet here")
+  const location = useLocation();
+  const page = `${location.pathname}${location.search}`;
   const identity = isAuthenticated ? (user?.id ?? "user") : "visitor";
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -353,7 +360,7 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
       setMessages((prev) => prev.map((m) => (m.id === reply.id ? fn(m) : m)));
     try {
       const cid = await ensureConversation();
-      for await (const ev of sendMessage(cid, text, turnLang, controller.signal)) {
+      for await (const ev of sendMessage(cid, text, turnLang, controller.signal, page)) {
         if (ev.event === "delta") patch((m) => ({ ...m, text: m.text + ev.data.text }));
         else if (ev.event === "reset") patch((m) => ({ ...m, text: "" }));
         else if (ev.event === "tool")
@@ -385,7 +392,7 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
       setBusy(false);
       abortRef.current = null;
     }
-  }, [input, busy, lang, englishOnly, ensureConversation]);
+  }, [input, busy, lang, englishOnly, ensureConversation, page]);
 
   const copyText = useCallback(async (m: Msg) => {
     try {
@@ -440,6 +447,10 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
   const firstName = (user?.full_name ?? "").trim().split(/\s+/)[0] || null;
   const showHero = messages.length === 1 && messages[0]?.id === "welcome" && !needsConsent && !blocked;
   const starterSet = isAuthenticated ? "member" : "visitor";
+  const onPage = pageStarters(location.pathname, location.search, isAuthenticated);
+  const starterLang = lang === "ar" ? "ar" : "en";
+  const starters = onPage ? onPage[starterLang] : STARTERS[starterSet][starterLang];
+  const starterIcons = onPage ? onPage.icons : STARTER_ICONS[starterSet];
   const running = (m: Msg) => [...m.tools].reverse().find((t) => t.status === "running");
 
   return (
@@ -603,11 +614,11 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                   </div>
                 )}
                 <div className="mt-5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {lang === "ar" ? "اقتراحات" : "Try asking"}
+                  {onPage ? onPage.title[starterLang] : lang === "ar" ? "اقتراحات" : "Try asking"}
                 </div>
                 <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2" data-testid="assistant-starters">
-                  {STARTERS[starterSet][lang === "ar" ? "ar" : "en"].map((q, i) => {
-                    const Icon = STARTER_ICONS[starterSet][i] ?? Sparkles;
+                  {starters.map((q, i) => {
+                    const Icon = starterIcons[i] ?? Sparkles;
                     return (
                       <button
                         key={q}
@@ -640,7 +651,9 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                         ? [c.path]
                         : c.kind === "checkout"
                           ? [c.path.split("?")[0]]
-                          : [],
+                          : WALLET_CARD_KINDS.has(c.kind)
+                            ? ["/dashboard?tab=wallet"]
+                            : [],
                   ),
                 );
                 const links = m.cards.filter((c) => c.kind === "link" && !tiled.has(c.path));

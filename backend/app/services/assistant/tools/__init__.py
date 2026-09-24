@@ -10,6 +10,7 @@ from app.services.assistant.tools import (  # noqa: F401
     platform,
     roles,
     staff,
+    wallet,
 )
 from app.services.assistant.tools.base import REGISTRY, ToolSpec, get_spec, llm_tools
 

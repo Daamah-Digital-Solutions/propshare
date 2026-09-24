@@ -23,6 +23,7 @@ import re
 import secrets
 import uuid
 from typing import TYPE_CHECKING, Any
+from urllib.parse import parse_qs, unquote
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -303,6 +304,31 @@ def allowed_route_for(path: str) -> str | None:
         elif path == pattern:
             return route_id
     return None
+
+
+_PAGE_MAX_CHARS = 300
+
+
+def page_route(raw: str | None) -> tuple[str, str, str | None] | None:
+    """(route id, canonical path, slug) for the page the browser reports, or None.
+
+    Only a route of ours survives, and of the query string only ``tab``: an order in the URL,
+    a preview token or any other parameter never reaches the model. The home page is "home"."""
+    if not raw or len(raw) > _PAGE_MAX_CHARS or not raw.startswith("/") or raw.startswith("//"):
+        return None
+    path, _, query = raw.split("#", 1)[0].partition("?")
+    path = unquote(path).rstrip("/") or "/"
+    if path == "/":
+        return ("home", "/", None)
+    tab = parse_qs(query).get("tab", [""])[0]
+    if tab and (route_id := allowed_route_for(f"{path}?tab={tab}")):
+        return (route_id, f"{path}?tab={tab}", None)
+    route_id = allowed_route_for(path)
+    if route_id is None:
+        return None
+    pattern = DEEP_LINKS[route_id][0]
+    slug = path[len(pattern.split("{slug}")[0]) :] if "{slug}" in pattern else None
+    return (route_id, path, slug)
 
 
 def postprocess_output(text: str) -> tuple[str, list[str], list[dict[str, str]]]:

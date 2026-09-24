@@ -53,7 +53,7 @@ export interface Conversation {
   last_message_at: string | null;
 }
 
-export type CardKind = "link" | "property" | "properties" | "confirm_action";
+export type CardKind = AssistantCard["kind"];
 export interface LinkCard {
   kind: "link";
   path: string;
@@ -103,12 +103,55 @@ export interface CheckoutCard {
   ready: boolean;
   path: string;
 }
+/** A deposit prepared by the assistant: opens the wallet with amount + method filled in. */
+export interface DepositCard {
+  kind: "deposit";
+  amount: string;
+  currency: string;
+  method: "card" | "crypto" | "bank";
+  method_label: string;
+  notes: string[];
+  ready: boolean;
+  path: string;
+}
+/** A withdrawal prepared by the assistant: fee and net worked out, opens the wallet filled in. */
+export interface WithdrawalCard {
+  kind: "withdrawal";
+  amount: string;
+  currency: string;
+  method: "bank" | "crypto";
+  speed: "standard" | "instant";
+  fee: string;
+  net_amount: string;
+  destination: string | null;
+  timing: string | null;
+  notes: string[];
+  ready: boolean;
+  path: string;
+}
+/** An account statement for a period: the card downloads the PDF / Excel file directly. */
+export interface StatementCard {
+  kind: "statement";
+  start: string;
+  end: string;
+  format: "pdf" | "xlsx";
+  movements: number;
+  currency: string;
+  opening_balance: string;
+  closing_balance: string;
+  money_in: string;
+  money_out: string;
+  path: string;
+}
 export type AssistantCard =
   | LinkCard
   | PropertyCard
   | PropertiesCard
   | ConfirmActionCard
-  | CheckoutCard;
+  | CheckoutCard
+  | DepositCard
+  | WithdrawalCard
+  | StatementCard;
 
 export interface AssistantMessage {
   id: string;
@@ -206,12 +249,15 @@ export function parseSseBlock(block: string): TurnEvent | null {
 /**
  * Stream one turn. Yields events as they arrive. One transparent refresh on a 401. A non-2xx
  * response is raised as ApiError (the backend's envelope) before any event is yielded.
+ * `page` is the path the user has open ("this property"); the server keeps it only when it is
+ * one of our routes.
  */
 export async function* sendMessage(
   conversationId: string,
   text: string,
   lang: "en" | "ar",
   signal?: AbortSignal,
+  page?: string,
   _retried = false,
 ): AsyncGenerator<TurnEvent, void, void> {
   const headers: Record<string, string> = {
@@ -225,11 +271,11 @@ export async function* sendMessage(
     method: "POST",
     headers,
     credentials: "include",
-    body: JSON.stringify({ text, lang }),
+    body: JSON.stringify(page ? { text, lang, page: page.slice(0, 300) } : { text, lang }),
     signal,
   });
   if (resp.status === 401 && token && !_retried && (await refreshAccessToken())) {
-    yield* sendMessage(conversationId, text, lang, signal, true);
+    yield* sendMessage(conversationId, text, lang, signal, page, true);
     return;
   }
   if (!resp.ok) {

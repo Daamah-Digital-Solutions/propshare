@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,8 +59,31 @@ const NEGATIVE_TYPES = new Set(["withdrawal", "investment", "fee"]);
 
 const tail = (s: string | null | undefined) => (s ? s.slice(-4) : "");
 
+// Query parameters of a deposit / withdrawal the assistant prepared (see WalletPrefill below).
+const PREFILL_KEYS = ["action", "amount", "method", "speed"];
+
+/** Shown inside a form the assistant filled in: the last step stays the user's own click. */
+function PreparedBanner({ what }: { what: "deposit" | "withdrawal" }) {
+  return (
+    <div
+      data-testid="assistant-prefill-banner"
+      className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm"
+    >
+      <div className="font-semibold text-primary">Prepared by PropShare AI</div>
+      <div className="text-xs text-muted-foreground">
+        Check the details below, then press the button yourself. Nothing{" "}
+        {what === "deposit" ? "is charged" : "is sent"} before that.
+      </div>
+    </div>
+  );
+}
+
 export const InvestorWallet = () => {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [prefilled, setPrefilled] = useState<"deposit" | "withdrawal" | null>(null);
 
   // Deposit state
   const [depositAmount, setDepositAmount] = useState("");
@@ -125,9 +149,39 @@ export const InvestorWallet = () => {
   const instantFee = instant ? Math.ceil(requested * instantFeePct) / 100 : 0;
   const overInstantMax = instant && requested > instantMax;
 
+  // WalletPrefill: the assistant prepares a deposit or withdrawal as
+  // ?tab=wallet&action=deposit|withdraw&amount=N&method=M(&speed=instant). Fill the form, open
+  // it, and consume the parameters so a refresh or Back does not reopen it. Pressing Deposit /
+  // Withdraw stays the user's own click; the server re-checks everything then.
+  useEffect(() => {
+    const action = searchParams.get("action");
+    if (action !== "deposit" && action !== "withdraw") return;
+    const amount = Number(searchParams.get("amount"));
+    const method = searchParams.get("method");
+    if (Number.isFinite(amount) && amount > 0) {
+      (action === "deposit" ? setDepositAmount : setWithdrawAmount)(String(amount));
+    }
+    if (action === "deposit") {
+      if (method === "card" || method === "crypto" || method === "bank") setDepositMethod(method);
+      setDepositOpen(true);
+      setPrefilled("deposit");
+    } else {
+      if (method === "bank" || method === "crypto") setWithdrawMethod(method);
+      setInstant(searchParams.get("speed") === "instant");
+      setWithdrawOpen(true);
+      setPrefilled("withdrawal");
+    }
+    const rest = new URLSearchParams(searchParams);
+    PREFILL_KEYS.forEach((k) => rest.delete(k));
+    setSearchParams(rest, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   const methods = savedMethods ?? [];
   const banks = bankAccounts ?? [];
   const wallets = cryptoWallets ?? [];
+  // the server's pick when none is chosen: the default saved destination, else the first one
+  const defaultBankId = (banks.find((b) => b.is_default) ?? banks[0])?.id;
+  const defaultWalletId = (wallets.find((w) => w.is_default) ?? wallets[0])?.id;
   const platforms = platformAccounts ?? [];
   // Which deposit rails are live. Until the query resolves, assume card/crypto are
   // available (optimistic) so the control isn't disabled on a slow network; the server
@@ -322,8 +376,8 @@ export const InvestorWallet = () => {
     const payoutId = autoBank
       ? undefined
       : withdrawMethod === "bank"
-        ? selectedBankId || banks.find((b) => b.is_default)?.id
-        : selectedWalletId || wallets.find((w) => w.is_default)?.id;
+        ? selectedBankId || defaultBankId
+        : selectedWalletId || defaultWalletId;
     if (!autoBank && !payoutId) {
       toast.error(
         withdrawMethod === "bank" ? "Add a bank account first" : "Add a crypto wallet first",
@@ -415,7 +469,13 @@ export const InvestorWallet = () => {
       {/* Quick Actions */}
       <div className="flex flex-wrap gap-4">
         {/* Deposit */}
-        <Dialog>
+        <Dialog
+          open={depositOpen}
+          onOpenChange={(o) => {
+            setDepositOpen(o);
+            if (!o) setPrefilled(null);
+          }}
+        >
           <DialogTrigger asChild>
             <Button className="gap-2">
               <Plus className="h-4 w-4" />
@@ -427,6 +487,7 @@ export const InvestorWallet = () => {
               <DialogTitle>Add Funds to Wallet</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
+              {prefilled === "deposit" && <PreparedBanner what="deposit" />}
               <div className="space-y-2">
                 <Label>Amount (USD)</Label>
                 <Input
@@ -538,7 +599,13 @@ export const InvestorWallet = () => {
         </Dialog>
 
         {/* Withdraw */}
-        <Dialog>
+        <Dialog
+          open={withdrawOpen}
+          onOpenChange={(o) => {
+            setWithdrawOpen(o);
+            if (!o) setPrefilled(null);
+          }}
+        >
           <DialogTrigger asChild>
             <Button variant="outline" className="gap-2">
               <ArrowDownLeft className="h-4 w-4" />
@@ -550,6 +617,7 @@ export const InvestorWallet = () => {
               <DialogTitle>Withdraw Funds</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
+              {prefilled === "withdrawal" && <PreparedBanner what="withdrawal" />}
               <div className="p-3 rounded-lg bg-muted/50">
                 <p className="text-sm text-muted-foreground">Available Balance</p>
                 <p className="text-xl font-bold">${available.toLocaleString()}</p>
@@ -615,7 +683,7 @@ export const InvestorWallet = () => {
                   <div className="space-y-2">
                     <Label>Destination account</Label>
                     <Select
-                      value={selectedBankId || banks.find((b) => b.is_default)?.id || ""}
+                      value={selectedBankId || defaultBankId || ""}
                       onValueChange={setSelectedBankId}
                     >
                       <SelectTrigger>
@@ -641,7 +709,7 @@ export const InvestorWallet = () => {
                   <div className="space-y-2">
                     <Label>Destination wallet</Label>
                     <Select
-                      value={selectedWalletId || wallets.find((w) => w.is_default)?.id || ""}
+                      value={selectedWalletId || defaultWalletId || ""}
                       onValueChange={setSelectedWalletId}
                     >
                       <SelectTrigger>

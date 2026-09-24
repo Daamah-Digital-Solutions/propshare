@@ -47,6 +47,8 @@ class MessageIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=4000)
     lang: Literal["en", "ar"] = "en"
+    # the SPA path the user has open ("this property"); validated against our routes
+    page: str | None = Field(default=None, max_length=300)
 
 
 class MessageOut(BaseModel):

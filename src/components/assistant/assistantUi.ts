@@ -49,6 +49,9 @@ const TOOL_LABELS: Record<string, ToolLabel> = {
   search_kb: { running: "Looking it up", done: "Looked it up" },
   search_reference: { running: "Reading company documents", done: "Read company documents" },
   search_documents: { running: "Searching property documents", done: "Searched property documents" },
+  prepare_deposit: { running: "Preparing your deposit", done: "Prepared your deposit" },
+  prepare_withdrawal: { running: "Preparing your withdrawal", done: "Prepared your withdrawal" },
+  prepare_statement: { running: "Preparing your statement", done: "Prepared your statement" },
   prepare_deep_link: { running: "Finding the right page", done: "Found the right page" },
   propose_action: { running: "Preparing a confirmation", done: "Prepared a confirmation" },
   report_knowledge_gap: { running: "Passing this to the team", done: "Passed this to the team" },
@@ -87,6 +90,57 @@ export function linkIcon(path: string): LucideIcon {
   if (path.startsWith("/exit") || path.startsWith("/secondary") || path.startsWith("/liquidity"))
     return ArrowDownToLine;
   return Compass;
+}
+
+export type PageStarters = {
+  title: Record<"en" | "ar", string>;
+  en: string[];
+  ar: string[];
+  icons: LucideIcon[];
+};
+
+/** One-tap questions about the page the user has open. The assistant is told that page too,
+ * so "this property" needs no explanation. Null = the general starters. */
+export function pageStarters(pathname: string, search: string, member: boolean): PageStarters | null {
+  if (/^\/property\/[^/]+\/?$/.test(pathname)) {
+    return member
+      ? {
+          title: { en: "About this property", ar: "عن العقار ده" },
+          en: [
+            "Summarize this property for me",
+            "Prepare 10 units of this property",
+            "What are the fees and exit options here?",
+            "How are returns paid on this one?",
+          ],
+          ar: ["لخّصلي العقار ده", "جهّزلي 10 وحدات من العقار ده", "إيه الرسوم وطرق الخروج هنا؟", "العائد بيتصرف إزاي في العقار ده؟"],
+          icons: [Building2, Receipt, HelpCircle, TrendingUp],
+        }
+      : {
+          title: { en: "About this property", ar: "عن العقار ده" },
+          en: [
+            "Summarize this property for me",
+            "What are the risks and exit options?",
+            "What fees apply to this one?",
+            "How do I invest in this property?",
+          ],
+          ar: ["لخّصلي العقار ده", "إيه المخاطر وطرق الخروج؟", "إيه الرسوم على العقار ده؟", "أستثمر في العقار ده إزاي؟"],
+          icons: [Building2, ShieldCheck, Receipt, TrendingUp],
+        };
+  }
+  if (member && pathname === "/dashboard" && new URLSearchParams(search).get("tab") === "wallet") {
+    return {
+      title: { en: "For your wallet", ar: "لمحفظتك" },
+      en: [
+        "Add $1,000 to my wallet by card",
+        "Withdraw $500 to my bank",
+        "Statement for the last 3 months (PDF)",
+        "Where is my last deposit?",
+      ],
+      ar: ["ضيف 1000 دولار لمحفظتي بالكارت", "اسحب 500 دولار على البنك", "كشف حساب آخر 3 شهور PDF", "آخر إيداع ليا وصل فين؟"],
+      icons: [Wallet, ArrowDownToLine, FileText, HelpCircle],
+    };
+  }
+  return null;
 }
 
 export function greeting(firstName: string | null, now = new Date()): string {
