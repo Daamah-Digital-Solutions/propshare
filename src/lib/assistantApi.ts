@@ -46,6 +46,8 @@ export interface AssistantStatus {
   rollout: string;
   /** "en": the assistant answers in English only, so the widget stays English. */
   reply_language?: "auto" | "en";
+  /** show a notice before the first message (platform setting assistant_consent_required) */
+  privacy_notice?: boolean;
 }
 
 export interface Conversation {

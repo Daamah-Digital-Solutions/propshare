@@ -74,7 +74,9 @@ def _setting(db, key, value):
     )
 
 
-def _enable(db, *, rollout="all", model="fake-model", visitors=False, cap="200"):
+def _enable(db, *, rollout="all", model="fake-model", visitors=False, cap="200", consent=True):
+    # the consent machinery is tested with the notice switched on (it is off by default)
+    _setting(db, "assistant_consent_required", "true" if consent else "false")
     _setting(db, "assistant_enabled", "true")
     _setting(db, "assistant_model", model)
     _setting(db, "assistant_rollout", rollout)
@@ -140,6 +142,7 @@ async def _send(client, cid, text, headers) -> list[dict]:
 # --- gate + consent ------------------------------------------------------------------------ #
 @pytest.mark.asyncio
 async def test_status_reports_first_failing_reason_in_order(client, db, monkeypatch, tmp_path):
+    _setting(db, "assistant_consent_required", "true")
     tok, _ = await _user(client, db, "gate@test.io")
     r = await client.get("/api/v1/assistant/status", headers=_h(tok))
     assert r.status_code == 200 and r.json()["enabled"] is False
@@ -814,3 +817,23 @@ async def test_all_visitors_together_have_a_daily_cap(client, db, configured, mo
     other = {"X-Visitor-Key": VKEY + "yy"}
     st = (await client.get("/api/v1/assistant/status", headers=other)).json()
     assert st["reason"] == "BUDGET_EXHAUSTED"
+
+
+@pytest.mark.asyncio
+async def test_no_notice_before_the_first_message_unless_switched_on(
+    client, db, configured, monkeypatch
+):
+    """Owner decision: the Privacy Policy covers the assistant, so by default nobody is stopped
+    by a notice; the setting brings the notice back for members and visitors alike."""
+    _enable(db, visitors=True, consent=False)
+    tok, _ = await _user(client, db, "straight@test.io")
+    st = (await client.get("/api/v1/assistant/status", headers=_h(tok))).json()
+    assert (st["enabled"], st["consent_required"], st["privacy_notice"]) == (True, False, False)
+    _fake(monkeypatch, FakeTurn(text="Hello."))
+    cid = (await client.post("/api/v1/assistant/conversations", headers=_h(tok))).json()["id"]
+    assert (await _send(client, cid, "hi", _h(tok)))[-1]["event"] == "done"
+    v = (await client.get("/api/v1/assistant/status", headers={"X-Visitor-Key": VKEY})).json()
+    assert (v["enabled"], v["privacy_notice"]) == (True, False)
+    _setting(db, "assistant_consent_required", "true")
+    v = (await client.get("/api/v1/assistant/status", headers={"X-Visitor-Key": VKEY})).json()
+    assert v["privacy_notice"] is True

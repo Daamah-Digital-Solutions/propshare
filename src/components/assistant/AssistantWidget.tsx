@@ -457,7 +457,9 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
   };
 
   const dir = lang === "ar" ? "rtl" : "ltr";
-  const needsVisitorNotice = !isAuthenticated && status.enabled && !visitorNoticed;
+  // only when the platform asks for a notice (off by default: the Privacy Policy covers it)
+  const needsVisitorNotice =
+    !isAuthenticated && status.enabled && Boolean(status.privacy_notice) && !visitorNoticed;
   const needsConsent = (isAuthenticated && status.consent_required) || needsVisitorNotice;
   const blocked = !status.enabled && !needsConsent;
 

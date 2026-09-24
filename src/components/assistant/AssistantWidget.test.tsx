@@ -152,7 +152,7 @@ describe("AssistantWidget", () => {
   it("greets a visitor with the way in and one-tap questions that send themselves", async () => {
     authState.isAuthenticated = false;
     try {
-      const visitor = { ...enabled, visitor_allowed: true };
+      const visitor = { ...enabled, visitor_allowed: true, privacy_notice: true };
       api.status.mockResolvedValue(visitor);
       stream.events = [
         { event: "started", data: { conversation_id: "conv-1" } },
@@ -185,10 +185,24 @@ describe("AssistantWidget", () => {
     }
   });
 
+  it("shows a visitor no notice at all when the platform does not ask for one", async () => {
+    authState.isAuthenticated = false;
+    try {
+      const visitor = { ...enabled, visitor_allowed: true, privacy_notice: false };
+      api.status.mockResolvedValue(visitor);
+      renderIt(visitor);
+      open();
+      await screen.findByTestId("assistant-starters");
+      expect(screen.queryByTestId("consent-gate")).toBeNull();
+    } finally {
+      authState.isAuthenticated = true;
+    }
+  });
+
   it("does not show the visitor notice again once acknowledged in this browser", async () => {
     authState.isAuthenticated = false;
     try {
-      const visitor = { ...enabled, visitor_allowed: true };
+      const visitor = { ...enabled, visitor_allowed: true, privacy_notice: true };
       localStorage.setItem("capimax_assistant_visitor_notice", visitor.policy_version);
       api.status.mockResolvedValue(visitor);
       renderIt(visitor);

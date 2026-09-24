@@ -64,6 +64,7 @@ _SETTING_SPECS: dict[str, str] = {
     "assistant_daily_message_cap": "int",
     "assistant_daily_token_budget": "int",
     "assistant_visitor_daily_cap": "int",
+    "assistant_consent_required": "bool",
     "assistant_retention_days": "int",
     "assistant_model_pricing": "json_object",
     "assistant_cache_warm_minutes": "int",
@@ -200,6 +201,9 @@ DEFAULTS: dict[str, str] = {
     "assistant_daily_token_budget": "20000000",
     # all visitors together, per UTC day (visitors are anonymous: a new browser key is free)
     "assistant_visitor_daily_cap": "1000",
+    # a notice to accept before the first message (members) / read (visitors). Off by owner
+    # decision 2026-09-24: the Privacy Policy covers the assistant; switch on here if required
+    "assistant_consent_required": "false",
     "assistant_retention_days": "180",  # client decision; proposal in the plan
     "assistant_rollout": "admins",  # admins -> all -> visitors, never the other way round
     "assistant_model_pricing": "{}",  # filled from the provider's price list at rollout

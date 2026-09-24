@@ -189,10 +189,8 @@ const Privacy = () => {
                 look up are processed by OpenAI in the same way.
               </li>
               <li>
-                <strong className="text-foreground">Your choice:</strong> signed-in users accept this
-                notice before the first message, and visitors see it before theirs. Using the assistant
-                is optional: you can always reach our team through the Support page instead. This
-                section is the assistant notice version 2026-10 that the chat asks you to accept.
+                <strong className="text-foreground">Your choice:</strong> using the assistant is
+                optional: you can always reach our team through the Support page instead.
               </li>
               <li>
                 <strong className="text-foreground">Please don&apos;t share</strong> passwords,

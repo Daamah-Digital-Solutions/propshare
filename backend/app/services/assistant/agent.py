@@ -99,6 +99,7 @@ class AssistantSettings:
     pricing: dict[str, dict[str, float]]
     reply_language: str = "auto"  # "en" = English only
     visitor_daily_cap: int = 0  # all visitors together per UTC day; 0 = no cap
+    consent_required: bool = False  # members accept / visitors read a notice first
 
     @property
     def model_configured(self) -> bool:
@@ -135,6 +136,7 @@ async def load_settings(session: AsyncSession) -> AssistantSettings:
         pricing=pricing,
         reply_language=await s("assistant_reply_language") or "auto",
         visitor_daily_cap=int(await s("assistant_visitor_daily_cap") or 0),
+        consent_required=(await s("assistant_consent_required")).lower() in _ON,
     )
 
 

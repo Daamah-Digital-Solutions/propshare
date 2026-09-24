@@ -21,6 +21,7 @@ class StatusOut(BaseModel):
     visitor_allowed: bool
     rollout: str
     reply_language: str = "auto"  # "en": the widget stays in English
+    privacy_notice: bool = False  # show the notice before the first message (setting)
 
 
 class ConsentIn(BaseModel):

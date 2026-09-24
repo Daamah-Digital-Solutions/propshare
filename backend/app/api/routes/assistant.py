@@ -2,9 +2,10 @@
 action confirmation, feedback and the maintenance jobs.
 
 Gate order for every message: deploy-level kill switch -> DB kill switch -> model configured
--> rollout (admins / all / visitors) -> consent (signed-in) -> per-user daily cap -> global
-daily token budget. ``GET /status`` runs the same checks and reports the first failing one
-instead of raising, so the widget can fall back without a round of errors.
+-> rollout (admins / all / visitors) -> consent (signed-in, only when assistant_consent_required
+is on) -> per-user daily cap -> global daily token budget. ``GET /status`` runs the same checks
+and reports the first failing one instead of raising, so the widget can fall back without a
+round of errors.
 
 The SSE stream runs on its OWN database session: the request-scoped session would end when
 the handler returns, long before the model has finished.
@@ -112,7 +113,7 @@ async def _gate(
         return settings, None
     if settings.rollout == "admins" and "admin" not in principal.roles:
         return settings, "NOT_IN_ROLLOUT"
-    if not await consent.has_consent(session, principal.user_id):
+    if settings.consent_required and not await consent.has_consent(session, principal.user_id):
         return settings, "CONSENT_REQUIRED"
     if settings.daily_message_cap and await _messages_today(session, user_id=principal.user_id) >= (
         settings.daily_message_cap
@@ -218,6 +219,7 @@ async def status(request: Request, session: SessionDep):
         visitor_allowed=settings.visitor_enabled and settings.rollout != "admins",
         rollout=settings.rollout,
         reply_language=settings.reply_language,
+        privacy_notice=settings.consent_required,
     )
 
 
