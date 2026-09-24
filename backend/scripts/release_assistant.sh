@@ -55,10 +55,19 @@ env_add() {  # add KEY=VALUE only when KEY is absent or empty; never overwrites 
   if [ -n "$(env_get "$key" || true)" ]; then ok "$key already set"; return; fi
   sed -i "/^$key=/d" "$ENVF"
   chown --reference="$ENVF.bak-$STAMP" "$ENVF"; chmod --reference="$ENVF.bak-$STAMP" "$ENVF"  # sed -i makes a new file
+  end_with_newline "$ENVF"
   printf '%s=%s\n' "$key" "$value" >> "$ENVF"
   ok "$key set"
 }
 psql_db() { sudo -u postgres psql -d "$DB" -v ON_ERROR_STOP=1 -qtA "$@"; }
+end_with_newline() {  # so an append never glues onto a last line typed without Enter
+  [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ] && printf '\n' >> "$1"
+  return 0
+}
+assistant_off_and_die() {  # a failed live check must not leave a broken assistant switched on
+  psql_db -c "UPDATE platform_settings SET value='false' WHERE key='assistant_enabled';" >/dev/null || true
+  die "$1 -- the assistant was switched OFF again (turn it back on in /admin -> Platform Settings -> assistant_enabled once fixed)"
+}
 
 # ---------------------------------------------------------------------------------------------
 say "1. Preflight"
@@ -104,19 +113,23 @@ ok "openai $("$VENV/bin/python" -c 'import openai; print(openai.__version__)'), 
 say "4. Encryption key file"
 install -d -o root -g "$APP_USER" -m 750 "$KEYDIR"
 if [ ! -s "$KEYF" ]; then
-  umask 077
-  printf 'k1:%s\n' "$(openssl rand -base64 32)" > "$KEYF"
-  chown root:"$APP_USER" "$KEYF"; chmod 640 "$KEYF"
+  # the key only takes its real name once the owner has saved it: if the session drops before
+  # SAVED, the re-run finds the pending key and shows it again
+  if [ ! -s "$KEYF.pending" ]; then
+    (umask 077; printf 'k1:%s\n' "$(openssl rand -base64 32)" > "$KEYF.pending")
+  fi
   echo
   echo "   ONE-TIME: copy the line below into your password manager NOW."
   echo "   Without it, saved conversations and two-factor settings cannot be recovered"
-  echo "   if this server is ever rebuilt. It is not shown again and is not in any backup."
+  echo "   if this server is ever rebuilt. It is not in any backup."
   echo
-  printf '   \033[1m%s\033[0m\n\n' "$(cat "$KEYF")"
+  printf '   \033[1m%s\033[0m\n\n' "$(cat "$KEYF.pending")"
   while true; do
     read -rp "   Type SAVED once it is in the password manager: " answer
     [ "$answer" = SAVED ] && break
   done
+  mv "$KEYF.pending" "$KEYF"
+  chown root:"$APP_USER" "$KEYF"; chmod 640 "$KEYF"
   clear || true
 else
   chown root:"$APP_USER" "$KEYF"; chmod 640 "$KEYF"
@@ -130,14 +143,23 @@ say "5. Settings file (.env)"
 cp -p "$ENVF" "$ENVF.bak-$STAMP"   # same owner and mode as the original
 ok "previous file kept as $ENVF.bak-$STAMP"
 if [ -z "$(env_get OPENAI_API_KEY || true)" ]; then
+  TRIES=0
   while true; do
     read -rsp "   Paste the OpenAI API key (hidden) and press Enter: " OKEY; echo
     OKEY=$(printf '%s' "$OKEY" | tr -d '[:space:]')
     [ -n "$OKEY" ] || continue
+    # the same call the assistant makes: proves the key AND access to the model
     CODE=$(printf 'header = "Authorization: Bearer %s"\n' "$OKEY" \
-      | curl -s -o /dev/null -w '%{http_code}' -m 20 -K - https://api.openai.com/v1/models || true)
+      | curl -s -o /dev/null -w '%{http_code}' -m 60 -K - -H 'Content-Type: application/json' \
+          -d "{\"model\":\"$MODEL\",\"input\":\"ping\",\"max_output_tokens\":16,\"store\":false}" \
+          https://api.openai.com/v1/responses || true)
     [ "$CODE" = 200 ] && break
-    warn "OpenAI refused this key (HTTP $CODE); paste it again"
+    TRIES=$((TRIES + 1))
+    warn "OpenAI answered HTTP $CODE for $MODEL with this key (000 = no connection)"
+    if [ "$TRIES" -ge 3 ]; then
+      read -rp "   Type KEEP to use this key anyway, or press Enter to paste another: " keep
+      [ "$keep" = KEEP ] && break
+    fi
   done
   env_add OPENAI_API_KEY "$OKEY"
   unset OKEY
@@ -220,14 +242,18 @@ say "11. Site build"
 if grep -q '^VITE_ASSISTANT_V2=' "$FE_ENV" 2>/dev/null; then
   sed -i 's/^VITE_ASSISTANT_V2=.*/VITE_ASSISTANT_V2=true/' "$FE_ENV"
 else
+  end_with_newline "$FE_ENV"
   printf 'VITE_ASSISTANT_V2=true\n' >> "$FE_ENV"
 fi
 chown "$APP_USER":"$APP_USER" "$FE_ENV"
 ok "VITE_ASSISTANT_V2=true in $FE_ENV"
 (cd "$APP" && as_app npm ci --no-audit --no-fund --loglevel=error)
-(cd "$APP" && as_app npm run build --silent)
-ls "$APP"/dist/assets/*.js >/dev/null 2>&1 || die "the build produced no scripts"
-ok "site built with the new assistant"
+# built beside the live site and swapped in after the restart: the site never has a half-empty
+# dist/, and the new pages only appear once the new API is up
+rm -rf "$APP/dist.new"
+(cd "$APP" && as_app npx vite build --outDir dist.new --emptyOutDir --logLevel error)
+ls "$APP"/dist.new/assets/*.js >/dev/null 2>&1 || die "the build produced no scripts"
+ok "site built with the new assistant (goes live after the restart)"
 
 # ---------------------------------------------------------------------------------------------
 say "12. Restart and end-to-end check"
@@ -239,20 +265,29 @@ done
 curl -fsS -m 5 "$API_LOCAL/api/v1/properties?limit=1" >/dev/null || die "the API did not come back: journalctl -u $SERVICE -n 80"
 ok "API is up"
 
+# swap the new site in; old hashed files stay available to tabs that were already open
+if [ -d "$APP/dist" ]; then
+  cp -rn "$APP/dist/assets/." "$APP/dist.new/assets/" 2>/dev/null || true
+  mv "$APP/dist" "$APP/dist.old-$STAMP"
+fi
+mv "$APP/dist.new" "$APP/dist"
+ok "new site live (previous one kept as dist.old-$STAMP)"
+
 VKEY=release-check-$(openssl rand -hex 12)
-STATUS=$(curl -fsS -m 20 "${VIA_NGINX[@]}" -H "X-Visitor-Key: $VKEY" "$API_PUBLIC/api/v1/assistant/status")
-grep -q '"enabled":true' <<<"$STATUS" || die "assistant not enabled for visitors: $STATUS"
-grep -q '"encryption":"ok"' <<<"$STATUS" || die "encryption not ok: $STATUS"
+STATUS=$(curl -fsS -m 20 "${VIA_NGINX[@]}" -H "X-Visitor-Key: $VKEY" "$API_PUBLIC/api/v1/assistant/status" || true)
+grep -q '"enabled":true' <<<"$STATUS" || assistant_off_and_die "assistant not enabled for visitors: $STATUS"
+grep -q '"encryption":"ok"' <<<"$STATUS" || assistant_off_and_die "encryption not ok: $STATUS"
 ok "status: enabled, encryption ok"
 
 CONV=$(curl -fsS -m 20 "${VIA_NGINX[@]}" -X POST -H "X-Visitor-Key: $VKEY" "$API_PUBLIC/api/v1/assistant/conversations" \
-  | sed -E 's/.*"id":"([^"]+)".*/\1/')
+  | sed -E 's/.*"id":"([^"]+)".*/\1/' || true)
+[ -n "$CONV" ] || assistant_off_and_die "could not open a test conversation"
 REPLY=$(curl -sS -N -m 150 "${VIA_NGINX[@]}" -X POST -H "X-Visitor-Key: $VKEY" -H 'Content-Type: application/json' \
   -d '{"text":"In one sentence, what is Capimax PropShare?","lang":"en"}' \
   "$API_PUBLIC/api/v1/assistant/conversations/$CONV/messages" || true)
 psql_db -c "DELETE FROM assistant_conversations WHERE visitor_key = '$VKEY';" >/dev/null || true
-grep -q '^event: done' <<<"$REPLY" || die "no answer came back through nginx: $(tail -c 400 <<<"$REPLY")"
-grep -q '"safe_mode": null' <<<"$REPLY" || die "the assistant answered in safe mode: $(grep -A1 '^event: done' <<<"$REPLY" | tail -1)"
+grep -q '^event: done' <<<"$REPLY" || assistant_off_and_die "no answer came back through nginx: $(tail -c 400 <<<"$REPLY")"
+grep -q '"safe_mode": null' <<<"$REPLY" || assistant_off_and_die "the assistant answered in safe mode: $(grep -A1 '^event: done' <<<"$REPLY" | tail -1)"
 ok "a real question was answered through $API_PUBLIC (test conversation deleted)"
 
 say "Done"

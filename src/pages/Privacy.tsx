@@ -158,7 +158,8 @@ const Privacy = () => {
             <p>
               PropShare AI answers questions about the platform and, when you are signed in, about
               your own account. It can prepare a deposit, withdrawal, investment or sale for you, but
-              nothing happens until you confirm it yourself on the relevant page.
+              no money moves and nothing is bought or sold until you confirm it yourself on the
+              relevant page.
             </p>
             <ul className="list-disc pl-6 space-y-2">
               <li>
@@ -170,18 +171,28 @@ const Privacy = () => {
               </li>
               <li>
                 <strong className="text-foreground">Storage:</strong> conversations are stored
-                encrypted on our servers and deleted automatically after 180 days. OpenAI does not use
-                this data to train its models. It may keep request logs for up to 30 days to detect
-                abuse, even though we ask it not to store the replies.
+                encrypted on our servers and deleted automatically 180 days after their last message.
+                OpenAI does not use this data to train its models. It may keep request logs for up to
+                30 days to detect abuse, even though we ask it not to store the replies.
+              </li>
+              <li>
+                <strong className="text-foreground">Support tickets:</strong> when PropShare AI cannot
+                answer, it flags the conversation to our team; when you ask it for help, it opens a
+                support ticket with the category you chose and your account status, which is also
+                emailed to our support inbox. Tickets never contain your messages and are kept like
+                any other support request.
               </li>
               <li>
                 <strong className="text-foreground">Access:</strong> our staff open a conversation
-                only to help you or to keep the platform safe, and every such access is logged.
+                only to help you or to keep the platform safe, and every such access is logged. When
+                our staff use PropShare AI to look up an account for support, the account details they
+                look up are processed by OpenAI in the same way.
               </li>
               <li>
                 <strong className="text-foreground">Your choice:</strong> signed-in users accept this
                 notice before the first message, and visitors see it before theirs. Using the assistant
-                is optional: you can always reach our team through the Support page instead.
+                is optional: you can always reach our team through the Support page instead. This
+                section is the assistant notice version 2026-10 that the chat asks you to accept.
               </li>
               <li>
                 <strong className="text-foreground">Please don&apos;t share</strong> passwords,

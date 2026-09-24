@@ -21,6 +21,7 @@ What each test protects:
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import uuid
@@ -768,5 +769,48 @@ async def test_visitors_are_capped_and_share_the_daily_budget(client, db, config
     other = {"X-Visitor-Key": VKEY + "zz"}
     assert (await client.get("/api/v1/assistant/status", headers=other)).json()["enabled"] is True
     _setting(db, "assistant_daily_token_budget", "1")
+    st = (await client.get("/api/v1/assistant/status", headers=other)).json()
+    assert st["reason"] == "BUDGET_EXHAUSTED"
+
+
+@pytest.mark.asyncio
+async def test_a_cut_off_turn_still_counts_against_the_caps(client, db, configured, monkeypatch):
+    """Aborting the stream (or a crash mid-turn) must not make the question free: the user's
+    message is committed before the model is called."""
+
+    class Crashing(FakeLLM):
+        async def stream(self, req):
+            raise RuntimeError("connection dropped mid-turn")
+            yield  # pragma: no cover
+
+    monkeypatch.setattr(assistant_routes, "llm_factory", lambda provider: Crashing([]))
+    _enable(db, visitors=True, cap="1")
+    v = {"X-Visitor-Key": VKEY}
+    cid = (await client.post("/api/v1/assistant/conversations", headers=v)).json()["id"]
+    with contextlib.suppress(Exception):
+        async with client.stream(
+            "POST",
+            f"/api/v1/assistant/conversations/{cid}/messages",
+            json={"text": "hi"},
+            headers=v,
+        ) as r:
+            await r.aread()
+    n = db(
+        "SELECT count(*) FROM assistant_messages WHERE conversation_id=:c AND role='user'", c=cid
+    )[0][0]
+    assert n == 1
+    assert (await client.get("/api/v1/assistant/status", headers=v)).json()["reason"] == "DAILY_CAP"
+
+
+@pytest.mark.asyncio
+async def test_all_visitors_together_have_a_daily_cap(client, db, configured, monkeypatch):
+    """A fresh browser key per question must not get around the limits."""
+    _enable(db, visitors=True)
+    _setting(db, "assistant_visitor_daily_cap", "1")
+    _fake(monkeypatch, FakeTurn(text="One answer."))
+    v = {"X-Visitor-Key": VKEY}
+    cid = (await client.post("/api/v1/assistant/conversations", headers=v)).json()["id"]
+    await _send(client, cid, "first", v)
+    other = {"X-Visitor-Key": VKEY + "yy"}
     st = (await client.get("/api/v1/assistant/status", headers=other)).json()
     assert st["reason"] == "BUDGET_EXHAUSTED"

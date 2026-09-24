@@ -98,6 +98,7 @@ class AssistantSettings:
     rollout: str
     pricing: dict[str, dict[str, float]]
     reply_language: str = "auto"  # "en" = English only
+    visitor_daily_cap: int = 0  # all visitors together per UTC day; 0 = no cap
 
     @property
     def model_configured(self) -> bool:
@@ -133,6 +134,7 @@ async def load_settings(session: AsyncSession) -> AssistantSettings:
         rollout=await s("assistant_rollout") or "admins",
         pricing=pricing,
         reply_language=await s("assistant_reply_language") or "auto",
+        visitor_daily_cap=int(await s("assistant_visitor_daily_cap") or 0),
     )
 
 
@@ -511,8 +513,10 @@ async def run_turn(
 ) -> AsyncIterator[dict[str, Any]]:
     """Handle one user message. Yields event dicts: started, delta, tool, card, reset, done.
 
-    The caller owns the session; the turn commits once at the end so a crash mid-turn leaves
-    no half-written message behind."""
+    The caller owns the session. The user's message is committed as soon as it is stored, so a
+    turn that is cut off still counts against the daily caps (an aborted stream must not be a
+    free question); everything the assistant produces commits once at the end, so a crash
+    mid-turn leaves no half-written answer behind."""
     if ctx.conversation_id is None:
         raise AppError("NO_CONVERSATION", "A conversation is required.", status_code=422)
     settings = settings or await load_settings(session)
@@ -539,7 +543,7 @@ async def run_turn(
         created_at=now,
     )
     session.add(user_row)
-    await session.flush()
+    await session.commit()
 
     if settings.reply_language == "en" and ctx.lang != "en":
         ctx = dataclasses.replace(ctx, lang="en")  # safe-mode text and context follow the reply

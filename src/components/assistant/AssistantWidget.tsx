@@ -566,9 +566,9 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                       ? "يرسل المساعد رسائلك إلى مزوّد ذكاء اصطناعي خارجي (OpenAI) ليجيب عنها. لا تكتب بيانات شخصية أو بيانات دفع. اقرأ "
                       : "The assistant sends your messages to an external AI provider (OpenAI) to answer them. Please don't share personal or payment details. Read the "
                     : lang === "ar"
-                      ? "يستخدم المساعد بيانات حسابك ويرسل نص المحادثة إلى مزوّد ذكاء اصطناعي خارجي (OpenAI). تُحفظ محادثاتك مشفّرة. اقرأ "
-                      : "The assistant uses your account data and sends the conversation text to an external AI provider (OpenAI). Your conversations are stored encrypted. Read the "}
-                  <a href="/privacy" className="text-primary underline" target="_blank" rel="noreferrer">
+                      ? "يرسل المساعد رسائلك، وبيانات حسابك التي يحتاجها ليجيب (مثل اسمك وحالة التحقق وأرصدتك وعملياتك)، إلى مزوّد ذكاء اصطناعي خارجي (OpenAI). تُحفظ محادثاتك مشفّرة. اقرأ "
+                      : "The assistant sends your messages, and the account details it needs to answer them (such as your name, verification status, balances and transactions), to an external AI provider (OpenAI). Your conversations are stored encrypted. Read the "}
+                  <a href="/privacy#ai-assistant" className="text-primary underline" target="_blank" rel="noreferrer">
                     {lang === "ar" ? "سياسة الخصوصية" : "Privacy Policy"}
                   </a>
                   {lang === "ar" ? " (الإصدار " : " (version "}

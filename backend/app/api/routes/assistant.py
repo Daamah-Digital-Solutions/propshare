@@ -100,6 +100,11 @@ async def _gate(
         ):
             return settings, "DAILY_CAP"
         if (
+            settings.visitor_daily_cap
+            and await _messages_today(session, visitors=True) >= settings.visitor_daily_cap
+        ):
+            return settings, "BUDGET_EXHAUSTED"
+        if (
             settings.daily_token_budget
             and await _tokens_today(session) >= settings.daily_token_budget
         ):
@@ -153,13 +158,19 @@ def _today() -> dt.datetime:
 
 
 async def _messages_today(
-    session: AsyncSession, *, user_id: uuid.UUID | None = None, visitor_key: str | None = None
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID | None = None,
+    visitor_key: str | None = None,
+    visitors: bool = False,
 ) -> int:
-    whose = (
-        AssistantConversation.user_id == user_id
-        if user_id is not None
-        else AssistantConversation.visitor_key == visitor_key
-    )
+    """User messages sent today by one member, one visitor key, or all visitors together."""
+    if visitors:
+        whose = AssistantConversation.user_id.is_(None)
+    elif user_id is not None:
+        whose = AssistantConversation.user_id == user_id
+    else:
+        whose = AssistantConversation.visitor_key == visitor_key
     n = await session.scalar(
         select(func.count())
         .select_from(AssistantMessage)

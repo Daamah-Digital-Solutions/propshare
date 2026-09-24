@@ -171,7 +171,8 @@ async def test_tool_round_trip_events_and_persisted_message(client, db, asession
         + Decimal(30) * Decimal("1.20")
     ) / Decimal(1_000_000)
     assert abs(Decimal(conv[5]) - expected) < Decimal("0.000002")
-    assert conv[6] == "fake-model" and conv[7] == "fake" and conv[8] == "what's my balance?"
+    # the title is never copied from the user's words (that column is plaintext)
+    assert conv[6] == "fake-model" and conv[7] == "fake" and conv[8] is None
 
 
 @pytest.mark.asyncio

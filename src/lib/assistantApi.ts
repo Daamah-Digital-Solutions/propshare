@@ -19,9 +19,14 @@ export function visitorKey(): string {
     localStorage.setItem(VISITOR_KEY, fresh);
     return fresh;
   } catch {
-    return `v-${Date.now().toString(16)}${Math.random().toString(16).slice(2, 14)}`;
+    // no storage (private mode, blocked site data): still ONE key for this page session, or
+    // every request would look like a new visitor and lose its own conversation
+    memoryVisitorKey ??= `v-${Date.now().toString(16)}${Math.random().toString(16).slice(2, 14)}`;
+    return memoryVisitorKey;
   }
 }
+
+let memoryVisitorKey: string | null = null;
 
 function identityHeaders(): Record<string, string> {
   return getAccessToken() ? {} : { "X-Visitor-Key": visitorKey() };

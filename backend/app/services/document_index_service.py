@@ -12,6 +12,7 @@ assistant then says the document exists but cannot be searched.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import re
@@ -67,8 +68,10 @@ def _clean(text: str) -> str:
 
 
 async def index_document(session: AsyncSession, doc: Document) -> DocumentText:
+    # reading and parsing a PDF is blocking work: off the event loop, so the worker keeps
+    # answering other requests (the hourly cron can meet a backlog of listing documents)
     try:
-        data = storage.load(doc.file_url)
+        data = await asyncio.to_thread(storage.load, doc.file_url)
     except storage.StorageNotFound:
         row = DocumentText(
             document_id=doc.id,
@@ -78,7 +81,7 @@ async def index_document(session: AsyncSession, doc: Document) -> DocumentText:
         )
         await session.merge(row)
         return row
-    text, pages, status = extract_text(data, doc.file_url)
+    text, pages, status = await asyncio.to_thread(extract_text, data, doc.file_url)
     row = DocumentText(
         document_id=doc.id,
         property_id=doc.property_id,

@@ -1,7 +1,8 @@
 /**
- * AssistantMount — the legacy n8n widget renders whenever the flag is off or the backend
- * says the caller may not use v2; the new widget mounts only when enabled (or when a
- * signed-in user must first consent).
+ * AssistantMount — the legacy n8n widget renders only when the flag is off. With the flag on
+ * it never renders (it would send chat text to a service the Privacy Policy does not name): the
+ * new widget mounts when enabled, for consent, or to say why it can't answer (sign in, today's
+ * limit); otherwise nothing shows.
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -65,19 +66,32 @@ describe("AssistantMount", () => {
     await waitFor(() => expect(screen.getByTestId("v2-widget")).toBeInTheDocument());
   });
 
-  it("falls back to the legacy widget when v2 is disabled for this caller", async () => {
+  it("shows nothing (never the legacy widget) when v2 is switched off for this caller", async () => {
     flag.on = true;
     statusMock.mockResolvedValue({ enabled: false, reason: "ASSISTANT_DISABLED", consent_required: false });
     await mount();
-    await waitFor(() => expect(screen.getByTestId("legacy-widget")).toBeInTheDocument());
+    await waitFor(() => expect(statusMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("legacy-widget")).toBeNull();
     expect(screen.queryByTestId("v2-widget")).toBeNull();
   });
 
-  it("falls back to the legacy widget when the backend is unreachable", async () => {
+  it("shows nothing (never the legacy widget) when the backend is unreachable", async () => {
     flag.on = true;
     flag.down = true;
     await mount();
-    await waitFor(() => expect(screen.getByTestId("legacy-widget")).toBeInTheDocument());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId("legacy-widget")).toBeNull();
     expect(screen.queryByTestId("v2-widget")).toBeNull();
+  });
+
+  it("opens v2 to say why when the caller can act on it (sign in, today's limit)", async () => {
+    flag.on = true;
+    for (const reason of ["SIGN_IN_REQUIRED", "DAILY_CAP"]) {
+      statusMock.mockResolvedValue({ enabled: false, reason, consent_required: false });
+      const view = await mount();
+      await waitFor(() => expect(screen.getByTestId("v2-widget")).toBeInTheDocument());
+      expect(screen.queryByTestId("legacy-widget")).toBeNull();
+      view.unmount();
+    }
   });
 });

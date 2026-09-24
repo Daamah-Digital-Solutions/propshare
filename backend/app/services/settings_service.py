@@ -63,6 +63,7 @@ _SETTING_SPECS: dict[str, str] = {
     "assistant_max_output_tokens": "int",
     "assistant_daily_message_cap": "int",
     "assistant_daily_token_budget": "int",
+    "assistant_visitor_daily_cap": "int",
     "assistant_retention_days": "int",
     "assistant_model_pricing": "json_object",
     "assistant_cache_warm_minutes": "int",
@@ -197,6 +198,8 @@ DEFAULTS: dict[str, str] = {
     "assistant_disabled_tools": "",
     "assistant_daily_message_cap": "200",
     "assistant_daily_token_budget": "20000000",
+    # all visitors together, per UTC day (visitors are anonymous: a new browser key is free)
+    "assistant_visitor_daily_cap": "1000",
     "assistant_retention_days": "180",  # client decision; proposal in the plan
     "assistant_rollout": "admins",  # admins -> all -> visitors, never the other way round
     "assistant_model_pricing": "{}",  # filled from the provider's price list at rollout
