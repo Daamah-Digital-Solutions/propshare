@@ -336,6 +336,24 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
             for p in result.get("items", [])
         ]
         return {"kind": "properties", "items": items} if items else None
+    if name == "quote_investment" and result.get("slug") and result.get("units", 0) >= 1:
+        path = f"/property/{result['slug']}?units={int(result['units'])}"
+        if result.get("duration_months"):
+            path += f"&months={int(result['duration_months'])}"
+        return {
+            "kind": "checkout",
+            "title": result.get("property_title"),
+            "units": result.get("units"),
+            "unit_price": result.get("unit_price"),
+            "subtotal": result.get("subtotal"),
+            "platform_fee": result.get("platform_fee"),
+            "total_now": result.get("total_now"),
+            "purchase_type": result.get("purchase_type"),
+            "duration_months": result.get("duration_months"),
+            "notes": list(result.get("eligibility_notes") or [])[:4],
+            "ready": bool(result.get("ready_to_pay")),
+            "path": path,
+        }
     if name == "propose_action":
         issued = next((t for t in tokens if t["proposal_id"] == result["proposal_id"]), None)
         card = {

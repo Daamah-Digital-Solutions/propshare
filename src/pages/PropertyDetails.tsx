@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -138,6 +139,23 @@ const PropertyDetails = () => {
   const propertyData = data ? toViewModel(data) : null;
   const [investmentAmount, setInvestmentAmount] = useState(0);
 
+  // An order prepared by the assistant arrives as ?units=N(&months=M): pre-fill the calculator,
+  // bring it into view and (signed in, ready listing) open the review step — the last one
+  // before payment. Paying stays the user's own click.
+  const { isAuthenticated } = useAuth();
+  const orderUnits = Number(searchParams.get("units") || 0);
+  const orderMonths = searchParams.get("months") ?? undefined;
+  const hasOrder = Number.isInteger(orderUnits) && orderUnits >= 1;
+  const [orderApplied, setOrderApplied] = useState(false);
+  useEffect(() => {
+    if (!data || !hasOrder || orderApplied) return;
+    setInvestmentAmount(orderUnits * Number(data.unit_price));
+    setOrderApplied(true);
+    requestAnimationFrame(() =>
+      document.getElementById("invest-panel")?.scrollIntoView?.({ behavior: "smooth", block: "start" }),
+    );
+  }, [data, hasOrder, orderUnits, orderApplied]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -159,6 +177,20 @@ const PropertyDetails = () => {
       </div>
     );
   }
+
+  const orderBanner =
+    hasOrder && orderApplied ? (
+      <div
+        data-testid="assistant-order-banner"
+        className="mb-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-foreground"
+      >
+        <div className="font-semibold text-primary">Prepared by Capimax AI</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          {orderUnits} units are filled in below. Review the total, then confirm payment yourself —
+          nothing is charged before that.
+        </div>
+      </div>
+    ) : null;
 
   const previewBanner =
     preview && data && data.status !== "active" && data.status !== "funded" ? (
@@ -183,13 +215,17 @@ const PropertyDetails = () => {
           fees={propertyData.fees}
           documentsPanel={<PropertyDocuments propertyId={propertyData.id} preview={preview} />}
           investPanel={
-            <InstallmentCalculator
-              propertyId={propertyData.id}
-              propertyData={propertyData}
-              investmentAmount={investmentAmount || propertyData.minInvestment}
-              setInvestmentAmount={setInvestmentAmount}
-              propertyTitle={propertyData.title}
-            />
+            <div id="invest-panel" className="scroll-mt-24">
+              {orderBanner}
+              <InstallmentCalculator
+                propertyId={propertyData.id}
+                propertyData={propertyData}
+                investmentAmount={investmentAmount || propertyData.minInvestment}
+                setInvestmentAmount={setInvestmentAmount}
+                propertyTitle={propertyData.title}
+                initialDuration={orderMonths}
+              />
+            </div>
           }
           sidebarExtra={
             <div className="rounded-xl border bg-card p-4">
@@ -559,7 +595,8 @@ const PropertyDetails = () => {
 
             {/* Right Column - Investment Card */}
             <div className="lg:col-span-1">
-              <div className="sticky top-24 space-y-4">
+              <div id="invest-panel" className="sticky top-24 scroll-mt-24 space-y-4">
+                {orderBanner}
                 {propertyData.type === "under_construction" ? (
                   <InstallmentCalculator
                     propertyId={propertyData.id}
@@ -567,6 +604,7 @@ const PropertyDetails = () => {
                     investmentAmount={investmentAmount || propertyData.minInvestment}
                     setInvestmentAmount={setInvestmentAmount}
                     propertyTitle={propertyData.title}
+                    initialDuration={orderMonths}
                   />
                 ) : (
                   <InvestmentCalculator
@@ -574,6 +612,7 @@ const PropertyDetails = () => {
                     propertyData={propertyData}
                     investmentAmount={investmentAmount || propertyData.minInvestment}
                     setInvestmentAmount={setInvestmentAmount}
+                    openReview={orderApplied && isAuthenticated && data?.status === "active"}
                   />
                 )}
 

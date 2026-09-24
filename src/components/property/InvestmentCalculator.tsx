@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
@@ -44,6 +44,8 @@ interface InvestmentCalculatorProps {
   propertyData: PropertyData;
   investmentAmount: number;
   setInvestmentAmount: (amount: number) => void;
+  /** Open the review step (the last one before payment) once: an order the assistant prepared. */
+  openReview?: boolean;
 }
 
 // Funding rails the invest UI offers: pay-from-wallet (Phase 4 balance), card, and Pronova
@@ -68,11 +70,19 @@ const InvestmentCalculator = ({
   propertyId,
   propertyData,
   investmentAmount,
-  setInvestmentAmount
+  setInvestmentAmount,
+  openReview = false,
 }: InvestmentCalculatorProps) => {
   const [selectedPayment, setSelectedPayment] = useState("wallet");
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const reviewOpened = useRef(false);
+  useEffect(() => {
+    if (openReview && !reviewOpened.current) {
+      reviewOpened.current = true;
+      setShowConfirmation(true);
+    }
+  }, [openReview]);
   const { reinvestState, clearReinvestment } = useReinvest();
   const queryClient = useQueryClient();
 

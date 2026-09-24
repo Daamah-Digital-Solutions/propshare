@@ -11,6 +11,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import PropertyDetails from "./PropertyDetails";
 
 const getMock = vi.fn();
+const { auth } = vi.hoisted(() => ({ auth: { isAuthenticated: false } }));
+vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => auth }));
 vi.mock("@/lib/api", () => ({
   propertyApi: { get: (...a: unknown[]) => getMock(...a) },
   documentsApi: { listForProperty: async () => [] },
@@ -18,8 +20,16 @@ vi.mock("@/lib/api", () => ({
   apiUrl: (u: string) => u,
 }));
 vi.mock("@/components/property/PropertyGallery", () => ({ default: () => <div data-testid="gallery" /> }));
-vi.mock("@/components/property/InvestmentCalculator", () => ({ default: () => <div data-testid="invest-calc" /> }));
-vi.mock("@/components/property/InstallmentCalculator", () => ({ default: () => <div data-testid="installment-calc" /> }));
+vi.mock("@/components/property/InvestmentCalculator", () => ({
+  default: (p: { investmentAmount: number; openReview?: boolean }) => (
+    <div data-testid="invest-calc" data-amount={p.investmentAmount} data-review={String(!!p.openReview)} />
+  ),
+}));
+vi.mock("@/components/property/InstallmentCalculator", () => ({
+  default: (p: { investmentAmount: number; initialDuration?: string }) => (
+    <div data-testid="installment-calc" data-amount={p.investmentAmount} data-duration={p.initialDuration ?? ""} />
+  ),
+}));
 vi.mock("@/components/property/PropertyDocuments", () => ({ default: () => <div /> }));
 vi.mock("@/components/property/PropertyTimeline", () => ({ default: () => <div /> }));
 vi.mock("@/components/exit/ExitButton", () => ({ ExitButton: () => <button>exit</button> }));
@@ -64,11 +74,11 @@ const base = {
   construction_progress: 0,
 };
 
-function renderIt() {
+function renderIt(url = "/property/p1") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={["/property/p1"]}>
+      <MemoryRouter initialEntries={[url]}>
         <Routes>
           <Route path="/property/:id" element={<PropertyDetails />} />
         </Routes>
@@ -184,5 +194,47 @@ describe("PropertyDetails — developer card", () => {
     const btn = await screen.findByRole("button", { name: /view profile/i });
     expect(btn).toBeDisabled();
     expect(screen.queryByRole("link", { name: /view profile/i })).toBeNull();
+  });
+});
+
+describe("PropertyDetails — an order prepared by the assistant", () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    auth.isAuthenticated = false;
+  });
+
+  it("fills in the units, shows the banner and opens the review step for a signed-in investor", async () => {
+    auth.isAuthenticated = true;
+    getMock.mockResolvedValue(base);
+    renderIt("/property/p1?units=100");
+    const calc = await screen.findByTestId("invest-calc");
+    await waitFor(() => expect(calc).toHaveAttribute("data-amount", "10000")); // 100 x $100
+    expect(calc).toHaveAttribute("data-review", "true");
+    expect(screen.getByTestId("assistant-order-banner")).toHaveTextContent(/100 units/);
+  });
+
+  it("never opens the review step for a visitor (sign in comes first)", async () => {
+    getMock.mockResolvedValue(base);
+    renderIt("/property/p1?units=100");
+    const calc = await screen.findByTestId("invest-calc");
+    await waitFor(() => expect(calc).toHaveAttribute("data-amount", "10000"));
+    expect(calc).toHaveAttribute("data-review", "false");
+  });
+
+  it("passes the plan length to an installment listing", async () => {
+    auth.isAuthenticated = true;
+    getMock.mockResolvedValue({ ...base, model: "installment" });
+    renderIt("/property/p1?units=20&months=18");
+    const calc = await screen.findByTestId("installment-calc");
+    await waitFor(() => expect(calc).toHaveAttribute("data-amount", "2000"));
+    expect(calc).toHaveAttribute("data-duration", "18");
+  });
+
+  it("ignores a malformed order", async () => {
+    getMock.mockResolvedValue(base);
+    renderIt("/property/p1?units=abc");
+    const calc = await screen.findByTestId("invest-calc");
+    expect(calc).toHaveAttribute("data-amount", "100"); // the listing minimum, untouched
+    expect(screen.queryByTestId("assistant-order-banner")).toBeNull();
   });
 });

@@ -573,3 +573,53 @@ async def test_tools_know_payout_speed_fee_rails_and_two_factor(client, db, ases
     db("UPDATE platform_settings SET value='' WHERE key='payout_auto_methods'")
     rails = (await run("get_platform_settings"))["withdrawal_rails"]
     assert rails["bank"] == "reviewed" and rails["instant_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_order_by_units_becomes_a_checkout_card_that_stops_at_payment(client, db, asession):
+    """Owner's request: 'pick 100 units and stop at payment'. The quote takes units, and the
+    server turns it into an order card whose link pre-fills the checkout; nothing is bought."""
+    from app.services.assistant.agent import _card_for
+
+    _prop(db, slug="order-ready")
+    _prop(db, model="installment", slug="order-plan")
+    uid = await _user(client, db, "order@x.com")
+    ctx = await _ctx(asession, uid)
+    quote = REGISTRY["quote_investment"]
+    q = await call_tool(
+        quote, asession, ctx, parse_args(quote, '{"id_or_slug":"order-ready","units":100}')
+    )
+    assert (q["units"], q["subtotal"], q["platform_fee"], q["total_now"]) == (
+        100,
+        "10000.00",
+        "250.00",
+        "10250.00",
+    )
+    assert q["slug"] == "order-ready" and q["ready_to_pay"] is True
+    card = _card_for("quote_investment", q, [])
+    assert card["kind"] == "checkout" and card["ready"] is True
+    assert card["path"] == "/property/order-ready?units=100"
+    assert card["total_now"] == "10250.00"
+    assert db("SELECT count(*) FROM ownership_ledger WHERE user_id=:u", u=uid)[0][0] == 0
+
+    plan = await call_tool(
+        quote,
+        asession,
+        ctx,
+        parse_args(quote, '{"id_or_slug":"order-plan","units":10,"duration_months":18}'),
+    )
+    assert (
+        _card_for("quote_investment", plan, [])["path"] == "/property/order-plan?units=10&months=18"
+    )
+
+    # a visitor, or more units than exist, still gets the card but it is not "ready"
+    v = await call_tool(
+        quote, asession, VISITOR, parse_args(quote, '{"id_or_slug":"order-ready","units":100}')
+    )
+    assert v["ready_to_pay"] is False and _card_for("quote_investment", v, [])["ready"] is False
+    too_many = await call_tool(
+        quote, asession, ctx, parse_args(quote, '{"id_or_slug":"order-ready","units":999999}')
+    )
+    assert too_many["ready_to_pay"] is False
+    with pytest.raises(AppError):
+        await call_tool(quote, asession, ctx, parse_args(quote, '{"id_or_slug":"order-ready"}'))

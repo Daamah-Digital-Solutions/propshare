@@ -533,7 +533,12 @@ register(
 class QuoteIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id_or_slug: str = Field(min_length=1, max_length=160)
-    amount: float = Field(gt=0, le=100_000_000)
+    units: int | None = Field(
+        default=None, ge=1, le=1_000_000, description="Whole units wanted (preferred)"
+    )
+    amount: float | None = Field(
+        default=None, gt=0, le=100_000_000, description="Or: an amount to spend, in USD"
+    )
     duration_months: int | None = Field(
         default=None, description="Installment plan length for off-plan listings"
     )
@@ -549,6 +554,9 @@ class ScheduleRow(ToolOutput):
 
 class QuoteOut(ToolOutput):
     property_title: str
+    slug: str | None
+    duration_months: int | None
+    ready_to_pay: bool  # no blocking eligibility note: the checkout can go straight to payment
     model: str
     units: int
     unit_price: str
@@ -568,25 +576,36 @@ class QuoteOut(ToolOutput):
 async def _quote_investment(session: AsyncSession, ctx: AgentContext, args) -> dict:
     a: QuoteIn = args
     prop = await property_service.get_public_detail(session, a.id_or_slug)
-    amount = decimal.Decimal(str(a.amount)).quantize(_CENTS)
     unit = decimal.Decimal(prop.unit_price)
-    units = int(amount // unit)
+    if a.units is not None:
+        units = a.units
+    elif a.amount is not None:
+        units = int(decimal.Decimal(str(a.amount)).quantize(_CENTS) // unit)
+    else:
+        raise AppError("BAD_QUOTE", "Give a number of units or an amount.", status_code=422)
     notes: list[str] = []
+    blocking = False
     if str(prop.status) != "active":
         notes.append("This listing is not open for investment right now.")
+        blocking = True
     if units < 1 or unit * units < decimal.Decimal(prop.minimum_investment):
+        blocking = True
         notes.append(
             f"The minimum for this listing is {prop.minimum_investment} "
             f"(whole units of {prop.unit_price}); amounts are rounded down to whole units."
         )
     if units > prop.available_units:
         notes.append(f"Only {prop.available_units} units are still available.")
+        blocking = True
     if ctx.is_visitor:
         notes.append("Sign in and complete identity verification before investing.")
+        blocking = True
     elif ctx.kyc_status != "verified":
         notes.append("Identity verification must be approved before investing.")
+        blocking = True
     profile = listing_service.profile_of(prop.model)
     offplan = profile in listing_service.OFFPLAN_PROFILES
+    months: int | None = None
     subtotal = (unit * units).quantize(_CENTS)
     rates = await settings_service.get_fee_rates(session)
     platform_pct = rates["platform_fee_pct"]
@@ -627,6 +646,9 @@ async def _quote_investment(session: AsyncSession, ctx: AgentContext, args) -> d
         total_now = subtotal + platform_fee
     return {
         "property_title": prop.title,
+        "slug": prop.slug,
+        "duration_months": months,
+        "ready_to_pay": not blocking,
         "model": prop.model,
         "units": units,
         "unit_price": f"{unit:.2f}",
@@ -647,8 +669,10 @@ async def _quote_investment(session: AsyncSession, ctx: AgentContext, args) -> d
 register(
     ToolSpec(
         "quote_investment",
-        "Work out what an amount buys on a listing: whole units, fees, total payable now, and "
-        "for off-plan listings the installment schedule. Prepares only; nothing is bought.",
+        "Prepare an order on a listing, from a number of units (preferred) or an amount: whole "
+        "units, fees, total payable now, and for off-plan listings the installment schedule. "
+        "The user then sees an order card whose button opens the checkout pre-filled, stopping "
+        "at payment. Prepares only; nothing is bought or charged.",
         QuoteIn,
         QuoteOut,
         "prepare_only",

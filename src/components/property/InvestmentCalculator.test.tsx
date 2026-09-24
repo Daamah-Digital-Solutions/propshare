@@ -40,7 +40,7 @@ const propertyData = {
   fees: { platformFee: 2.5, managementFee: 1.0 },
 };
 
-function renderCalc() {
+function renderCalc(openReview = false) {
   const qc = new QueryClient();
   return render(
     <QueryClientProvider client={qc}>
@@ -50,6 +50,7 @@ function renderCalc() {
           propertyData={propertyData}
           investmentAmount={1000}
           setInvestmentAmount={() => {}}
+          openReview={openReview}
         />
       </ReinvestProvider>
     </QueryClientProvider>,
@@ -109,5 +110,20 @@ describe("InvestmentCalculator invest click path", () => {
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
     const [payload] = createMock.mock.calls[0];
     expect(payload).toEqual({ property_id: "prop-123", amount: 1000, method: "pronova" });
+  });
+});
+
+describe("InvestmentCalculator — an order prepared by the assistant", () => {
+  beforeEach(() => createMock.mockReset());
+
+  it("opens the review step (the last one before payment) but never pays by itself", async () => {
+    renderCalc(true);
+    expect(await screen.findByText("Confirm Investment")).toBeInTheDocument();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("stays closed without an order", () => {
+    renderCalc(false);
+    expect(screen.queryByText("Confirm Investment")).toBeNull();
   });
 });

@@ -88,7 +88,27 @@ export interface ConfirmActionCard {
   token?: string;
   expires_at?: string;
 }
-export type AssistantCard = LinkCard | PropertyCard | PropertiesCard | ConfirmActionCard;
+/** An order prepared by the assistant: opens the property checkout pre-filled, stops at payment. */
+export interface CheckoutCard {
+  kind: "checkout";
+  title: string | null;
+  units: number;
+  unit_price: string | null;
+  subtotal: string | null;
+  platform_fee: string | null;
+  total_now: string | null;
+  purchase_type: "direct" | "installment" | string | null;
+  duration_months: number | null;
+  notes: string[];
+  ready: boolean;
+  path: string;
+}
+export type AssistantCard =
+  | LinkCard
+  | PropertyCard
+  | PropertiesCard
+  | ConfirmActionCard
+  | CheckoutCard;
 
 export interface AssistantMessage {
   id: string;

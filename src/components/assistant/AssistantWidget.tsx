@@ -212,14 +212,18 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
   );
 
   useEffect(() => {
-    let seen = true;
-    try {
-      seen = localStorage.getItem(TEASER_KEY) === "1";
-    } catch {
-      /* no storage: stay quiet */
-    }
-    if (seen || !initialStatus.enabled) return;
-    const t = setTimeout(() => setTeaser(true), 4000);
+    const seen = () => {
+      try {
+        return localStorage.getItem(TEASER_KEY) === "1";
+      } catch {
+        return true; // no storage: stay quiet
+      }
+    };
+    if (seen() || !initialStatus.enabled) return;
+    // re-checked when the timer fires: the panel may have been opened in the meantime
+    const t = setTimeout(() => {
+      if (!seen()) setTeaser(true);
+    }, 4000);
     return () => clearTimeout(t);
   }, [initialStatus.enabled]);
 
@@ -630,11 +634,21 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                 // a property already shown as a tile does not get a second, button-shaped link
                 const tiled = new Set(
                   m.cards.flatMap((c) =>
-                    c.kind === "properties" ? c.items.map((p) => p.path) : c.kind === "property" ? [c.path] : [],
+                    c.kind === "properties"
+                      ? c.items.map((p) => p.path)
+                      : c.kind === "property"
+                        ? [c.path]
+                        : c.kind === "checkout"
+                          ? [c.path.split("?")[0]]
+                          : [],
                   ),
                 );
                 const links = m.cards.filter((c) => c.kind === "link" && !tiled.has(c.path));
-                const others = m.cards.filter((c) => c.kind !== "link");
+                // an order card is the focus of its reply: property previews beside it are noise
+                const hasOrder = m.cards.some((c) => c.kind === "checkout");
+                const others = m.cards.filter(
+                  (c) => c.kind !== "link" && !(hasOrder && (c.kind === "property" || c.kind === "properties")),
+                );
                 const busyTool = m.streaming ? running(m) : undefined;
                 const finished = m.tools.filter((t) => t.status !== "running");
                 return (

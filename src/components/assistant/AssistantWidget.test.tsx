@@ -248,4 +248,42 @@ describe("AssistantWidget", () => {
     expect(screen.getByRole("link", { name: /marketplace/i })).toHaveAttribute("href", "/marketplace");
     expect(screen.queryByTestId("assistant-hero")).toBeNull();
   });
+  it("shows a prepared order with a Continue to payment link and no duplicate property button", async () => {
+    api.status.mockResolvedValue(enabled);
+    stream.events = [
+      { event: "started", data: { conversation_id: "conv-1" } },
+      { event: "delta", data: { text: "Your order is ready." } },
+      { event: "card", data: { kind: "checkout", title: "Eval Tower", units: 100, unit_price: "100.00", subtotal: "10000.00", platform_fee: "250.00", total_now: "10250.00", purchase_type: "direct", duration_months: null, notes: [], ready: true, path: "/property/eval-tower?units=100" } },
+      { event: "card", data: { kind: "link", path: "/property/eval-tower", label: "Eval Tower" } },
+      { event: "card", data: { kind: "property", slug: "eval-tower", title: "Eval Tower", path: "/property/eval-tower" } },
+      { event: "done", data: { message_id: "m1", confidence: "normal", safe_mode: null } },
+    ];
+    renderIt(enabled);
+    open();
+    await screen.findByTestId("assistant-starters");
+    fireEvent.change(screen.getByPlaceholderText(/type your message/i), { target: { value: "100 units please" } });
+    fireEvent.click(screen.getByRole("button", { name: /send message/i }));
+    const card = await screen.findByTestId("checkout-card");
+    expect(card).toHaveTextContent("$10,250.00");
+    expect(card).toHaveTextContent(/nothing is charged until you confirm payment/i);
+    expect(screen.getByRole("link", { name: /continue to payment/i })).toHaveAttribute(
+      "href",
+      "/property/eval-tower?units=100",
+    );
+    expect(screen.queryByRole("link", { name: /^eval tower$/i })).toBeNull();
+  });
+  it("does not pop the teaser after the panel was opened before its timer fired", async () => {
+    vi.useFakeTimers();
+    try {
+      api.status.mockResolvedValue(enabled);
+      renderIt(enabled);
+      await vi.advanceTimersByTimeAsync(1000);
+      open(); // opened early
+      fireEvent.click(screen.getByRole("button", { name: /close chat/i }));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(screen.queryByText(/questions about investing/i)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

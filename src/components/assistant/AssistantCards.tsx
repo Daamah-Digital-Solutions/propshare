@@ -1,7 +1,23 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Building2, Check, Loader2, MapPin, ShieldCheck, X } from "lucide-react";
-import type { AssistantCard, ConfirmActionCard, LinkCard, Proposal } from "@/lib/assistantApi";
+import {
+  AlertCircle,
+  ArrowRight,
+  Building2,
+  Check,
+  Loader2,
+  MapPin,
+  Receipt,
+  ShieldCheck,
+  X,
+} from "lucide-react";
+import type {
+  AssistantCard,
+  CheckoutCard,
+  ConfirmActionCard,
+  LinkCard,
+  Proposal,
+} from "@/lib/assistantApi";
 import { assistantApi } from "@/lib/assistantApi";
 import { ApiError, assetUrl } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -107,6 +123,72 @@ export function ConfirmCard({
             This confirmation has expired. Ask again to get a new one.
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function money(v: string | null | undefined): string {
+  if (v === null || v === undefined || v === "") return "—";
+  const n = Number(v);
+  return Number.isFinite(n)
+    ? `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : v;
+}
+
+/** The order the assistant prepared. The button opens the checkout pre-filled; paying is the
+ * user's own click on that page (the assistant never charges anything). */
+export function CheckoutOrderCard({ card, onClose }: { card: CheckoutCard; onClose?: () => void }) {
+  const installment = card.purchase_type === "installment";
+  const rows: [string, string][] = [
+    ["Property", card.title ?? "—"],
+    ["Units", String(card.units)],
+    ["Unit price", money(card.unit_price)],
+    ["Subtotal", money(card.subtotal)],
+    installment
+      ? ["Plan", `${card.duration_months ?? 12} months, down payment today`]
+      : ["Platform fee", money(card.platform_fee)],
+  ];
+  return (
+    <div className="mt-2 overflow-hidden rounded-2xl border border-primary/30 bg-card shadow-sm" data-testid="checkout-card">
+      <div className="flex items-center gap-2 border-b border-primary/15 bg-primary/5 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-primary">
+        <Receipt className="h-3.5 w-3.5" />
+        Your order is ready
+      </div>
+      <div className="space-y-1.5 px-3 pt-3 text-xs">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-baseline justify-between gap-3">
+            <span className="text-muted-foreground">{k}</span>
+            <span className="text-right font-medium text-foreground">{v}</span>
+          </div>
+        ))}
+        <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border pt-2">
+          <span className="font-semibold text-foreground">{installment ? "Due today" : "Total to pay"}</span>
+          <span className="text-base font-bold text-foreground">{money(card.total_now)}</span>
+        </div>
+      </div>
+      {card.notes.length > 0 && (
+        <ul className="mx-3 mt-2 space-y-1 rounded-xl bg-accent/10 px-3 py-2 text-[11px] text-foreground/80">
+          {card.notes.map((n) => (
+            <li key={n} className="flex gap-1.5">
+              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-accent" />
+              {n}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="p-3">
+        <Link
+          to={card.path}
+          onClick={onClose}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2.5 text-xs font-semibold text-primary-foreground shadow-[0_6px_16px_-8px_hsl(var(--primary)/0.8)] transition hover:brightness-110"
+        >
+          {card.ready ? "Continue to payment" : "Review order"}
+          <ArrowRight className="h-3.5 w-3.5 rtl:rotate-180" />
+        </Link>
+        <div className="mt-1.5 text-center text-[10.5px] text-muted-foreground">
+          Opens the checkout pre-filled. Nothing is charged until you confirm payment.
+        </div>
       </div>
     </div>
   );
@@ -233,5 +315,6 @@ export function AssistantCardView({
     );
   }
   if (card.kind === "confirm_action") return <ConfirmCard card={card} onDecided={onDecided} />;
+  if (card.kind === "checkout") return <CheckoutOrderCard card={card} onClose={onClose} />;
   return null;
 }

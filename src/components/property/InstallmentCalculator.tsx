@@ -83,6 +83,8 @@ interface InstallmentCalculatorProps {
   investmentAmount: number;
   setInvestmentAmount: (amount: number) => void;
   propertyTitle: string;
+  /** Plan length chosen upstream (the assistant's prepared order), e.g. "18". */
+  initialDuration?: string;
 }
 
 // The plan is funded from the WALLET balance (down payment now; installments auto-charge on
@@ -108,10 +110,13 @@ const InstallmentCalculator = ({
   propertyData,
   investmentAmount,
   setInvestmentAmount,
-  propertyTitle
+  propertyTitle,
+  initialDuration,
 }: InstallmentCalculatorProps) => {
   const [selectedPayment, setSelectedPayment] = useState("wallet");
-  const [duration, setDuration] = useState("12");
+  const [duration, setDuration] = useState(() =>
+    INSTALLMENT_DURATIONS.some((d) => d.value === initialDuration) ? initialDuration! : "12",
+  );
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleReviewed, setScheduleReviewed] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
