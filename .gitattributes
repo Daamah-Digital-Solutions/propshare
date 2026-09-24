@@ -1,0 +1,2 @@
+# shell scripts run on the Linux server: never CRLF, whatever the checkout platform
+*.sh text eol=lf
