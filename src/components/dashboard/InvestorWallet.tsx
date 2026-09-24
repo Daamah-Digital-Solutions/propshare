@@ -129,8 +129,9 @@ export const InvestorWallet = () => {
     queryClient.invalidateQueries({ queryKey: ["wallet-transactions"] });
   };
 
-  // ---- Card tokenization (existing PCI-safe flow) ----
-  const [addingCard, setAddingCard] = useState(false);
+  // ---- Saved cards ----
+  // Cards are entered on Stripe's hosted checkout at payment time. There is no card-entry form
+  // here, so there is no "add card": it could only start a setup nobody can finish.
   const removeMethod = useMutation({
     mutationFn: (id: string) => paymentMethodsApi.remove(id),
     onSuccess: () => {
@@ -143,25 +144,6 @@ export const InvestorWallet = () => {
     mutationFn: (id: string) => paymentMethodsApi.setDefault(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["payment-methods"] }),
   });
-  const handleAddCard = async () => {
-    setAddingCard(true);
-    try {
-      await paymentMethodsApi.setupIntent();
-      toast.info("Secure card entry ready", {
-        description: "Complete your card details in the Stripe secure form to save it.",
-      });
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 503) {
-        toast.info("Saving cards isn't available yet", {
-          description: "Card storage turns on once card payments are configured.",
-        });
-      } else {
-        toast.error(e instanceof ApiError ? e.message : "Could not start card setup.");
-      }
-    } finally {
-      setAddingCard(false);
-    }
-  };
 
   // ---- Bank account + crypto wallet management ----
   const [bankDialogOpen, setBankDialogOpen] = useState(false);
@@ -652,20 +634,11 @@ export const InvestorWallet = () => {
                 <p className="text-sm font-semibold text-foreground flex items-center gap-2">
                   <CreditCard className="h-4 w-4" /> Cards
                 </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  aria-label="Add card"
-                  disabled={addingCard}
-                  onClick={handleAddCard}
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
               </div>
               {methods.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  No saved cards. Stored securely by our payment processor — we never see your card
-                  number.
+                  You enter your card on Stripe's secure payment page each time you pay. We never
+                  see or store your card number.
                 </p>
               ) : (
                 <div className="space-y-2">
