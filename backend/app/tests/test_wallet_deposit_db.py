@@ -309,6 +309,11 @@ async def test_card_rail_requires_live_keys_in_production(client, db, monkeypatc
     # production + live key -> offered
     monkeypatch.setattr(s, "stripe_secret_key", "sk_live_abc", raising=False)
     assert await card() is True
+    # a restricted key is a drop-in replacement: live counts as live, test stays hidden
+    monkeypatch.setattr(s, "stripe_secret_key", "rk_live_abc", raising=False)
+    assert await card() is True
+    monkeypatch.setattr(s, "stripe_secret_key", "rk_test_abc", raising=False)
+    assert await card() is False
     # non-production + test key -> offered (dev/QA)
     monkeypatch.setattr(s, "environment", "local", raising=False)
     monkeypatch.setattr(s, "stripe_secret_key", "sk_test_abc", raising=False)

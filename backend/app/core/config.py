@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     wallet_currency: str = "USD"
 
     # Stripe (cards / Apple Pay / Google Pay) — D2.
-    stripe_secret_key: str = ""  # sk_... (server-side API calls)
+    stripe_secret_key: str = ""  # sk_... or a restricted rk_... key (server-side API calls)
     stripe_webhook_secret: str = ""  # whsec_... of the "Your account" endpoint (deposits)
     # Stripe signs every webhook endpoint with its own secret, and it sends events that happen
     # on investors' connected accounts (account.updated, their payouts) only to an endpoint
@@ -119,8 +119,9 @@ class Settings(BaseSettings):
 
     @property
     def stripe_livemode(self) -> bool:
-        """True when the configured Stripe key is a LIVE key (real money), not a test key."""
-        return self.stripe_secret_key.startswith("sk_live_")
+        """True when the configured Stripe key is a LIVE key (real money), not a test key.
+        A restricted key (rk_live_) is as live as a secret key (sk_live_)."""
+        return self.stripe_secret_key.startswith(("sk_live_", "rk_live_"))
 
     @property
     def stripe_customer_ready(self) -> bool:
