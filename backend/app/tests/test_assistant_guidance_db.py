@@ -91,6 +91,33 @@ def test_prompt_lists_the_linkable_pages():
     assert "prepare_deep_link returns" not in core  # links no longer need a tool round trip
 
 
+def test_prompt_carries_the_client_standard_and_what_is_not_built():
+    """Client document §26 (review 2026-09-24): codes and keys are never asked for, controls
+    are not endorsements, the full no-promises list, the escalation list with what to do now,
+    and fixed disclosures. The reference library describes the target platform, so its
+    unbuilt parts are named and must never be presented as available."""
+    core = prompts.CORE_SYSTEM
+    for phrase in (
+        "one-time or two-factor codes",
+        "private keys",
+        "controls, not endorsements",
+        "a completion or delivery date",
+        "suspected hacked",
+        "blocked withdrawals",
+        "[Security](/settings?tab=security)",
+        "no buyer, price or date is guaranteed",
+        "only\n  the line for that topic (never the whole list)",
+        "not_on_platform_yet",
+        "parts of it are not\n   built yet",
+        "company verification (KYB)",
+        "PayPal, Mercury, Revolut Business, Wise Business",
+        "a holder register",
+        "quoting their own price",
+        "phased funding",
+    ):
+        assert phrase in core, phrase
+
+
 @pytest.mark.asyncio
 async def test_markdown_links_become_buttons_in_one_model_call(client, db, asession, keys):
     ctx = await _member(client, db, asession)

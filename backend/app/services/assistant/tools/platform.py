@@ -27,7 +27,7 @@ from app.services import (
     settings_service,
     withdrawal_service,
 )
-from app.services.assistant import guard
+from app.services.assistant import guard, platform_gaps
 from app.services.assistant.context import AgentContext
 from app.services.assistant.tools.base import NoArgs, ToolOutput, ToolSpec, register
 
@@ -582,6 +582,8 @@ class ReferenceHit(ToolOutput):
 
 class SearchReferenceOut(ToolOutput):
     items: list[ReferenceHit]
+    # what these passages describe that the platform does not do yet: overrides the passages
+    not_on_platform_yet: list[str]
     note: str
 
 
@@ -598,8 +600,11 @@ async def _search_reference(session: AsyncSession, ctx: AgentContext, args) -> d
             }
             for r in rows
         ],
+        "not_on_platform_yet": platform_gaps.notes_for(a.query, [r.body_md for r in rows]),
         "note": (
-            "Company reference material. Fees, installment terms, payment methods and what "
+            "Company reference material describing the complete target platform. Anything "
+            "listed in not_on_platform_yet is not available today: say so first, plainly, and "
+            "never present it as available. Fees, installment terms, payment methods and what "
             "the user can do right now come from the live tools; where they differ, the live "
             "tools apply."
         ),

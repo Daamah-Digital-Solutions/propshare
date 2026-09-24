@@ -30,7 +30,7 @@ from app.models import KbArticle
 REFERENCE_AUDIENCE = "reference"
 REFERENCE_DIR = pathlib.Path(__file__).resolve().parents[1] / "knowledge" / "reference"
 CHUNK_CHARS = 1700  # stays under wrap_untrusted's 2000-char cap with the heading prefix
-RESULT_BUDGET_BYTES = 6800  # leaves room in the 8 KB tool-result cap for the JSON envelope
+RESULT_BUDGET_BYTES = 6000  # 8 KB tool-result cap minus the JSON envelope + not-built lines
 
 
 @dataclasses.dataclass(frozen=True)
