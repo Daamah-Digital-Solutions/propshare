@@ -20,13 +20,17 @@ from app.models import KbArticle
 MAX_BUNDLE_CHARS = 60_000  # ~15k tokens; a bigger KB must be split by audience (Phase 2)
 
 
-async def approved_articles(session: AsyncSession) -> list[KbArticle]:
+async def approved_articles(
+    session: AsyncSession, langs: tuple[str, ...] | None = None
+) -> list[KbArticle]:
     stmt = (
         select(KbArticle)
         # the company reference library is searched through a tool, never sent in the prompt
         .where(KbArticle.status == "approved", KbArticle.audience != "reference")
         .order_by(KbArticle.priority, KbArticle.slug, KbArticle.lang, KbArticle.version)
     )
+    if langs:
+        stmt = stmt.where(KbArticle.lang.in_(langs))
     return list((await session.execute(stmt)).scalars().all())
 
 
@@ -46,8 +50,8 @@ def render_articles(rows: list[KbArticle]) -> str:
     return text or "(no approved articles yet)"
 
 
-async def render_bundle(session: AsyncSession) -> str:
-    return render_articles(await approved_articles(session))
+async def render_bundle(session: AsyncSession, langs: tuple[str, ...] | None = None) -> str:
+    return render_articles(await approved_articles(session, langs))
 
 
 async def upsert_draft(

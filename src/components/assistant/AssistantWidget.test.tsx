@@ -185,4 +185,15 @@ describe("AssistantWidget", () => {
     expect(starters).toHaveTextContent(/what is my balance/i);
     expect(screen.queryByRole("link", { name: /sign in/i })).toBeNull();
   });
+  it("stays in English when the assistant is set to reply in English only", async () => {
+    localStorage.setItem("capimax_assistant_lang", "ar"); // a visitor who once picked Arabic
+    const englishOnly = { ...enabled, reply_language: "en" as const };
+    api.status.mockResolvedValue(englishOnly);
+    renderIt(englishOnly);
+    open();
+    await screen.findByTestId("assistant-starters");
+    expect(screen.queryByRole("button", { name: /switch language/i })).toBeNull();
+    expect(screen.getByText(/^Hi! I can explain/)).toBeInTheDocument();
+    expect(screen.getByTestId("assistant-starters")).toHaveTextContent(/what is my balance/i);
+  });
 });

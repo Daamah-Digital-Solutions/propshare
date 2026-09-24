@@ -20,6 +20,7 @@ class StatusOut(BaseModel):
     consent_given: bool
     visitor_allowed: bool
     rollout: str
+    reply_language: str = "auto"  # "en": the widget stays in English
 
 
 class ConsentIn(BaseModel):

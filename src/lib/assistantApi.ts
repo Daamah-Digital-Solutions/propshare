@@ -39,6 +39,8 @@ export interface AssistantStatus {
   consent_given: boolean;
   visitor_allowed: boolean;
   rollout: string;
+  /** "en": the assistant answers in English only, so the widget stays English. */
+  reply_language?: "auto" | "en";
 }
 
 export interface Conversation {

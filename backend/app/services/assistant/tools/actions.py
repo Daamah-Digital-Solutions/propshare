@@ -234,9 +234,11 @@ async def _report_knowledge_gap(session: AsyncSession, ctx: AgentContext, args) 
         "in the admin panel; no message text is copied here.",
         context={
             "conversation_id": str(ctx.conversation_id) if ctx.conversation_id else None,
-            "transcript_url": f"/admin/assistant-conversation/details/{ctx.conversation_id}"
-            if ctx.conversation_id
-            else None,
+            "transcript_url": (
+                f"/admin/assistant-conversation/details/{ctx.conversation_id}"
+                if ctx.conversation_id
+                else None
+            ),
             "lang": ctx.lang,
         },
         source="assistant",

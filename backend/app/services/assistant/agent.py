@@ -96,6 +96,7 @@ class AssistantSettings:
     retention_days: int
     rollout: str
     pricing: dict[str, dict[str, float]]
+    reply_language: str = "auto"  # "en" = English only
 
     @property
     def model_configured(self) -> bool:
@@ -126,7 +127,15 @@ async def load_settings(session: AsyncSession) -> AssistantSettings:
         retention_days=int(await s("assistant_retention_days") or 180),
         rollout=await s("assistant_rollout") or "admins",
         pricing=pricing,
+        reply_language=await s("assistant_reply_language") or "auto",
     )
+
+
+async def build_prompt(session: AsyncSession, settings: AssistantSettings) -> str:
+    """The cached prefix for these settings. Turns and the cache warm-up MUST share it."""
+    english_only = settings.reply_language == "en"
+    bundle = await kb_service.render_bundle(session, ("en",) if english_only else None)
+    return prompts.build_instructions(bundle, settings.reply_language)
 
 
 # --------------------------------------------------------------------------- #
@@ -413,12 +422,18 @@ async def run_turn(
     session.add(user_row)
     await session.flush()
 
-    instructions = prompts.build_instructions(await kb_service.render_bundle(session))
+    if settings.reply_language == "en" and ctx.lang != "en":
+        ctx = dataclasses.replace(ctx, lang="en")  # safe-mode text and context follow the reply
+    instructions = await build_prompt(session, settings)
     tools = llm_tools(exclude=set(settings.disabled_tools))
     user_key = guard.safety_identifier(str(ctx.user_id or ctx.visitor_key or "anonymous"))
     prefix_items: list[LLMItem] = [
         *history,
-        UserMessage(prompts.user_item_text(ctx, clean_text, now)),
+        UserMessage(
+            prompts.user_item_text(
+                ctx, clean_text, now, english_only=settings.reply_language == "en"
+            )
+        ),
     ]
     turn_items: list[LLMItem] = []  # what this turn adds (stored on the assistant message)
     tool_log: list[dict[str, Any]] = []
@@ -546,7 +561,9 @@ async def run_turn(
                 yield _event("card", **card)
         # a visitor told to sign in always gets the buttons, whatever the model wrote
         if ctx.is_visitor and _needs_sign_in(final_text, tool_log):
-            arabic = bool(re.search(r"[\u0600-\u06ff]", final_text))
+            arabic = settings.reply_language != "en" and bool(
+                re.search(r"[\u0600-\u06ff]", final_text)
+            )
             for route_id in ("sign_in", "register"):
                 link = guard.make_link(route_id)
                 label = guard.SIGN_IN_LABELS_AR[route_id] if arabic else link["label"]

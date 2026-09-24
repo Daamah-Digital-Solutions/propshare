@@ -22,8 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
-from app.services import kb_service, settings_service
-from app.services.assistant import agent, guard, prompts
+from app.services import settings_service
+from app.services.assistant import agent, guard
 from app.services.assistant.tools import llm_tools
 from app.services.llm import registry
 from app.services.llm.types import Completed, Failed, LLMRequest, UserMessage
@@ -64,7 +64,7 @@ async def warm_once(
 
     req = LLMRequest(
         # byte-identical prefix to a real turn: same instructions, tools and effort
-        instructions=prompts.build_instructions(await kb_service.render_bundle(session)),
+        instructions=await agent.build_prompt(session, settings),
         tools=llm_tools(exclude=set(settings.disabled_tools)),
         items=(UserMessage("Reply with the single word OK."),),
         model=settings.model,

@@ -66,6 +66,7 @@ _SETTING_SPECS: dict[str, str] = {
     "assistant_retention_days": "int",
     "assistant_model_pricing": "json_object",
     "assistant_cache_warm_minutes": "int",
+    "assistant_reply_language": "enum:auto,en",
     "support_sla_hours_normal": "int",
     "support_sla_hours_high": "int",
     "ops_stale_hours": "int",
@@ -201,6 +202,8 @@ DEFAULTS: dict[str, str] = {
     "assistant_model_pricing": "{}",  # filled from the provider's price list at rollout
     # keep the provider's prompt cache warm (its TTL is ~30 min); 0 = off
     "assistant_cache_warm_minutes": "20",
+    # "en": always answer in English (owner decision 2026-09-24); "auto": the user's language
+    "assistant_reply_language": "en",
     # Support SLA (Batch C): hours without a public staff reply before escalation
     "support_sla_hours_normal": "24",
     "support_sla_hours_high": "8",

@@ -150,13 +150,15 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
   const identity = isAuthenticated ? (user?.id ?? "user") : "visitor";
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<AssistantStatus>(initialStatus);
-  const [lang, setLang] = useState<"en" | "ar">(() => {
+  const [chosenLang, setLang] = useState<"en" | "ar">(() => {
     try {
       return (localStorage.getItem(LANG_KEY) as "en" | "ar") || "en";
     } catch {
       return "en";
     }
   });
+  const englishOnly = status.reply_language === "en";
+  const lang: "en" | "ar" = englishOnly ? "en" : chosenLang;
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
@@ -278,7 +280,7 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
     const text = (preset ?? input).trim();
     if (!text || busy) return;
     setError("");
-    const turnLang: "en" | "ar" = isArabic(text) ? "ar" : lang;
+    const turnLang: "en" | "ar" = englishOnly ? "en" : isArabic(text) ? "ar" : lang;
     const userMsg: Msg = { id: uid(), role: "user", text, cards: [], tools: [] };
     const reply: Msg = { id: uid(), role: "assistant", text: "", cards: [], tools: [], streaming: true };
     setMessages((prev) => [...prev, userMsg, reply]);
@@ -322,7 +324,7 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
       setBusy(false);
       abortRef.current = null;
     }
-  }, [input, busy, lang, ensureConversation]);
+  }, [input, busy, lang, englishOnly, ensureConversation]);
 
   const feedback = useCallback(async (m: Msg, value: "up" | "down") => {
     if (!m.done) return;
@@ -386,9 +388,11 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                 {lang === "ar" ? "يقرأ بياناتك الحقيقية · لا ينفّذ بدون تأكيدك" : "Reads your real data · acts only with your confirmation"}
               </div>
             </div>
-            <button type="button" aria-label="Switch language" title="EN / AR" onClick={toggleLang} className="rounded-md px-1.5 py-1 text-xs font-semibold hover:bg-white/15">
-              {lang === "en" ? "ع" : "EN"}
-            </button>
+            {!englishOnly && (
+              <button type="button" aria-label="Switch language" title="EN / AR" onClick={toggleLang} className="rounded-md px-1.5 py-1 text-xs font-semibold hover:bg-white/15">
+                {lang === "en" ? "ع" : "EN"}
+              </button>
+            )}
             <button type="button" aria-label="New chat" title="New chat" onClick={newChat} className="rounded-md p-1.5 hover:bg-white/15">
               <RefreshCw className="h-4 w-4" />
             </button>

@@ -47,7 +47,7 @@ done through the right page. You are not a person's financial adviser and you ne
 
 # What you may and may not do
 - You never move money, invest, withdraw, list, buy, sell, cancel, verify, or change settings.
-  For those you explain the steps and hand out the exact page with prepare_deep_link.
+  For those you explain the steps and give the button to the exact page (see below).
 - The only actions you can offer are the ones in propose_action. Proposing is not doing: the
   user must press the confirmation button. Until the platform reports the outcome (it will
   appear as a system note in the conversation), never say the action was done.
@@ -87,9 +87,7 @@ done through the right page. You are not a person's financial adviser and you ne
   signed in gets general information only; invite them to sign in for anything personal.
 
 # Style
-- Answer in the user's language. Arabic in, Arabic out (match their dialect naturally: Gulf,
-  Egyptian or standard); English in, English out; a mix gets a mix. Keep the platform's own
-  terms (unit, wallet, KYC, installment plan) recognisable in either language.
+{LANGUAGE_RULE}
 - Be short and concrete: lead with the answer, then the one next step, then the link. Use
   plain words a first-time investor understands; no jargon dumps, no lectures.
 - Do not over-apologise and do not invent enthusiasm. If something is not possible on the
@@ -120,15 +118,43 @@ def _pages() -> str:
     return ", ".join(paths)
 
 
+LANGUAGE_RULES = {
+    "auto": (
+        "- Answer in the user's language. Arabic in, Arabic out (match their dialect naturally:\n"
+        "  Gulf, Egyptian or standard); English in, English out; a mix gets a mix. Keep the\n"
+        "  platform's own terms (unit, wallet, KYC, installment plan) recognisable in either\n"
+        "  language."
+    ),
+    "en": (
+        "- Always answer in English, whatever language the user writes in. Understand Arabic\n"
+        "  (any dialect) and other languages perfectly, but reply only in clear, simple English.\n"
+        "  Button labels in your links are English too."
+    ),
+}
+
 CORE_SYSTEM = CORE_SYSTEM.replace("{PAGES}", _pages())
 
 
-def build_instructions(kb_bundle: str) -> str:
-    """The cacheable prefix. Byte-stable for a given code deploy + knowledge-base state."""
-    return f"{CORE_SYSTEM}\n<knowledge_base>\n{kb_bundle.strip()}\n</knowledge_base>\n"
+def build_instructions(kb_bundle: str, reply_language: str = "auto") -> str:
+    """The cacheable prefix. Byte-stable for a given code deploy + knowledge-base state +
+    reply-language setting."""
+    rule = LANGUAGE_RULES.get(reply_language, LANGUAGE_RULES["auto"])
+    core = CORE_SYSTEM.replace("{LANGUAGE_RULE}", rule)
+    if reply_language == "en":  # models mirror the user's language unless told up front
+        core = ENGLISH_ONLY_HEADER + core
+    return f"{core}\n<knowledge_base>\n{kb_bundle.strip()}\n</knowledge_base>\n"
 
 
-def build_platform_context(ctx: AgentContext, now: dt.datetime | None = None) -> str:
+ENGLISH_ONLY_HEADER = (
+    "LANGUAGE: every reply is in English, even when the user writes in Arabic or another "
+    "language (some tool results are in Arabic: translate them, never copy them).\n\n"
+)
+ENGLISH_ONLY_NOTE = "\n\n(Platform note: reply in English.)"
+
+
+def build_platform_context(
+    ctx: AgentContext, now: dt.datetime | None = None, *, english_only: bool = False
+) -> str:
     """Who is talking, as the server knows it. Prepended to the LAST user item only."""
     now = now or dt.datetime.now(dt.UTC)
     if ctx.is_visitor:
@@ -147,8 +173,15 @@ def build_platform_context(ctx: AgentContext, now: dt.datetime | None = None) ->
             f"email_verified: {'true' if ctx.email_verified else 'false'}",
         ]
     lines += [f"language: {ctx.lang}", f"today: {now.date().isoformat()} (UTC)"]
+    if english_only:  # the rule is in the system prompt too; here it sits next to the message
+        lines.append(
+            "reply_language: English only (answer in English even if the user writes Arabic)"
+        )
     return "<platform_context>\n" + "\n".join(lines) + "\n</platform_context>"
 
 
-def user_item_text(ctx: AgentContext, text: str, now: dt.datetime | None = None) -> str:
-    return build_platform_context(ctx, now) + "\n" + text
+def user_item_text(
+    ctx: AgentContext, text: str, now: dt.datetime | None = None, *, english_only: bool = False
+) -> str:
+    note = ENGLISH_ONLY_NOTE if english_only else ""  # last thing the model reads
+    return build_platform_context(ctx, now, english_only=english_only) + "\n" + text + note

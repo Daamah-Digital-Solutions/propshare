@@ -187,6 +187,7 @@ async def status(request: Request, session: SessionDep):
         consent_given=given,
         visitor_allowed=settings.visitor_enabled and settings.rollout != "admins",
         rollout=settings.rollout,
+        reply_language=settings.reply_language,
     )
 
 

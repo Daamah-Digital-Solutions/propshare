@@ -14,6 +14,7 @@ What each test protects:
 from __future__ import annotations
 
 import base64
+import dataclasses
 import datetime as dt
 import os
 
@@ -21,7 +22,6 @@ import pytest
 
 from app.core import crypto
 from app.core.config import get_settings
-from app.services import kb_service
 from app.services.assistant import agent, cache_warm, prompts
 from app.services.assistant.agent import AssistantSettings, run_turn
 from app.services.assistant.context import AgentContext, load_context
@@ -190,7 +190,8 @@ async def test_warm_up_sends_the_real_prefix_once_per_interval(asession, assista
     out = await cache_warm.warm_once(asession, llm_factory=lambda _p: llm, now=t0)
     assert out.startswith("warmed")
     req = llm.requests[0]
-    assert req.instructions == prompts.build_instructions(await kb_service.render_bundle(asession))
+    settings = await agent.load_settings(asession)
+    assert req.instructions == await agent.build_prompt(asession, settings)
     assert req.tools == tuple(llm_tools(exclude=set()))
     assert req.cache_key == agent.CACHE_KEY and req.max_output_tokens == 16
 
@@ -218,3 +219,64 @@ async def test_warm_up_is_off_when_disabled(db, asession, assistant_on):
     db("UPDATE platform_settings SET value='false' WHERE key='assistant_enabled'")
     assert await cache_warm.warm_once(asession, llm_factory=lambda _p: llm) == "off"
     assert llm.requests == []
+
+
+# --------------------------------------------------------------------------- #
+# English-only replies (owner decision 2026-09-24; setting assistant_reply_language)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_english_only_prompt_bundle_and_safe_text(db, asession, keys):
+    from app.services import kb_service
+    from app.services.llm.fake import FakeTurn as _Turn
+
+    for lang, body in (("en", "English wording."), ("ar", "نص عربي.")):
+        db(
+            "INSERT INTO kb_articles (slug, lang, title, body_md, status) "
+            "VALUES ('lang-probe', :l, 'Probe', :b, 'approved')",
+            l=lang,
+            b=body,
+        )
+    auto = dataclasses.replace(SETTINGS, reply_language="auto")
+    english = dataclasses.replace(SETTINGS, reply_language="en")
+    auto_prompt = await agent.build_prompt(asession, auto)
+    en_prompt = await agent.build_prompt(asession, english)
+    assert "نص عربي" in auto_prompt and "Arabic in, Arabic out" in auto_prompt
+    assert "نص عربي" not in en_prompt and "English wording." in en_prompt
+    assert "Always answer in English" in en_prompt
+    assert await kb_service.render_bundle(asession, ("en",)) == await kb_service.render_bundle(
+        asession, ("en",)
+    )  # byte-stable
+
+    # an Arabic-speaking visitor in English mode: the fallback text is English too
+    ctx = await _visitor(asession)
+    ctx = dataclasses.replace(ctx, lang="ar")
+    llm = FakeLLM([_Turn(fail=("boom", "provider down"))])
+    events = [ev async for ev in run_turn(asession, ctx, "مرحبا", llm, settings=english)]
+    shown = "".join(e["data"]["text"] for e in events if e["event"] == "delta")
+    assert "couldn't complete" in shown
+    assert llm.requests[0].instructions == en_prompt
+
+
+@pytest.mark.asyncio
+async def test_status_reports_the_reply_language(client, db):
+    r = await client.get("/api/v1/assistant/status", headers={"X-Visitor-Key": "v-lang"})
+    assert r.json()["reply_language"] == "en"  # the default for now
+    db(
+        "INSERT INTO platform_settings (key, value) VALUES ('assistant_reply_language','auto') "
+        "ON CONFLICT (key) DO UPDATE SET value='auto'"
+    )
+    r = await client.get("/api/v1/assistant/status", headers={"X-Visitor-Key": "v-lang"})
+    assert r.json()["reply_language"] == "auto"
+
+
+def test_english_only_rule_is_first_and_last_thing_the_model_reads():
+    """Measured live: with the rule only in the Style section the model still mirrored an
+    Arabic question. It must lead the instructions and follow the user's message."""
+    en = prompts.build_instructions("kb", "en")
+    assert en.startswith("LANGUAGE: every reply is in English")
+    assert not prompts.build_instructions("kb", "auto").startswith("LANGUAGE:")
+    ctx = AgentContext(None, "v", (), None, "none", False, None)
+    item = prompts.user_item_text(ctx, "عايز أعرف رصيدي", english_only=True)
+    assert item.endswith("(Platform note: reply in English.)")
+    assert "reply_language: English only" in item
+    assert prompts.user_item_text(ctx, "hi").endswith("\nhi")
