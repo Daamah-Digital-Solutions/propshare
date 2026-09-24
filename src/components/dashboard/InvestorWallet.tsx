@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { AddCardDialog } from "@/components/dashboard/AddCardDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,8 +57,12 @@ const NEGATIVE_TYPES = new Set(["withdrawal", "investment", "fee"]);
 
 const tail = (s: string | null | undefined) => (s ? s.slice(-4) : "");
 
+// what Stripe appends to the return URL after a bank check on a new card
+const CARD_SETUP_KEYS = ["setup_intent", "setup_intent_client_secret", "redirect_status"];
+
 export const InvestorWallet = () => {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Deposit state
   const [depositAmount, setDepositAmount] = useState("");
@@ -98,6 +104,26 @@ export const InvestorWallet = () => {
     queryFn: walletApi.depositMethods,
   });
 
+  // Back from the bank's check (3-D Secure) on a new card: Stripe adds setup_intent to the
+  // return URL. Finish the save once and drop the parameters. Whether the check passed is read
+  // by the server from Stripe itself (Stripe does not promise a redirect_status for setups).
+  const finishedSetup = useRef<string | null>(null);
+  useEffect(() => {
+    const setupIntent = searchParams.get("setup_intent");
+    if (!setupIntent || finishedSetup.current === setupIntent) return;
+    finishedSetup.current = setupIntent;
+    const rest = new URLSearchParams(searchParams);
+    CARD_SETUP_KEYS.forEach((k) => rest.delete(k));
+    setSearchParams(rest, { replace: true });
+    paymentMethodsApi.add(setupIntent).then(
+      () => {
+        toast.success("Card saved");
+        queryClient.invalidateQueries({ queryKey: ["payment-methods"] });
+      },
+      (e) => toast.error(e instanceof ApiError ? e.message : "Your card could not be saved."),
+    );
+  }, [searchParams, setSearchParams, queryClient]);
+
   const methods = savedMethods ?? [];
   const banks = bankAccounts ?? [];
   const wallets = cryptoWallets ?? [];
@@ -129,9 +155,8 @@ export const InvestorWallet = () => {
     queryClient.invalidateQueries({ queryKey: ["wallet-transactions"] });
   };
 
-  // ---- Saved cards ----
-  // Cards are entered on Stripe's hosted checkout at payment time. There is no card-entry form
-  // here, so there is no "add card": it could only start a setup nobody can finish.
+  // ---- Saved cards (entered in Stripe's own form, see AddCardDialog) ----
+  const [addCardOpen, setAddCardOpen] = useState(false);
   const removeMethod = useMutation({
     mutationFn: (id: string) => paymentMethodsApi.remove(id),
     onSuccess: () => {
@@ -634,11 +659,27 @@ export const InvestorWallet = () => {
                 <p className="text-sm font-semibold text-foreground flex items-center gap-2">
                   <CreditCard className="h-4 w-4" /> Cards
                 </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label="Add card"
+                  onClick={() => setAddCardOpen(true)}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
               </div>
+              <AddCardDialog
+                open={addCardOpen}
+                onOpenChange={setAddCardOpen}
+                onSaved={() => {
+                  setAddCardOpen(false);
+                  queryClient.invalidateQueries({ queryKey: ["payment-methods"] });
+                }}
+              />
               {methods.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  You enter your card on Stripe's secure payment page each time you pay. We never
-                  see or store your card number.
+                  No saved cards. Stored securely by our payment processor — we never see your card
+                  number.
                 </p>
               ) : (
                 <div className="space-y-2">

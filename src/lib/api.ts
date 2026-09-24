@@ -986,10 +986,11 @@ export const paymentMethodsApi = {
       method: "POST",
     });
   },
-  add(paymentMethodId: string): Promise<SavedPaymentMethod> {
+  /** Record the card a finished SetupIntent saved; the server reads the card from Stripe. */
+  add(setupIntentId: string): Promise<SavedPaymentMethod> {
     return apiRequest<SavedPaymentMethod>("/api/v1/wallet/payment-methods", {
       method: "POST",
-      body: { payment_method_id: paymentMethodId },
+      body: { setup_intent_id: setupIntentId },
     });
   },
   remove(id: string): Promise<void> {

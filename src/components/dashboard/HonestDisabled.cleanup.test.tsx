@@ -7,6 +7,7 @@
  *  - InvestorWallet "Payment Methods": no fake saved cards/banks on the money page.
  */
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { InvestmentCertificates } from "./InvestmentCertificates";
@@ -59,7 +60,12 @@ vi.mock("@/components/dashboard/ReinvestReturns", () => ({
 
 function wrap(node: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>);
+  // the wallet reads a finished card setup (3-D Secure return) from the URL, so it needs a router
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>{node}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 describe("InvestmentCertificates (real per-holding certificates)", () => {
@@ -115,19 +121,13 @@ describe("InvestorWallet payment methods (real tokenized vault, Group 3)", () =>
   it("empty vault: honest empty-states, add buttons ENABLED, no fake methods", async () => {
     pmList.mockResolvedValue([]);
     wrap(<InvestorWallet />);
-    expect(await screen.findByText(/secure payment page each time you pay/i)).toBeInTheDocument();
+    expect(await screen.findByText(/No saved cards/i)).toBeInTheDocument();
     expect(screen.getByText(/No saved bank account/i)).toBeInTheDocument();
     expect(screen.getByText(/No saved crypto wallet/i)).toBeInTheDocument();
     expect(screen.queryByText(/Emirates NBD/)).toBeNull();
     expect(screen.queryByText(/bc1q/)).toBeNull();
+    expect(screen.getByRole("button", { name: /add card/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /add bank account/i })).toBeEnabled();
-  });
-
-  it("offers no 'add card': there is no card form behind it, cards go in at Stripe's checkout", async () => {
-    pmList.mockResolvedValue([]);
-    wrap(<InvestorWallet />);
-    await screen.findByText(/secure payment page each time you pay/i);
-    expect(screen.queryByRole("button", { name: /add card/i })).toBeNull();
   });
 
   it("renders real saved methods (brand •••• last4 + Default), no card number stored", async () => {
