@@ -92,7 +92,11 @@ class Settings(BaseSettings):
 
     # Stripe (cards / Apple Pay / Google Pay) — D2.
     stripe_secret_key: str = ""  # sk_... (server-side API calls)
-    stripe_webhook_secret: str = ""  # whsec_... (verifies Stripe-Signature)
+    stripe_webhook_secret: str = ""  # whsec_... of the "Your account" endpoint (deposits)
+    # Stripe signs every webhook endpoint with its own secret, and it sends events that happen
+    # on investors' connected accounts (account.updated, their payouts) only to an endpoint
+    # listening to "Connected accounts" — a second endpoint, so a second secret.
+    stripe_connect_webhook_secret: str = ""  # whsec_... of the "Connected accounts" endpoint
     stripe_publishable_key: str = ""  # pk_... (exposed to the SPA)
 
     # NOWPayments (crypto) — D4. IPN signed HMAC-SHA512 in the x-nowpayments-sig header.
@@ -106,7 +110,8 @@ class Settings(BaseSettings):
     nowpayments_password: str = ""
 
     # Stripe Connect (Phase 7, bank withdrawals): payouts to investors' connected
-    # accounts. Reuses stripe_secret_key; webhook reuses stripe_webhook_secret.
+    # accounts. Reuses stripe_secret_key; its webhook is verified with
+    # stripe_connect_webhook_secret (see above).
 
     @property
     def stripe_configured(self) -> bool:
@@ -144,7 +149,9 @@ class Settings(BaseSettings):
 
     @property
     def stripe_connect_configured(self) -> bool:
-        # Bank withdrawals via Connect reuse the Stripe secret + webhook secret.
+        # Bank withdrawals via Connect reuse the Stripe keys. Money never waits on the Connect
+        # webhook (a transfer is final when Stripe accepts it and onboarding is re-read live),
+        # so its secret is not required here; without it investors just miss the payout notices.
         return self.stripe_configured
 
     @property

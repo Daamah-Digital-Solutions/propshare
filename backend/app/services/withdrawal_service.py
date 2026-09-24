@@ -7,8 +7,12 @@ Safeguards (there is no auto-reversing webhook for a wrong send):
     replay), the **provider idempotency key = withdrawal.id** (a retried submit can't
     send twice), and a **status-transition guard under FOR UPDATE** (executor only
     acts on ``approved``; webhook only settles ``processing``).
-  * **Settlement only via signed webhook**, deduped on ``payout_events``.
-  * **Failure/return → idempotent compensating credit** (funds returned, never lost).
+  * **Settlement**: a Stripe transfer is final when Stripe accepts it (the money is in the
+    investor's own Stripe balance), so the row completes right there; a crypto payout
+    completes only on its signed webhook, deduped on ``payout_events``.
+  * **Failure → idempotent compensating credit** (funds returned, never lost) — but only for
+    money still ours. A failed payout from an investor's Stripe account to their bank or card
+    leaves the funds in their Stripe balance: they are told to act, the wallet is not credited.
   * **Reconciliation sweep** re-queries the provider for stuck ``processing`` rows.
 
 Threshold: ``withdrawal_auto_approve_limit`` (platform_settings, default $5000). ≤ limit
@@ -457,6 +461,10 @@ async def execute_approved(
                 entity_id=str(wd.id),
                 after={"provider_payout_id": wd.provider_payout_id},
             )
+            if result.status == "settled":
+                # Nothing further will arrive for it: waiting would only leave the investor
+                # looking at "processing" until the 24-hour reconcile.
+                await _complete(session, wd, action="withdrawal.completed")
         except AppError as exc:
             if _is_provider_balance_shortfall(exc):
                 # Keep the hold; an admin settles it by hand (or tops the provider up and
@@ -711,6 +719,12 @@ async def process_payout_webhook(
         )
     )
     if wd is None:
+        if parsed.account_id:
+            # An investor's Stripe account paying its own balance out on Stripe's schedule.
+            # Our ledger paid them when the transfer went through; only a failure needs them.
+            if parsed.status == "failed":
+                return await _connected_payout_failed(session, parsed)
+            return {"status": "ignored"}
         await write_audit(
             session,
             action="withdrawal.webhook.unmatched",
@@ -725,38 +739,146 @@ async def process_payout_webhook(
         await session.execute(select(Withdrawal).where(Withdrawal.id == wd.id).with_for_update())
     ).scalar_one()
 
+    if locked.provider == "stripe":
+        return await _stripe_payout_outcome(session, locked, parsed)
+
     if parsed.status == "settled":
         if locked.status == "completed":
             return {"status": "already_completed"}
         if locked.status not in ("processing", "approved"):
             return {"status": "ignored_state"}
-        locked.status = "completed"
-        locked.completed_at = _utcnow()
-        await wallet_service.settle_withdrawal(
-            session, user_id=locked.user_id, amount=locked.amount, reference_id=locked.id
+        await _complete(session, locked, action="withdrawal.completed")
+        return {"status": "processed", "result": "completed"}
+
+    # failed -> release funds (idempotent: only from a live state).
+    if locked.status in ("processing", "approved") and parsed.status == "failed":
+        return await _fail(session, locked, reason="payout failed")
+    return {"status": "ignored_state"}
+
+
+def _sent_message(wd: Withdrawal) -> str:
+    if wd.provider != "stripe":
+        return f"Your ${wd.amount} withdrawal has been paid out."
+    net = wd.amount - wd.fee
+    if wd.speed == "instant":
+        return (
+            f"Your ${wd.amount} withdrawal is on its way to your debit card: ${net} after the "
+            "instant fee, usually within 30 minutes."
         )
+    return (
+        f"Your ${wd.amount} withdrawal was sent to your linked bank account through Stripe. "
+        "Banks usually post it within 1-2 business days."
+    )
+
+
+async def _complete(session: AsyncSession, wd: Withdrawal, *, action: str) -> None:
+    """The money has left the platform: clear the hold, tell the investor, audit."""
+    wd.status = "completed"
+    wd.completed_at = _utcnow()
+    wd.updated_at = wd.completed_at
+    await wallet_service.settle_withdrawal(
+        session, user_id=wd.user_id, amount=wd.amount, reference_id=wd.id
+    )
+    await notification_service.notify(
+        session,
+        user_id=wd.user_id,
+        type="withdrawal",
+        title="Withdrawal sent",
+        message=_sent_message(wd),
+        email_category="security",
+    )
+    await write_audit(
+        session,
+        action=action,
+        entity_type="withdrawal",
+        entity_id=str(wd.id),
+        after={"provider_payout_id": wd.provider_payout_id},
+    )
+
+
+def _failure_code(parsed) -> str | None:
+    obj = ((parsed.raw or {}).get("data") or {}).get("object") or {}
+    return obj.get("failure_code")
+
+
+async def _stripe_payout_outcome(session: AsyncSession, wd: Withdrawal, parsed) -> dict:
+    """How one of our instant payouts left the investor's Stripe account for their card.
+
+    The transfer before it already made the money theirs, so nothing here moves money on our
+    side: when the card payout fails, Stripe puts the funds back in the investor's Stripe
+    balance, not ours, and crediting the wallet would pay them twice."""
+    if wd.status not in ("processing", "completed"):
+        return {"status": "ignored_state"}
+    outcome = {"status": "already_completed"}
+    if parsed.status == "failed" and wd.speed == "instant":
+        wd.speed = "standard"
+        wd.failure_reason = "Instant payout to the card failed; paid on the standard schedule."
+        wd.updated_at = _utcnow()
         await notification_service.notify(
             session,
-            user_id=locked.user_id,
+            user_id=wd.user_id,
             type="withdrawal",
-            title="Withdrawal sent",
-            message=f"Your ${locked.amount} withdrawal has been paid out.",
+            title="Instant payout did not go through",
+            message=(
+                "Your card could not take the instant payout, so Stripe put the money back in "
+                "your Stripe account. Nothing is lost: Stripe pays it out on the standard "
+                "schedule. If Stripe asks you to update your payout details, use Link bank "
+                "account in your wallet."
+            ),
             email_category="security",
         )
         await write_audit(
             session,
-            action="withdrawal.completed",
+            action="withdrawal.instant_failed",
             entity_type="withdrawal",
-            entity_id=str(locked.id),
+            entity_id=str(wd.id),
+            after={"payout": parsed.provider_payout_id, "failure_code": _failure_code(parsed)},
         )
-        return {"status": "processed", "result": "completed"}
+        outcome = {"status": "processed", "result": "instant_failed"}
+    if wd.status == "processing":  # submitted before a Stripe transfer counted as final
+        await _complete(session, wd, action="withdrawal.completed")
+        outcome = {"status": "processed", "result": "completed"}
+    return outcome
 
-    # failed or returned -> release funds (idempotent: only from a live state).
-    if locked.status in ("completed",) and parsed.status == "returned":
-        return await _return(session, locked)
-    if locked.status in ("processing", "approved") and parsed.status == "failed":
-        return await _fail(session, locked, reason="payout failed")
-    return {"status": "ignored_state"}
+
+async def _connected_payout_failed(session: AsyncSession, parsed) -> dict:
+    """An investor's bank refused the payout Stripe made from their Stripe balance (account
+    closed, wrong number...). The money waits in their Stripe account and Stripe blocks payouts
+    to that bank until the details are fixed, so tell them how; our ledger does not change."""
+    acct = (
+        await session.execute(
+            select(ConnectAccount).where(ConnectAccount.stripe_account_id == parsed.account_id)
+        )
+    ).scalar_one_or_none()
+    if acct is None:
+        await write_audit(
+            session,
+            action="withdrawal.webhook.unmatched",
+            entity_type="withdrawal",
+            entity_id=parsed.provider_payout_id,
+            after={"status": parsed.status, "account": parsed.account_id},
+        )
+        return {"status": "ignored_unknown_withdrawal"}
+    await notification_service.notify(
+        session,
+        user_id=acct.user_id,
+        type="withdrawal",
+        title="Your bank did not accept a payout",
+        message=(
+            "Stripe could not pay your linked bank account, so the money is back in your "
+            "Stripe account. Nothing is lost. Update your bank details with Link bank "
+            "account in your wallet and Stripe will pay it out again."
+        ),
+        email_category="security",
+    )
+    await write_audit(
+        session,
+        action="connect.payout_failed",
+        entity_type="connect_account",
+        entity_id=str(acct.id),
+        after={"payout": parsed.provider_payout_id, "failure_code": _failure_code(parsed)},
+    )
+    return {"status": "processed", "result": "bank_payout_failed"}
 
 
 async def _fail(session: AsyncSession, wd: Withdrawal, *, reason: str) -> dict:
@@ -778,19 +900,8 @@ async def _fail(session: AsyncSession, wd: Withdrawal, *, reason: str) -> dict:
     return {"status": "processed", "result": "failed"}
 
 
-async def _return(session: AsyncSession, wd: Withdrawal) -> dict:
-    wd.status = "returned"
-    wd.failure_reason = "payout returned by provider"
-    await wallet_service.release_hold(
-        session, user_id=wd.user_id, amount=wd.amount, reference_id=wd.id, reason="payout returned"
-    )
-    await write_audit(
-        session, action="withdrawal.returned", entity_type="withdrawal", entity_id=str(wd.id)
-    )
-    return {"status": "processed", "result": "returned"}
-
-
 async def _locate(session: AsyncSession, parsed) -> Withdrawal | None:
+    wd = None
     if parsed.withdrawal_id:
         try:
             wid = uuid.UUID(str(parsed.withdrawal_id))
@@ -798,15 +909,19 @@ async def _locate(session: AsyncSession, parsed) -> Withdrawal | None:
             wid = None
         if wid is not None:
             wd = await session.get(Withdrawal, wid)
-            if wd is not None:
-                return wd
-    if parsed.provider_payout_id:
-        return (
+    if wd is None and parsed.provider_payout_id:
+        wd = (
             await session.execute(
                 select(Withdrawal).where(Withdrawal.provider_payout_id == parsed.provider_payout_id)
             )
         ).scalar_one_or_none()
-    return None
+    # A payout reported by one investor's Stripe account only ever belongs to their own
+    # withdrawal, whatever its metadata says.
+    if wd is not None and parsed.account_id:
+        dest = wd.destination if isinstance(wd.destination, dict) else {}
+        if dest.get("connect_account_id") != parsed.account_id:
+            return None
+    return wd
 
 
 # --- reconciliation sweep -------------------------------------------------- #
@@ -841,17 +956,7 @@ async def reconcile_processing(session: AsyncSession, *, now: dt.datetime | None
         if locked.status != "processing":
             continue
         if state == "settled":
-            locked.status = "completed"
-            locked.completed_at = _utcnow()
-            await wallet_service.settle_withdrawal(
-                session, user_id=locked.user_id, amount=locked.amount, reference_id=locked.id
-            )
-            await write_audit(
-                session,
-                action="withdrawal.reconciled_completed",
-                entity_type="withdrawal",
-                entity_id=str(locked.id),
-            )
+            await _complete(session, locked, action="withdrawal.reconciled_completed")
             settled += 1
         elif state == "failed":
             await _fail(session, locked, reason="reconcile: provider reported failed")

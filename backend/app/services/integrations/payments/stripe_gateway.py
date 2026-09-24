@@ -271,6 +271,10 @@ async def create_payout(
 ) -> PayoutResult:
     """Transfer funds to the investor's connected account (their bank payout follows).
     The Idempotency-Key (= withdrawal id) guarantees a retried submit never sends twice.
+
+    A transfer is final once Stripe accepts it: the money is already in the investor's own
+    Stripe balance, and Stripe pays their bank from there on its schedule. Stripe sends no
+    later event for it (``transfer.paid`` was retired), so the result is ``settled``.
     """
     if not connect_configured():
         raise AppError(
@@ -287,7 +291,7 @@ async def create_payout(
         },
         idempotency_key=idempotency_key,
     )
-    return PayoutResult(provider_payout_id=str(transfer["id"]), status="processing")
+    return PayoutResult(provider_payout_id=str(transfer["id"]), status="settled")
 
 
 # --- Instant Payouts (money in minutes, Connect) ---------------------------- #
@@ -380,18 +384,28 @@ async def get_payout_status(provider_payout_id: str) -> str:
     return "settled"
 
 
-# Payout settlement statuses we map to terminal outcomes.
-_PAYOUT_SETTLED = {"payout.paid", "transfer.paid"}
-_PAYOUT_FAILED = {"payout.failed", "transfer.failed"}
-_PAYOUT_RETURNED = {"payout.returned", "charge.refunded"}
+# Outcomes of a connected account's payout to its bank or card. Stripe sends nothing for a
+# transfer once it is created (no transfer.paid / transfer.failed any more), and there is no
+# payout.returned: a payout the bank sends back arrives as payout.failed.
+_PAYOUT_SETTLED = {"payout.paid"}
+_PAYOUT_FAILED = {"payout.failed"}
+
+
+def _payout_webhook_secrets() -> list[str]:
+    """The Connect endpoint's secret, then the main one: ``stripe listen`` signs everything it
+    forwards with a single secret, so local development only has that one."""
+    s = get_settings()
+    candidates = (s.stripe_connect_webhook_secret, s.stripe_webhook_secret)
+    return [secret for secret in dict.fromkeys(candidates) if secret]
 
 
 def parse_payout_event(raw_body: bytes, signature: str | None) -> ParsedPayoutEvent:
-    """Verify + parse a Stripe payout/Connect webhook (money-OUT settlement)."""
-    secret = get_settings().stripe_webhook_secret
-    if not secret:
+    """Verify + parse a Stripe Connect webhook: onboarding (``account.updated``) and the
+    payouts connected accounts make to their own bank or card."""
+    secrets = _payout_webhook_secrets()
+    if not secrets:
         raise AppError("PAYOUTS_NOT_CONFIGURED", "Stripe webhook not configured.", status_code=503)
-    if not _verify(secret, raw_body, signature or ""):
+    if not any(_verify(secret, raw_body, signature or "") for secret in secrets):
         raise AppError("WEBHOOK_SIGNATURE_INVALID", "Invalid Stripe signature.", status_code=401)
     event = json.loads(raw_body.decode("utf-8"))
     etype = str(event.get("type", ""))
@@ -408,19 +422,15 @@ def parse_payout_event(raw_body: bytes, signature: str | None) -> ParsedPayoutEv
             account_id=str(obj.get("id")) if obj.get("id") else None,
             raw=event,
         )
-    if etype in _PAYOUT_SETTLED or etype in _PAYOUT_FAILED or etype in _PAYOUT_RETURNED:
-        status = (
-            "settled"
-            if etype in _PAYOUT_SETTLED
-            else "failed" if etype in _PAYOUT_FAILED else "returned"
-        )
+    if etype in _PAYOUT_SETTLED or etype in _PAYOUT_FAILED:
         return ParsedPayoutEvent(
             event_id=event_id,
             kind="payout",
-            status=status,
+            status="settled" if etype in _PAYOUT_SETTLED else "failed",
             provider_payout_id=str(obj.get("id")) if obj.get("id") else None,
             withdrawal_id=meta.get("withdrawal_id"),
-            account_id=None,
+            # events from connected accounts name the account at the top level
+            account_id=str(event["account"]) if event.get("account") else None,
             raw=event,
         )
     return ParsedPayoutEvent(event_id, "ignored", "ignored", None, None, None, event)

@@ -161,6 +161,7 @@ def _clear_provider_secrets(monkeypatch):
     for attr in (
         "stripe_secret_key",
         "stripe_webhook_secret",
+        "stripe_connect_webhook_secret",
         "nowpayments_api_key",
         "nowpayments_ipn_secret",
         "nowpayments_email",

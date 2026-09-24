@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,12 +69,20 @@ async def start_onboarding(
     return {"onboarding_url": link, "account_id": acct.stripe_account_id, "status": acct.status}
 
 
-async def refresh_status(session: AsyncSession, *, user_id: uuid.UUID) -> ConnectAccount:
-    """Pull live status from Stripe and persist payouts_enabled/details_submitted."""
-    acct = await get_account(session, user_id)
-    if acct is None or not acct.stripe_account_id:
-        raise AppError("CONNECT_NOT_STARTED", "No Connect account for this user.", status_code=404)
-    live = await stripe_gateway.get_account_status(acct.stripe_account_id)
+async def refresh_if_pending(session: AsyncSession, acct: ConnectAccount) -> ConnectAccount:
+    """Re-read an account that cannot receive payouts yet straight from Stripe.
+
+    The investor comes back to the wallet from onboarding, usually before Stripe's
+    ``account.updated`` webhook arrives; without this they would still be asked to link
+    their bank. A Stripe error or timeout keeps what we last stored."""
+    if acct.payouts_enabled or not acct.stripe_account_id:
+        return acct
+    if not stripe_gateway.connect_configured():
+        return acct
+    try:
+        live = await stripe_gateway.get_account_status(acct.stripe_account_id)
+    except (AppError, httpx.HTTPError):
+        return acct
     _apply_status(acct, live["payouts_enabled"], live["details_submitted"])
     return acct
 

@@ -100,8 +100,9 @@ def _configure_bank(monkeypatch, db, uid: str):
     )
 
     async def fake_payout(**kw):
+        # like the real gateway: a Stripe transfer is final once accepted
         return PayoutResult(
-            provider_payout_id="tr_" + str(kw["withdrawal_id"])[:8], status="processing"
+            provider_payout_id="tr_" + str(kw["withdrawal_id"])[:8], status="settled"
         )
 
     monkeypatch.setattr(stripe, "create_payout", fake_payout)
@@ -393,39 +394,64 @@ async def test_execute_submit_failure_releases(client, db, monkeypatch):
     _assert_balance_invariant(db, uid)
 
 
+def _last_notification(db, uid):
+    return db(
+        "SELECT title, message FROM notifications WHERE user_id=:u ORDER BY created_at DESC "
+        "LIMIT 1",
+        u=uid,
+    )[0]
+
+
 @pytest.mark.asyncio
-async def test_bank_payout_completes_via_stripe_then_returns(client, db, monkeypatch):
+async def test_bank_payout_completes_when_stripe_accepts_the_transfer(client, db, monkeypatch):
+    """Stripe sends nothing more for a transfer once it is created (transfer.paid was retired),
+    so the withdrawal completes on the spot instead of sitting a day until the reconcile."""
     admin = await _admin(client, db, "adm5@w.com")
     t = await _verified(client, db, "bank@w.com")
     uid = _uid(db, "bank@w.com")
     _configure_bank(monkeypatch, db, uid)
     _fund(db, uid, 100)
     wid = (await _withdraw(client, t, 100, method="bank", address=None)).json()["withdrawal_id"]
-    await _execute(client, admin)
-    ppid = db("SELECT provider_payout_id FROM withdrawals WHERE id=:i", i=wid)[0][0]
-    # settle
-    settled = await _signed_stripe(
-        client,
-        {
-            "id": "evt_paid",
-            "type": "transfer.paid",
-            "data": {"object": {"id": ppid, "metadata": {"withdrawal_id": wid}}},
-        },
+    status, ppid = db("SELECT status, provider_payout_id FROM withdrawals WHERE id=:i", i=wid)[0]
+    assert status == "completed" and ppid.startswith("tr_")
+    assert _bal(db, uid) == 0 and _pending(db, uid) == 0  # money gone, hold cleared
+    assert (await _execute(client, admin)).json()["submitted"] == 0  # nothing left for the cron
+    title, message = _last_notification(db, uid)
+    assert title == "Withdrawal sent" and "1-2 business days" in message
+    _assert_balance_invariant(db, uid)
+    _assert_pending_invariant(db, uid)
+
+
+@pytest.mark.asyncio
+async def test_bank_refusing_stripes_payout_does_not_refund_the_wallet(client, db, monkeypatch):
+    """After the transfer the money is the investor's own Stripe balance. When their bank
+    refuses Stripe's payout the funds wait there, so crediting the wallet would pay them twice.
+    They are told to fix their bank details instead, once."""
+    t = await _verified(client, db, "bounce@w.com")
+    uid = _uid(db, "bounce@w.com")
+    _configure_bank(monkeypatch, db, uid)
+    _fund(db, uid, 100)
+    wid = (await _withdraw(client, t, 100, method="bank", address=None)).json()["withdrawal_id"]
+    event = {
+        "id": "evt_bounce",
+        "type": "payout.failed",
+        "account": "acct_x",  # Stripe's own scheduled payout: it carries no metadata of ours
+        "data": {"object": {"id": "po_sched", "failure_code": "account_closed"}},
+    }
+    r = await _signed_stripe(client, event)
+    assert r.json() == {"status": "processed", "result": "bank_payout_failed"}
+    assert db("SELECT status FROM withdrawals WHERE id=:i", i=wid)[0][0] == "completed"
+    assert _bal(db, uid) == 0 and _pending(db, uid) == 0  # nothing credited back
+    assert _last_notification(db, uid)[0] == "Your bank did not accept a payout"
+    assert (await _signed_stripe(client, event)).json()["status"] == "duplicate"
+    assert (
+        db(
+            "SELECT count(*) FROM notifications WHERE user_id=:u AND title=:t",
+            u=uid,
+            t="Your bank did not accept a payout",
+        )[0][0]
+        == 1
     )
-    assert settled.json()["result"] == "completed"
-    assert _bal(db, uid) == 0
-    # later returned -> funds back
-    returned = await _signed_stripe(
-        client,
-        {
-            "id": "evt_ret",
-            "type": "payout.returned",
-            "data": {"object": {"id": ppid, "metadata": {"withdrawal_id": wid}}},
-        },
-    )
-    assert returned.json()["result"] == "returned"
-    assert db("SELECT status FROM withdrawals WHERE id=:i", i=wid)[0][0] == "returned"
-    assert _bal(db, uid) == 100
     _assert_balance_invariant(db, uid)
 
 

@@ -18,8 +18,9 @@ Conventions used below:
 
 ### 1.1 Stripe — card deposits (REQUIRED for card funding)
 1. Create a Stripe account; get the **Secret key** and **Publishable key** (live mode).
-2. Add a **webhook endpoint** → `API/api/v1/payments/webhooks/stripe`
-   - Events: `checkout.session.completed`, `payment_intent.succeeded` (+ `.payment_failed`).
+2. Add a **webhook endpoint** → `API/api/v1/payments/webhooks/stripe`, **Events from: Your account**
+   - Events: `checkout.session.completed`, `checkout.session.expired`,
+     `checkout.session.async_payment_failed` (the only ones the code acts on).
    - Copy the endpoint's **Signing secret**.
 3. Env (backend):
    - `STRIPE_SECRET_KEY=sk_live_...`
@@ -29,11 +30,15 @@ Conventions used below:
 
 ### 1.2 Stripe Connect — bank withdrawals (payouts)
 1. In Stripe, **enable Connect** (Express accounts recommended).
-2. Add a **payout/Connect webhook endpoint** → `API/api/v1/payments/webhooks/stripe-payouts`
-   - Events: `account.updated`, `payout.paid`, `payout.failed`, `transfer.*`.
-   - (Reuses `STRIPE_WEBHOOK_SECRET` — same signing scheme; if Stripe gives a separate secret for this endpoint, use the one configured.)
-3. No new key beyond `STRIPE_SECRET_KEY` (+ Connect enabled on the account).
-4. Verify Connect/payouts are available in your operating region (GCC) before relying on bank withdrawals.
+2. Add a **second webhook endpoint** → `API/api/v1/payments/webhooks/stripe-payouts`,
+   **Events from: Connected accounts** (onboarding and payouts happen on the investors'
+   accounts; Stripe never sends them to a "Your account" endpoint).
+   - Events: `account.updated`, `payout.paid`, `payout.failed`.
+   - Stripe gives this endpoint its **own** signing secret → `STRIPE_CONNECT_WEBHOOK_SECRET=whsec_...`
+     (not the same value as `STRIPE_WEBHOOK_SECRET`).
+3. No new API key beyond `STRIPE_SECRET_KEY` (+ Connect enabled on the account).
+4. Reach: from a US platform, Connect pays connected accounts in the US, UK, EEA, Canada and
+   Switzerland only. GCC investors stay on the manual (admin-paid) rail.
 
 ### 1.3 NOWPayments — crypto deposits (IPN)
 1. Create a NOWPayments account; get the **API key** and set an **IPN secret**.

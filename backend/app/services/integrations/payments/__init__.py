@@ -36,7 +36,9 @@ class ParsedWebhook:
 @dataclass(frozen=True)
 class PayoutResult:
     provider_payout_id: str
-    status: str  # 'processing'
+    # 'processing': the outcome arrives later (webhook / reconcile);
+    # 'settled': final the moment the provider accepted it (a Stripe transfer).
+    status: str
 
 
 @dataclass(frozen=True)
@@ -45,8 +47,10 @@ class ParsedPayoutEvent:
 
     event_id: str  # stable per-delivery key for idempotent dedupe
     kind: str  # 'payout' | 'account' | 'ignored'
-    status: str  # payout: 'settled'|'failed'|'returned'|'ignored'; account: 'updated'
+    status: str  # payout: 'settled'|'failed'|'ignored'; account: 'updated'
     provider_payout_id: str | None  # echoes withdrawals.provider_payout_id
     withdrawal_id: str | None  # our withdrawals.id, echoed in metadata
-    account_id: str | None  # Connect account id (for 'account' events)
+    # Stripe Connect account id: the account itself for 'account' events, the connected
+    # account that made the payout for 'payout' events (None for the platform's own).
+    account_id: str | None
     raw: dict

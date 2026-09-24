@@ -63,7 +63,8 @@ async def nowpayments_webhook(request: Request, session: SessionDep) -> dict:
 @router.post("/webhooks/stripe-payouts")
 @limiter.limit(WEBHOOK_LIMIT)
 async def stripe_payout_webhook(request: Request, session: SessionDep) -> dict:
-    """Stripe payout/transfer settlement + Connect account.updated events."""
+    """Stripe's "Connected accounts" endpoint: onboarding (account.updated) and the payouts
+    investors' Stripe accounts make to their bank or card. Signed with its own secret."""
     raw = await request.body()
     return await withdrawal_service.process_payout_webhook(
         session,

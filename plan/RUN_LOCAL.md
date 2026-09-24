@@ -76,6 +76,9 @@ WALLET_CURRENCY=USD
 - **Stripe (fully local):** `stripe listen --forward-to localhost:8001/api/v1/payments/webhooks/stripe`
   → it prints the `whsec_...` to put in `.env`. Deposit with a Stripe test card; the
   `checkout.session.completed` webhook credits the wallet.
+  For Connect (bank withdrawals) add `--forward-connect-to localhost:8001/api/v1/payments/webhooks/stripe-payouts`
+  to the same command. The CLI signs both with its one secret, so leave
+  `STRIPE_CONNECT_WEBHOOK_SECRET` empty locally; production has two endpoints and two secrets.
 - **NOWPayments:** cannot POST to localhost — use a tunnel (ngrok/cloudflared) to
   `localhost:8001` for the IPN, or test on the VPS. Our DB-backed tests simulate signed
   IPNs, so the logic is proven without the network.

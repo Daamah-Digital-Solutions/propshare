@@ -248,7 +248,8 @@ EMAIL_PROVIDER=console        # -> 'smtp' in prod
 # EMAIL_FROM=CapiMax <no-reply@yourdomain.com>
 # RESEND_API_KEY=            # only if you switch EMAIL_PROVIDER=resend instead
 # STRIPE_SECRET_KEY=
-# STRIPE_WEBHOOK_SECRET=
+# STRIPE_WEBHOOK_SECRET=         # "Your account" endpoint (deposits)
+# STRIPE_CONNECT_WEBHOOK_SECRET= # "Connected accounts" endpoint (automatic bank withdrawals)
 # STRIPE_PUBLISHABLE_KEY=
 # NOWPAYMENTS_API_KEY=
 # NOWPAYMENTS_IPN_SECRET=

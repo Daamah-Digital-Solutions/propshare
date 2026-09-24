@@ -16,7 +16,9 @@ they still hold funds and wait for an admin. This document covers bank withdrawa
 | Not yet onboarded | Honest 409 `CONNECT_NOT_READY`; the wallet shows a **Link bank account** button instead of the saved-IBAN picker. |
 | Provider not configured | A method listed as automatic whose provider has no keys silently stays manual. No customer-facing 503. |
 | Stripe balance too low | The withdrawal returns to the admin queue **with its hold intact** (`withdrawal.submit_deferred` in the audit log), never "failed". See §4 — this is the most likely day-to-day issue. |
-| Settlement | Unchanged: signed Stripe webhook marks it completed; a failure or reversal returns the money to the wallet; the reconcile cron re-queries stuck rows. |
+| Settlement | **Completed the moment Stripe accepts the transfer** (fixed 2026-09-24). The money is then in the investor's own Stripe balance and Stripe pays their bank on its schedule. Stripe sends no later event for a transfer (`transfer.paid` was retired), so the old wait left rows in "processing" until the 24-hour reconcile. |
+| Bank refuses Stripe's payout | The money stays in the investor's Stripe balance, not ours, so the wallet is **not** credited (that would pay twice). The investor gets a notification to fix their bank details with **Link bank account**; Stripe pays it out again after that. |
+| Linking the bank | The wallet re-reads the Connect account from Stripe while it cannot receive payouts yet, so an investor coming back from Stripe onboarding sees the bank linked at once (the webhook is no longer the only path). Onboarding now returns to the wallet tab. |
 
 New endpoint `GET /api/v1/wallet/payout-config` tells the wallet which flow to render per
 method, so the UI never guesses.
@@ -31,9 +33,16 @@ method, so the UI never guesses.
 3. **Check country coverage.** Express payouts depend on the platform's country and on each
    recipient's country. Confirm with Stripe that the countries Capimax's investors live in are
    supported before promising instant bank withdrawals to them.
-4. **Register the Connect/payout webhook**: `https://api.capimaxpropshare.com/api/v1/payments/webhooks/stripe-payouts`
-   with the events `transfer.paid`, `transfer.failed`, `payout.paid`, `payout.failed`,
-   `payout.returned`, `account.updated`. Put its `whsec_…` in `STRIPE_WEBHOOK_SECRET`.
+4. **Register a second webhook endpoint for Connect**:
+   `https://api.capimaxpropshare.com/api/v1/payments/webhooks/stripe-payouts`, with
+   **Events from: Connected accounts** and the events `account.updated`, `payout.paid`,
+   `payout.failed`. Stripe gives this endpoint its **own** signing secret: put that `whsec_…`
+   in `STRIPE_CONNECT_WEBHOOK_SECRET`. `STRIPE_WEBHOOK_SECRET` stays the deposits endpoint's
+   secret. (Corrected 2026-09-24: this used to say to reuse `STRIPE_WEBHOOK_SECRET` and listed
+   `transfer.paid`, `transfer.failed` and `payout.returned`. Stripe no longer sends the first
+   two and never had the third.) Money never waits on this endpoint. Without it, investors
+   just miss the "your bank did not accept a payout" and "instant payout did not go through"
+   notices, and a finished onboarding shows only when they open the wallet.
 5. **Decide the auto-approve limit.** Anything above it still needs a human. $5,000 is the
    current default.
 
@@ -77,6 +86,18 @@ listed in the last section.)
 picker, automatic asks for linking and blocks withdrawal until linked, a linked user sends
 without a saved-account id and is told it was sent.
 
+Added 2026-09-24 (webhook secrets and settlement):
+- `test_payments_gateway.py`: each endpoint verifies with its own secret, the single
+  `stripe listen` secret still works locally, payout events carry the connected account,
+  retired events are ignored, and a transfer returns `settled`.
+- `test_withdrawal_db.py`: a bank withdrawal completes when Stripe accepts the transfer, and a
+  bank refusing Stripe's payout notifies the investor once without crediting the wallet.
+- `test_payout_auto_mode_db.py`: a failed card payout does not credit the wallet, a payout
+  only matches the investor's own Stripe account, and older rows still in "processing"
+  complete on their card payout (paid or failed). Onboarding arrives on the Connect endpoint
+  and any other signature is refused. The status read asks Stripe until the bank is linked,
+  and onboarding returns to the wallet tab.
+
 ---
 
 # Instant Payouts (money in minutes) — US investors
@@ -108,6 +129,13 @@ instant payout to an ineligible destination.
 If step 4 fails (card removed, balance not yet instantly available), the withdrawal is
 **downgraded to standard**, not failed: the money is already theirs and arrives on the normal
 schedule. The row records why, and the customer keeps their money either way.
+
+The same holds when Stripe accepts the card payout and it fails later (`payout.failed` on the
+Connect endpoint): Stripe puts the funds back in the investor's Stripe balance, so the wallet
+is **not** credited. The withdrawal stays completed, drops to standard speed, and the investor
+is notified. Before 2026-09-24 this path returned the money to the wallet as well, which would
+have paid twice once the Connect webhook was verified. In both cases the 1% instant fee is
+currently kept. Refunding it when the payout was not instant is an owner decision.
 
 ## Settings
 

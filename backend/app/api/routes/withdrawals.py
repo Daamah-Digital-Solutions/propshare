@@ -4,10 +4,12 @@
 - POST /wallet/withdrawals       request a payout (KYC-gated, Idempotency-Key).
 - GET  /wallet/withdrawals       the caller's withdrawals.
 - POST /wallet/connect/onboard   start/continue Stripe Connect bank onboarding.
-- GET  /wallet/connect/status    the caller's Connect onboarding status.
+- GET  /wallet/connect/status    the caller's Connect onboarding status (re-read from
+                                 Stripe while the account cannot receive payouts yet).
 
-Funds are held on request; the provider is called later by the admin/cron executor;
-settlement is webhook-only (see routes/payments.py). Honest 503 per rail.
+Funds are held on request; the provider is called right after (or by the admin/cron
+executor). A Stripe transfer settles when Stripe accepts it; a crypto payout settles on its
+signed webhook (see routes/payments.py). Honest 503 per rail.
 """
 
 from __future__ import annotations
@@ -110,8 +112,9 @@ async def connect_onboard(request: Request, session: SessionDep, principal: KycV
         session,
         user_id=principal.user_id,
         email=str(email or ""),
-        refresh_url=f"{app_base}/dashboard?connect=refresh",
-        return_url=f"{app_base}/dashboard?connect=done",
+        # back on the wallet tab, where the linked bank shows up
+        refresh_url=f"{app_base}/dashboard?tab=wallet&connect=refresh",
+        return_url=f"{app_base}/dashboard?tab=wallet&connect=done",
     )
     return ConnectOnboardOut(**result)
 
@@ -123,6 +126,7 @@ async def connect_status(principal: PrincipalDep, session: SessionDep):
         return ConnectStatusOut(
             status="none", payouts_enabled=False, details_submitted=False, stripe_account_id=None
         )
+    acct = await connect_service.refresh_if_pending(session, acct)
     return ConnectStatusOut(
         status=acct.status,
         payouts_enabled=acct.payouts_enabled,
