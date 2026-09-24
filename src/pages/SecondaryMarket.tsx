@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -33,8 +34,13 @@ import {
   MapPin,
 } from "lucide-react";
 import { toast } from "sonner";
-import SellUnitsForm from "@/components/marketplace/SellUnitsForm";
+import SellUnitsForm, { type SellPrefill } from "@/components/marketplace/SellUnitsForm";
 import { ApiError, secondaryApi, type SecondaryListing } from "@/lib/api";
+
+// Tabs the page opens from ?tab= (the assistant links /secondary-market?tab=sell).
+const MARKET_TABS = ["buy", "sell", "activity"];
+// Parameters of a sale the assistant prepared: ?tab=sell&property=<id>&units=N&price=P
+const SALE_KEYS = ["property", "units", "price"];
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "—";
@@ -48,6 +54,28 @@ function timeAgo(iso: string | null): string {
 
 const SecondaryMarket = () => {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab") ?? "";
+  const [tab, setTab] = useState(MARKET_TABS.includes(tabParam) ? tabParam : "buy");
+  const [salePrefill, setSalePrefill] = useState<SellPrefill | null>(null);
+  // A sale prepared by the assistant: open Sell with it filled in, then consume the link so a
+  // refresh does not bring it back. Creating the listing stays the user's own click.
+  useEffect(() => {
+    if (MARKET_TABS.includes(tabParam)) setTab(tabParam);
+    const propertyId = searchParams.get("property");
+    if (!propertyId) return;
+    const units = Number(searchParams.get("units"));
+    const price = Number(searchParams.get("price"));
+    setSalePrefill({
+      propertyId,
+      units: Number.isInteger(units) && units > 0 ? units : undefined,
+      price: Number.isFinite(price) && price > 0 ? price : undefined,
+    });
+    setTab("sell");
+    const rest = new URLSearchParams(searchParams);
+    SALE_KEYS.forEach((k) => rest.delete(k));
+    setSearchParams(rest, { replace: true });
+  }, [searchParams, setSearchParams, tabParam]);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("recent");
   const [selectedListing, setSelectedListing] = useState<SecondaryListing | null>(null);
@@ -158,7 +186,7 @@ const SecondaryMarket = () => {
         {/* Main Content */}
         <section className="py-8">
           <div className="container mx-auto px-4">
-            <Tabs defaultValue="buy" className="space-y-6">
+            <Tabs value={tab} onValueChange={setTab} className="space-y-6">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <TabsList className="bg-muted/50">
                   <TabsTrigger value="buy" className="gap-2">
@@ -373,7 +401,7 @@ const SecondaryMarket = () => {
               </TabsContent>
 
               <TabsContent value="sell" className="space-y-6">
-                <SellUnitsForm />
+                <SellUnitsForm key={salePrefill ? JSON.stringify(salePrefill) : "blank"} prefill={salePrefill} />
               </TabsContent>
 
               <TabsContent value="activity" className="space-y-4">

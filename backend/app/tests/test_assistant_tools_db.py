@@ -109,11 +109,24 @@ def _assert_strict(node, name):
         if node.get("type") == "object" or "properties" in node:
             assert node.get("additionalProperties") is False, name
             assert set(node.get("required", [])) == set(node.get("properties", {}).keys()), name
-        for v in node.values():
-            _assert_strict(v, name)
+        for key, v in node.items():
+            # the "properties" map holds field schemas; it is not a schema itself
+            for sub in v.values() if key == "properties" else [v]:
+                _assert_strict(sub, name)
     elif isinstance(node, list):
         for v in node:
             _assert_strict(v, name)
+
+
+def test_strict_schema_accepts_a_field_named_properties():
+    """compare_properties takes a list called "properties": the field map must not be
+    mistaken for a schema (it crashed the converter)."""
+    from app.services.assistant.tools.platform import CompareIn
+
+    s = to_strict_schema(CompareIn)
+    assert s["required"] == ["properties"] and s["additionalProperties"] is False
+    assert s["properties"]["properties"]["type"] == "array"
+    assert s["properties"]["properties"]["items"] == {"type": "string"}
 
 
 def test_strict_schema_makes_optionals_nullable():
@@ -347,7 +360,9 @@ async def test_quote_uses_whole_units_and_platform_rules(client, db, asession):
         "fee_amount": "10.00",
         "total_amount": "260.00",
     }
-    assert len(p["schedule"]) == 13 and p["total_now"] == "260.00"
+    # a 12-month plan is the down payment + 11 monthly installments (as the platform makes it)
+    assert len(p["schedule"]) == 12 and p["total_now"] == "260.00"
+    assert p["schedule"][-1]["kind"] == "final"
 
 
 @pytest.mark.asyncio

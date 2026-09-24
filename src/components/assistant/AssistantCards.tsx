@@ -5,13 +5,16 @@ import {
   ArrowDownToLine,
   ArrowRight,
   Building2,
+  CalendarClock,
   Check,
   FileSpreadsheet,
   FileText,
   Loader2,
   MapPin,
   Receipt,
+  Scale,
   ShieldCheck,
+  Tag,
   Wallet,
   X,
   type LucideIcon,
@@ -19,10 +22,13 @@ import {
 import type {
   AssistantCard,
   CheckoutCard,
+  ComparisonCard,
   ConfirmActionCard,
   DepositCard,
+  InstallmentCard,
   LinkCard,
   Proposal,
+  SaleCard,
   StatementCard,
   WithdrawalCard,
 } from "@/lib/assistantApi";
@@ -396,6 +402,147 @@ export function StatementPreparedCard({ card }: { card: StatementCard }) {
   );
 }
 
+const signedPct = (v: string) => `${Number(v) > 0 ? "+" : ""}${Number(v).toFixed(2)}%`;
+
+/** A secondary-market sale the assistant prepared: the Sell form opens filled in. */
+export function SalePreparedCard({ card, onClose }: { card: SaleCard; onClose?: () => void }) {
+  const vsRef =
+    Number(card.vs_reference_pct) === 0
+      ? "reference price"
+      : `${signedPct(card.vs_reference_pct)} vs ${money(card.reference_price)}`;
+  return (
+    <PreparedShell
+      testId="sale-card"
+      icon={Tag}
+      title={card.ready ? "Your listing is ready" : "Listing prepared: one step first"}
+      rows={[
+        ["Property", card.property_title],
+        ["Units", String(card.units)],
+        ["Price per unit", `${money(card.price_per_unit)} (${vsRef})`],
+        [`Buyer pays fee (${card.resale_fee_pct}%)`, money(card.buyer_fee)],
+      ]}
+      total={["You receive", money(card.you_receive)]}
+      notes={card.notes}
+      footnote="Opens the Sell form with this listing filled in. Nothing is listed until you confirm."
+    >
+      <CtaLink to={card.path} onClose={onClose} label={card.ready ? "Review & list" : "Open the Sell form"} />
+    </PreparedShell>
+  );
+}
+
+/** The next installment, prepared: its confirmation opens, the user presses Pay. */
+export function InstallmentPreparedCard({ card, onClose }: { card: InstallmentCard; onClose?: () => void }) {
+  const rows: Row[] = [
+    ["Property", card.property_title],
+    ["Installment", card.label],
+    ["Due", `${day(card.due_date)}${card.status === "overdue" ? " (overdue)" : ""}`],
+    ["Base + fee", `${money(card.base_amount)} + ${money(card.fee_amount)}`],
+  ];
+  if (card.vest_units > 0) rows.push(["Vests", `${card.vest_units} unit${card.vest_units === 1 ? "" : "s"}`]);
+  rows.push(["Wallet balance", money(card.wallet_balance)]);
+  rows.push(["Left after this", `${card.unpaid_after} installment${card.unpaid_after === 1 ? "" : "s"}`]);
+  return (
+    <PreparedShell
+      testId="installment-card"
+      icon={CalendarClock}
+      title={card.ready ? "Your installment is ready to pay" : "Installment prepared: one step first"}
+      rows={rows}
+      total={["To pay", money(card.total_amount)]}
+      notes={card.notes}
+      footnote="Opens the payment confirmation. Nothing is charged until you press Pay."
+    >
+      <CtaLink to={card.path} onClose={onClose} label={card.ready ? "Review & pay" : "Open my plan"} />
+    </PreparedShell>
+  );
+}
+
+const pct = (v: number | null) => (v === null || v === undefined ? "—" : `${v}%`);
+const RISK_TONE: Record<string, string> = {
+  low: "bg-emerald-500",
+  medium: "bg-amber-500",
+  high: "bg-red-500",
+};
+
+/** Properties side by side: one column each, the figures the listings publish. */
+export function ComparisonCardView({ card, onClose }: { card: ComparisonCard; onClose?: () => void }) {
+  type Item = ComparisonCard["items"][number];
+  const rows: [string, (it: Item) => React.ReactNode][] = [
+    ["Type", (it) => it.model_label ?? "—"],
+    ["How you buy", (it) => (it.purchase === "installment" ? "Installment plan" : "Direct purchase")],
+    ["Unit price", (it) => (it.unit_price === null ? "—" : fmtMoney(it.unit_price))],
+    ["Minimum", (it) => (it.minimum_investment === null ? "—" : fmtMoney(it.minimum_investment))],
+    ["Projected yield", (it) => pct(it.expected_yield)],
+    ["Projected total return", (it) => pct(it.total_return)],
+    ["Funded", (it) => pct(it.funding_progress)],
+    ["Units left", (it) => (it.available_units === null ? "—" : it.available_units.toLocaleString())],
+    ["Completion", (it) => (it.expected_completion ? day(it.expected_completion.slice(0, 10)) : "—")],
+    [
+      "Exit",
+      (it) =>
+        it.exit_options.length
+          ? `${it.exit_options.join(", ")}${it.exit_fee_pct !== null ? ` (${it.exit_fee_pct}% fee)` : ""}`
+          : "—",
+    ],
+    [
+      "Highest listed risk",
+      (it) =>
+        it.highest_risk ? (
+          <span className="inline-flex items-center gap-1.5 capitalize">
+            <span className={cn("h-2 w-2 rounded-full", RISK_TONE[it.highest_risk])} />
+            {it.highest_risk}
+          </span>
+        ) : (
+          "—"
+        ),
+    ],
+  ];
+  return (
+    <div className="mt-2 overflow-hidden rounded-2xl border border-primary/30 bg-card shadow-sm" data-testid="comparison-card">
+      <div className="flex items-center gap-2 border-b border-primary/15 bg-primary/5 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-primary">
+        <Scale className="h-3.5 w-3.5" />
+        Side by side
+      </div>
+      <div className="overflow-x-auto [scrollbar-width:thin]">
+        <table className="w-full border-collapse text-xs">
+          <thead>
+            <tr>
+              <th className="sticky left-0 z-10 bg-card" />
+              {card.items.map((it) => (
+                <th key={it.title} className="min-w-[112px] px-2.5 pb-2 pt-3 text-left align-top font-semibold">
+                  {it.path ? (
+                    <Link to={it.path} onClick={onClose} className="text-primary hover:underline">
+                      {it.title}
+                    </Link>
+                  ) : (
+                    it.title
+                  )}
+                  {it.city && <div className="mt-0.5 font-normal text-muted-foreground">{it.city}</div>}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([label, value]) => (
+              <tr key={label} className="border-t border-border/70">
+                <td className="sticky left-0 z-10 whitespace-nowrap bg-card px-2.5 py-1.5 text-muted-foreground">{label}</td>
+                {card.items.map((it) => (
+                  <td key={it.title} className="px-2.5 py-1.5 align-top font-medium text-foreground">
+                    {value(it)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="border-t border-border/70 px-3 py-2 text-[10.5px] text-muted-foreground">
+        Yields and returns are the listings' projections, not promises. Platform fee on a direct
+        purchase: {card.platform_fee_pct}%.
+      </div>
+    </div>
+  );
+}
+
 /** A page button. The first button of a reply is the primary call to action. */
 export function LinkButton({
   card,
@@ -521,5 +668,8 @@ export function AssistantCardView({
   if (card.kind === "deposit") return <DepositPreparedCard card={card} onClose={onClose} />;
   if (card.kind === "withdrawal") return <WithdrawalPreparedCard card={card} onClose={onClose} />;
   if (card.kind === "statement") return <StatementPreparedCard card={card} />;
+  if (card.kind === "sale") return <SalePreparedCard card={card} onClose={onClose} />;
+  if (card.kind === "installment") return <InstallmentPreparedCard card={card} onClose={onClose} />;
+  if (card.kind === "comparison") return <ComparisonCardView card={card} onClose={onClose} />;
   return null;
 }

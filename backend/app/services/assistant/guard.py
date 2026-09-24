@@ -87,6 +87,7 @@ DEEP_LINKS: dict[str, tuple[str, str]] = {
     "roles": ("/settings", "Request another role (Account settings)"),
     "reports": ("/reports", "Reports"),
     "secondary_market": ("/secondary-market", "Secondary market"),
+    "sell_units": ("/secondary-market?tab=sell", "Sell your units"),
     "liquidity_market": ("/liquidity-market", "Liquidity provider market"),
     "exit": ("/exit-mechanisms", "How to exit an investment"),
     "notifications": ("/notifications", "Your notifications"),

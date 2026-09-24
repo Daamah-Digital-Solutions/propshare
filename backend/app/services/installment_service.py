@@ -87,6 +87,30 @@ async def _holding(session: AsyncSession, user_id: uuid.UUID, property_id: uuid.
     return int(total or 0)
 
 
+# --- schedule math (plans and quotes share it) ------------------------------ #
+def schedule_bases(principal: decimal.Decimal, duration_months: int) -> list[decimal.Decimal]:
+    """Base principal of every payment: the down payment (seq 0) + ``duration_months - 1``
+    monthly installments, the last absorbing the rounding so the parts sum EXACTLY to the
+    principal. The single source of the split: plans and quotes both use it."""
+    n_installments = duration_months - 1
+    down_base = _q(principal * decimal.Decimal(_DOWN_PCT[duration_months]) / _HUNDRED)
+    per_installment = (
+        _q((principal - down_base) / n_installments) if n_installments else decimal.Decimal("0")
+    )
+    bases: list[decimal.Decimal] = [down_base]
+    for i in range(1, duration_months):
+        if i == duration_months - 1:  # last installment absorbs the rounding remainder
+            bases.append(principal - sum(bases))
+        else:
+            bases.append(per_installment)
+    return bases
+
+
+def fee_for(base: decimal.Decimal, fee_rate: decimal.Decimal) -> decimal.Decimal:
+    """The installment fee on one payment's base principal."""
+    return _q(base * fee_rate / _HUNDRED)
+
+
 # --- serialization ---------------------------------------------------------- #
 def serialize_payment(p: InstallmentPayment) -> dict:
     return {
@@ -208,19 +232,7 @@ async def create_plan(
     fee_rate = await settings_service.get_installment_fee_pct(session)
     mgmt_rate = await settings_service.get_management_fee_pct(session)
     principal = _q(prop.unit_price * units_total)
-
-    # Base principal split: down payment + (duration-1) monthly installments (last absorbs
-    # rounding so the parts sum EXACTLY to principal).
-    n_installments = duration_months - 1
-    down_base = _q(principal * decimal.Decimal(down_pct) / _HUNDRED)
-    remaining = principal - down_base
-    per_installment = _q(remaining / n_installments) if n_installments else decimal.Decimal("0")
-    bases: list[decimal.Decimal] = [down_base]
-    for i in range(1, duration_months):
-        if i == duration_months - 1:  # last installment absorbs the rounding remainder
-            bases.append(principal - sum(bases))
-        else:
-            bases.append(per_installment)
+    bases = schedule_bases(principal, duration_months)
 
     # Vest units ∝ each payment's base principal (Hamilton — sums EXACTLY to units_total).
     weights: list[tuple[Hashable, int]] = [(str(i), int(b * 100)) for i, b in enumerate(bases)]
@@ -249,7 +261,7 @@ async def create_plan(
     today = _utcnow().date()
     down_payment: InstallmentPayment | None = None
     for seq, base in enumerate(bases):
-        fee_amount = _q(base * fee_rate / _HUNDRED)
+        fee_amount = fee_for(base, fee_rate)
         kind = (
             "downpayment"
             if seq == 0

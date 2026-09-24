@@ -41,7 +41,7 @@ _KYC_NOTES = {
 }
 
 
-def _kyc_note(status: str) -> str | None:
+def kyc_note(status: str) -> str | None:
     """The wallet endpoints need an approved verification (KycVerifiedDep)."""
     if status == "verified":
         return None
@@ -115,7 +115,7 @@ async def _prepare_deposit(session, ctx: AgentContext, args) -> dict:
             f"{DEPOSIT_LABELS[method]} deposits are not available yet"
             + (f"; you can use {others} now." if others else ".")
         )
-    if kyc := _kyc_note(ctx.kyc_status):
+    if kyc := kyc_note(ctx.kyc_status):
         notes.append(kyc)
     return {
         "amount": f"{_amount(a.amount):.2f}",
@@ -222,7 +222,7 @@ async def _prepare_withdrawal(session, ctx: AgentContext, args) -> dict:
     wallet = await wallet_service.get_wallet(session, ctx.user_id)
     if amount > wallet.balance:
         blocking.append(f"That is more than your available balance of {wallet.balance:.2f}.")
-    if kyc := _kyc_note(ctx.kyc_status):
+    if kyc := kyc_note(ctx.kyc_status):
         blocking.append(kyc)
     manual = await withdrawal_service.is_manual_for(session, method)
 

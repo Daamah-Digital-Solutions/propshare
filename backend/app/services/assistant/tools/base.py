@@ -98,7 +98,13 @@ def to_strict_schema(model: type[BaseModel]) -> dict[str, Any]:
         if "$ref" in node:
             ref = node["$ref"].split("/")[-1]
             return walk(defs[ref])
-        node = {k: walk(v) for k, v in node.items() if k not in ("default", "title")}
+        # "properties" maps field names to schemas; the map itself is not a schema (a field
+        # may even be called "properties")
+        node = {
+            k: {name: walk(sub) for name, sub in v.items()} if k == "properties" else walk(v)
+            for k, v in node.items()
+            if k not in ("default", "title")
+        }
         if node.get("type") == "object" or "properties" in node:
             props = node.get("properties", {})
             required = set(node.get("required", []))

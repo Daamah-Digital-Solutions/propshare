@@ -5,6 +5,7 @@
  * "View schedule" toggle, and shows an honest empty state when there are none.
  */
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { InstallmentSchedule } from "./InstallmentSchedule";
@@ -22,12 +23,29 @@ vi.mock("@/lib/api", async () => {
       pay: (...a: unknown[]) => payMock(...a),
       downloadSchedule: vi.fn(),
     },
+    walletApi: {
+      ...actual.walletApi,
+      getMe: async () => ({ balance: "500.00", pending_balance: "0.00", currency: "USD" }),
+    },
   };
 });
 
-function wrap(node: React.ReactNode) {
+function Url() {
+  const l = useLocation();
+  return <div data-testid="url">{l.pathname + l.search}</div>;
+}
+
+// the schedule reads a payment the assistant prepared (?pay=<id>), so it needs a router
+function wrap(node: React.ReactNode, url = "/dashboard?tab=installments") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[url]}>
+        {node}
+        <Url />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 describe("InstallmentSchedule (real API)", () => {
@@ -44,55 +62,8 @@ describe("InstallmentSchedule (real API)", () => {
   });
 
   it("renders a real plan per-property, revealing the schedule on View", async () => {
-    listMock.mockResolvedValue([
-      {
-        id: "pl1",
-        property_id: "p1",
-        property_title: "Downtown Tower",
-        property_slug: "downtown-tower",
-        property_location: "Dubai, UAE",
-        property_city: "Dubai",
-        property_image: null,
-        property_spv: "Downtown Tower SPV",
-        units_total: 12,
-        unit_price: "100.00",
-        down_payment_pct: 25,
-        duration_months: 12,
-        fee_rate: "4.000",
-        vested_units: 3,
-        status: "active",
-        created_at: "2026-06-01T00:00:00Z",
-        completed_at: null,
-        payments: [
-          {
-            id: "pay0",
-            seq: 0,
-            kind: "downpayment",
-            due_date: "2026-06-01",
-            base_amount: "300.00",
-            fee_amount: "12.00",
-            total_amount: "312.00",
-            vest_units: 3,
-            status: "paid",
-            paid_at: "2026-06-01T00:00:00Z",
-          },
-          {
-            id: "pay1",
-            seq: 1,
-            kind: "installment",
-            due_date: "2026-07-01",
-            base_amount: "81.82",
-            fee_amount: "3.27",
-            total_amount: "85.09",
-            vest_units: 1,
-            status: "scheduled",
-            paid_at: null,
-          },
-        ],
-      },
-    ]);
+    listMock.mockResolvedValue([PLAN]);
     wrap(<InstallmentSchedule />);
-
     // The property under installment is shown, with a live summary (Task 6).
     expect(await screen.findByText("Downtown Tower")).toBeInTheDocument();
     expect(screen.getByText("Dubai, UAE")).toBeInTheDocument();
@@ -106,4 +77,73 @@ describe("InstallmentSchedule (real API)", () => {
     expect(screen.getByRole("button", { name: /Pay now/i })).toBeInTheDocument();
     await waitFor(() => expect(listMock).toHaveBeenCalled());
   });
+
+  it("opens the payment the assistant prepared and charges only on the user's Pay click", async () => {
+    listMock.mockResolvedValue([PLAN]);
+    payMock.mockResolvedValue(PLAN);
+    wrap(<InstallmentSchedule />, "/dashboard?tab=installments&pay=pay1");
+    expect(await screen.findByTestId("assistant-installment-banner")).toHaveTextContent(
+      /nothing is charged until you press pay/i,
+    );
+    expect(screen.getByText(/installment \(Month 1\)/)).toBeInTheDocument();
+    expect(payMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByTestId("url").textContent).toBe("/dashboard?tab=installments"));
+    // the button names the exact charge, cents included ($85.09, not a rounded $85)
+    fireEvent.click(await screen.findByRole("button", { name: /Pay \$85\.09 from wallet/i }));
+    await waitFor(() => expect(payMock).toHaveBeenCalledWith("pay1"));
+  });
+
+  it("never opens a payment that is not payable (the down payment, or unknown ids)", async () => {
+    listMock.mockResolvedValue([PLAN]);
+    wrap(<InstallmentSchedule />, "/dashboard?tab=installments&pay=pay0");
+    expect(await screen.findByText("Downtown Tower")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("url").textContent).toBe("/dashboard?tab=installments"));
+    expect(screen.queryByTestId("assistant-installment-banner")).toBeNull();
+  });
 });
+
+const PLAN = {
+  id: "pl1",
+  property_id: "p1",
+  property_title: "Downtown Tower",
+  property_slug: "downtown-tower",
+  property_location: "Dubai, UAE",
+  property_city: "Dubai",
+  property_image: null,
+  property_spv: "Downtown Tower SPV",
+  units_total: 12,
+  unit_price: "100.00",
+  down_payment_pct: 25,
+  duration_months: 12,
+  fee_rate: "4.000",
+  vested_units: 3,
+  status: "active",
+  created_at: "2026-06-01T00:00:00Z",
+  completed_at: null,
+  payments: [
+    {
+      id: "pay0",
+      seq: 0,
+      kind: "downpayment",
+      due_date: "2026-06-01",
+      base_amount: "300.00",
+      fee_amount: "12.00",
+      total_amount: "312.00",
+      vest_units: 3,
+      status: "paid",
+      paid_at: "2026-06-01T00:00:00Z",
+    },
+    {
+      id: "pay1",
+      seq: 1,
+      kind: "installment",
+      due_date: "2026-07-01",
+      base_amount: "81.82",
+      fee_amount: "3.27",
+      total_amount: "85.09",
+      vest_units: 1,
+      status: "scheduled",
+      paid_at: null,
+    },
+  ],
+};

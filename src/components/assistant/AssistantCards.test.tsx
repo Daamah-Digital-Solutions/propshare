@@ -6,7 +6,14 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { DepositCard, StatementCard, WithdrawalCard } from "@/lib/assistantApi";
+import type {
+  ComparisonCard,
+  DepositCard,
+  InstallmentCard,
+  SaleCard,
+  StatementCard,
+  WithdrawalCard,
+} from "@/lib/assistantApi";
 
 const { download, save } = vi.hoisted(() => ({ download: vi.fn(), save: vi.fn() }));
 vi.mock("@/lib/api", async (orig) => {
@@ -18,7 +25,9 @@ vi.mock("@/lib/certificates", () => ({ saveBlob: (...a: unknown[]) => save(...a)
 import { ApiError } from "@/lib/api";
 import { AssistantCardView } from "./AssistantCards";
 
-const show = (card: DepositCard | WithdrawalCard | StatementCard) =>
+const show = (
+  card: DepositCard | WithdrawalCard | StatementCard | SaleCard | InstallmentCard | ComparisonCard,
+) =>
   render(
     <MemoryRouter>
       <AssistantCardView card={card} />
@@ -63,6 +72,74 @@ const statement: StatementCard = {
   money_in: "12.50",
   money_out: "400.00",
   path: "/dashboard?tab=wallet",
+};
+
+const sale: SaleCard = {
+  kind: "sale",
+  property_title: "Marina Loft Income Suite",
+  units: 5,
+  price_per_unit: "110.00",
+  reference_price: "100.00",
+  vs_reference_pct: "10.00",
+  you_receive: "550.00",
+  resale_fee_pct: "1",
+  buyer_fee: "5.50",
+  buyer_pays: "555.50",
+  notes: [],
+  ready: true,
+  path: "/secondary-market?tab=sell&property=p1&units=5&price=110.00",
+};
+
+const installment: InstallmentCard = {
+  kind: "installment",
+  property_title: "Plan Tower",
+  label: "Month 1",
+  due_date: "2026-10-01",
+  status: "overdue",
+  base_amount: "81.82",
+  fee_amount: "3.27",
+  total_amount: "85.09",
+  vest_units: 1,
+  unpaid_after: 10,
+  wallet_balance: "500.00",
+  notes: [],
+  ready: true,
+  path: "/dashboard?tab=installments&pay=pay1",
+};
+
+const base = {
+  city: "Dubai",
+  country: "UAE",
+  model_label: "Ready property, rental income",
+  purchase: "direct",
+  unit_price: 100,
+  minimum_investment: 100,
+  expected_yield: 7.5,
+  total_return: 11,
+  funding_progress: 40,
+  available_units: 600,
+  expected_completion: null,
+  exit_options: ["Secondary market"],
+  exit_fee_pct: 2,
+  highest_risk: "medium" as const,
+  image: null,
+};
+const comparison: ComparisonCard = {
+  kind: "comparison",
+  platform_fee_pct: "2.5",
+  items: [
+    { ...base, title: "Eval Tower", path: "/property/eval-tower" },
+    {
+      ...base,
+      title: "Plan Tower",
+      purchase: "installment",
+      expected_completion: "2028-06-30",
+      exit_options: [],
+      exit_fee_pct: null,
+      highest_risk: null,
+      path: "/property/plan-tower",
+    },
+  ],
 };
 
 describe("prepared cards", () => {
@@ -117,6 +194,40 @@ describe("prepared cards", () => {
     fireEvent.click(screen.getByRole("button", { name: /download pdf/i }));
     await waitFor(() => expect(save).toHaveBeenCalledWith(blob, "capimax-statement-2026-07-01-to-2026-08-31.pdf"));
     expect(download).toHaveBeenCalledWith("2026-07-01", "2026-08-31", "pdf");
+  });
+
+  it("a sale says what the seller receives and that the buyer pays the fee", () => {
+    show(sale);
+    const card = screen.getByTestId("sale-card");
+    expect(card).toHaveTextContent("Your listing is ready");
+    expect(card).toHaveTextContent("Price per unit$110.00 (+10.00% vs $100.00)");
+    expect(card).toHaveTextContent("Buyer pays fee (1%)$5.50");
+    expect(card).toHaveTextContent("You receive$550.00");
+    expect(card).toHaveTextContent(/nothing is listed until you confirm/i);
+    expect(screen.getByRole("link", { name: /review & list/i })).toHaveAttribute("href", sale.path);
+  });
+
+  it("an installment shows due date, split and what is left; overdue is marked", () => {
+    show(installment);
+    const card = screen.getByTestId("installment-card");
+    expect(card).toHaveTextContent("Your installment is ready to pay");
+    expect(card).toHaveTextContent("Due1 Oct 2026 (overdue)");
+    expect(card).toHaveTextContent("Base + fee$81.82 + $3.27");
+    expect(card).toHaveTextContent("Vests1 unit");
+    expect(card).toHaveTextContent("Left after this10 installments");
+    expect(card).toHaveTextContent("To pay$85.09");
+    expect(screen.getByRole("link", { name: /review & pay/i })).toHaveAttribute("href", installment.path);
+  });
+
+  it("a comparison puts the properties side by side with links and the listed risk", () => {
+    show(comparison);
+    const card = screen.getByTestId("comparison-card");
+    expect(screen.getByRole("link", { name: "Eval Tower" })).toHaveAttribute("href", "/property/eval-tower");
+    expect(card).toHaveTextContent("Installment plan");
+    expect(card).toHaveTextContent("Projected yield7.5%");
+    expect(card).toHaveTextContent("Secondary market (2% fee)");
+    expect(card).toHaveTextContent(/highest listed riskmedium—/i);
+    expect(card).toHaveTextContent(/projections, not promises/i);
   });
 
   it("a failed download says why, in the card", async () => {

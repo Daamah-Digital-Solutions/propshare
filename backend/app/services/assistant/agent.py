@@ -309,18 +309,29 @@ def _needs_sign_in(text: str, tool_log: list[dict[str, Any]]) -> bool:
     return bool(_SIGN_IN_RE.search(text)) or any(not t.get("ok", True) for t in tool_log)
 
 
+def _property_path(slug: str | None) -> str | None:
+    """The property page link, or None for a slug the allow-list refuses (no card link, and
+    never a crashed turn)."""
+    if not slug:
+        return None
+    try:
+        return guard.make_link("property", slug)["path"]
+    except AppError:
+        return None
+
+
 def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -> dict | None:
     """Server-built cards from a successful tool result. The model never authors these."""
     if name == "prepare_deep_link":
         return {"kind": "link", "path": result["path"], "label": result["label"]}
-    if name == "get_property" and result.get("slug"):
+    if name == "get_property" and (path := _property_path(result.get("slug"))):
         return {
             "kind": "property",
             "slug": result["slug"],
             "title": result.get("title"),
             "city": result.get("city"),
             "image": result.get("image"),
-            "path": guard.make_link("property", result["slug"])["path"],
+            "path": path,
         }
     if name == "search_properties":
         items = [
@@ -332,7 +343,7 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
                 "unit_price": p.get("unit_price"),
                 "expected_yield": p.get("expected_yield"),
                 "image": p.get("image"),
-                "path": guard.make_link("property", p["slug"])["path"] if p.get("slug") else None,
+                "path": _property_path(p.get("slug")),
             }
             for p in result.get("items", [])
         ]
@@ -393,6 +404,49 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
                 + ("opening_balance", "closing_balance", "money_in", "money_out")
             },
             "path": guard.make_link("statement")["path"],
+        }
+    if name == "prepare_sale":
+        query = {"tab": "sell", "property": result["property_id"], "units": result["units"]}
+        query["price"] = result["price_per_unit"]
+        return {
+            "kind": "sale",
+            **{
+                k: result[k]
+                for k in ("property_title", "units", "price_per_unit", "reference_price")
+                + ("vs_reference_pct", "you_receive", "resale_fee_pct", "buyer_fee", "buyer_pays")
+            },
+            "notes": list(result.get("notes") or [])[:4],
+            "ready": bool(result.get("ready")),
+            "path": f"/secondary-market?{urlencode(query)}",
+        }
+    if name == "prepare_installment_payment":
+        return {
+            "kind": "installment",
+            **{
+                k: result[k]
+                for k in ("property_title", "label", "due_date", "status", "base_amount")
+                + ("fee_amount", "total_amount", "vest_units", "unpaid_after", "wallet_balance")
+            },
+            "notes": list(result.get("notes") or [])[:4],
+            "ready": bool(result.get("ready")),
+            "path": "/dashboard?" + urlencode({"tab": "installments", "pay": result["payment_id"]}),
+        }
+    if name == "compare_properties":
+        keep = ("title", "city", "country", "model_label", "purchase", "unit_price")
+        keep += ("minimum_investment", "expected_yield", "total_return", "funding_progress")
+        keep += ("available_units", "expected_completion", "exit_options", "exit_fee_pct")
+        keep += ("highest_risk", "image")
+        items = [
+            {
+                **{k: item.get(k) for k in keep},
+                "path": _property_path(item.get("slug")),
+            }
+            for item in result.get("items", [])
+        ]
+        return {
+            "kind": "comparison",
+            "platform_fee_pct": result["platform_fee_pct"],
+            "items": items,
         }
     if name == "propose_action":
         issued = next((t for t in tokens if t["proposal_id"] == result["proposal_id"]), None)

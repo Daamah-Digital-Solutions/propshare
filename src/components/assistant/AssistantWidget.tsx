@@ -34,7 +34,7 @@ import {
   type TurnDone,
 } from "@/lib/assistantApi";
 import { AssistantCardView, LinkButton } from "@/components/assistant/AssistantCards";
-import { greeting, pageStarters, toolLabel } from "@/components/assistant/assistantUi";
+import { coveredPaths, greeting, pageStarters, toolLabel } from "@/components/assistant/assistantUi";
 
 /**
  * Capimax assistant v2 — the in-platform agent (plan Phase 1 §6).
@@ -87,9 +87,6 @@ const STARTER_ICONS: Record<"visitor" | "member", LucideIcon[]> = {
   visitor: [HelpCircle, Building2, Receipt, TrendingUp],
   member: [Wallet, TrendingUp, FileText, Receipt],
 };
-
-/** Cards that already open the wallet: a plain "Open your wallet" button beside them is noise. */
-const WALLET_CARD_KINDS = new Set(["deposit", "withdrawal", "statement"]);
 
 /** A visitor sees the way in from the first message, not only after asking. */
 const VISITOR_WELCOME_CARDS: AssistantCard[] = [
@@ -642,25 +639,13 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
             {!showHero &&
               // the welcome only lives on the hero screen; once the chat starts it steps aside
               messages.filter((m) => m.id !== "welcome").map((m) => {
-                // a property already shown as a tile does not get a second, button-shaped link
-                const tiled = new Set(
-                  m.cards.flatMap((c) =>
-                    c.kind === "properties"
-                      ? c.items.map((p) => p.path)
-                      : c.kind === "property"
-                        ? [c.path]
-                        : c.kind === "checkout"
-                          ? [c.path.split("?")[0]]
-                          : WALLET_CARD_KINDS.has(c.kind)
-                            ? ["/dashboard?tab=wallet"]
-                            : [],
-                  ),
-                );
+                // a page a card already opens does not get a second, button-shaped link
+                const tiled = new Set(m.cards.flatMap(coveredPaths));
                 const links = m.cards.filter((c) => c.kind === "link" && !tiled.has(c.path));
-                // an order card is the focus of its reply: property previews beside it are noise
-                const hasOrder = m.cards.some((c) => c.kind === "checkout");
+                // an order or a comparison is the focus of its reply: property previews are noise
+                const focus = m.cards.some((c) => c.kind === "checkout" || c.kind === "comparison");
                 const others = m.cards.filter(
-                  (c) => c.kind !== "link" && !(hasOrder && (c.kind === "property" || c.kind === "properties")),
+                  (c) => c.kind !== "link" && !(focus && (c.kind === "property" || c.kind === "properties")),
                 );
                 const busyTool = m.streaming ? running(m) : undefined;
                 const finished = m.tools.filter((t) => t.status !== "running");

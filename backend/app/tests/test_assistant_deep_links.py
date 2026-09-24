@@ -25,6 +25,7 @@ APP_TSX = ROOT / "src" / "App.tsx"
 DASHBOARD_TSX = ROOT / "src" / "pages" / "InvestorDashboard.tsx"
 SETTINGS_TSX = ROOT / "src" / "pages" / "AccountSettings.tsx"
 AUTH_TSX = ROOT / "src" / "pages" / "Auth.tsx"
+MARKET_TSX = ROOT / "src" / "pages" / "SecondaryMarket.tsx"
 
 
 def _spa_routes() -> list[re.Pattern]:
@@ -42,6 +43,7 @@ TAB_SOURCES = {
     "/dashboard": (DASHBOARD_TSX, "validTabs"),
     "/settings": (SETTINGS_TSX, "SETTINGS_TABS"),
     "/auth": (AUTH_TSX, "AUTH_TABS"),
+    "/secondary-market": (MARKET_TSX, "MARKET_TABS"),
 }
 
 

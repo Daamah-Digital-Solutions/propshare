@@ -8,6 +8,7 @@ from app.services.assistant.tools import (  # noqa: F401
     actions,
     documents,
     platform,
+    portfolio,
     roles,
     staff,
     wallet,

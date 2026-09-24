@@ -143,6 +143,63 @@ export interface StatementCard {
   money_out: string;
   path: string;
 }
+/** A secondary-market sale prepared by the assistant: opens the Sell form filled in. */
+export interface SaleCard {
+  kind: "sale";
+  property_title: string;
+  units: number;
+  price_per_unit: string;
+  reference_price: string;
+  vs_reference_pct: string;
+  you_receive: string;
+  resale_fee_pct: string;
+  buyer_fee: string;
+  buyer_pays: string;
+  notes: string[];
+  ready: boolean;
+  path: string;
+}
+/** The next installment, prepared: opens that payment's confirmation in the plan. */
+export interface InstallmentCard {
+  kind: "installment";
+  property_title: string;
+  label: string;
+  due_date: string;
+  status: "scheduled" | "overdue" | string;
+  base_amount: string;
+  fee_amount: string;
+  total_amount: string;
+  vest_units: number;
+  unpaid_after: number;
+  wallet_balance: string;
+  notes: string[];
+  ready: boolean;
+  path: string;
+}
+/** Properties side by side (public figures + the listings' own risk and exit data). */
+export interface ComparisonCard {
+  kind: "comparison";
+  platform_fee_pct: string;
+  items: {
+    title: string;
+    city: string | null;
+    country: string | null;
+    model_label: string | null;
+    purchase: "direct" | "installment" | string;
+    unit_price: number | null;
+    minimum_investment: number | null;
+    expected_yield: number | null;
+    total_return: number | null;
+    funding_progress: number | null;
+    available_units: number | null;
+    expected_completion: string | null;
+    exit_options: string[];
+    exit_fee_pct: number | null;
+    highest_risk: "low" | "medium" | "high" | null;
+    image: string | null;
+    path: string | null;
+  }[];
+}
 export type AssistantCard =
   | LinkCard
   | PropertyCard
@@ -151,7 +208,10 @@ export type AssistantCard =
   | CheckoutCard
   | DepositCard
   | WithdrawalCard
-  | StatementCard;
+  | StatementCard
+  | SaleCard
+  | InstallmentCard
+  | ComparisonCard;
 
 export interface AssistantMessage {
   id: string;

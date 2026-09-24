@@ -6,6 +6,7 @@
  * "Confirm Purchase" button.
  */
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import SecondaryMarket from "./SecondaryMarket";
@@ -34,9 +35,12 @@ vi.mock("@/lib/api", () => ({
   holdingsApi: { mine: vi.fn() },
 }));
 
-// SellUnitsForm has its own queries; stub it so this test stays focused on Buy.
+// SellUnitsForm has its own queries (tested in SellUnitsForm.test); the stub shows what the
+// page hands it.
 vi.mock("@/components/marketplace/SellUnitsForm", () => ({
-  default: () => <div>sell form</div>,
+  default: ({ prefill }: { prefill?: unknown }) => (
+    <div data-testid="sell-form">{JSON.stringify(prefill ?? null)}</div>
+  ),
 }));
 
 const LISTING = {
@@ -53,11 +57,19 @@ const LISTING = {
   created_at: new Date().toISOString(),
 };
 
-function renderPage() {
+function Url() {
+  const l = useLocation();
+  return <div data-testid="url">{l.pathname + l.search}</div>;
+}
+
+function renderPage(url = "/secondary-market") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <SecondaryMarket />
+      <MemoryRouter initialEntries={[url]}>
+        <SecondaryMarket />
+        <Url />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -103,5 +115,17 @@ describe("SecondaryMarket buy click path", () => {
     expect(units).toBe(10);
     expect(typeof idempotencyKey).toBe("string");
     expect(idempotencyKey.length).toBeGreaterThan(0);
+  });
+
+  it("opens Sell with the sale the assistant prepared, then consumes the link", async () => {
+    renderPage("/secondary-market?tab=sell&property=prop-1&units=5&price=110.00");
+    const form = await screen.findByTestId("sell-form");
+    expect(JSON.parse(form.textContent ?? "null")).toEqual({ propertyId: "prop-1", units: 5, price: 110 });
+    await waitFor(() => expect(screen.getByTestId("url").textContent).toBe("/secondary-market?tab=sell"));
+  });
+
+  it("opens the tab named in the link", async () => {
+    renderPage("/secondary-market?tab=sell");
+    expect(JSON.parse((await screen.findByTestId("sell-form")).textContent ?? "")).toBeNull();
   });
 });

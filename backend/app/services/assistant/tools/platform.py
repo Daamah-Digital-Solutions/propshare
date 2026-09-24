@@ -364,6 +364,137 @@ register(
 
 
 # --------------------------------------------------------------------------- #
+# compare_properties
+# --------------------------------------------------------------------------- #
+_RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
+
+
+class CompareIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    properties: list[str] = Field(
+        description="2 to 4 published properties to compare: slug, id or name"
+    )
+
+
+class CompareItem(ToolOutput):
+    title: str
+    slug: str | None
+    city: str | None
+    country: str | None
+    model_label: str
+    property_type: str
+    status: str
+    purchase: str  # direct | installment
+    unit_price: float | None
+    minimum_investment: float | None
+    expected_yield: float | None
+    capital_appreciation: float | None
+    total_return: float | None
+    funding_progress: float | None
+    available_units: int
+    expected_completion: str | None
+    exit_options: list[str]
+    exit_fee_pct: float | None
+    risks: list[str]  # "label: level", from the listing's risk disclosures
+    highest_risk: str | None  # low | medium | high
+    developer_name: str | None
+    image: str | None
+    page_path: str
+
+
+class CompareOut(ToolOutput):
+    items: list[CompareItem]
+    not_found: list[str]
+    platform_fee_pct: str
+    note: str
+    as_of: str
+
+
+async def _find_public(session: AsyncSession, ref: str):
+    """A published listing by id or slug, else by name (title or location)."""
+    try:
+        return await property_service.get_public_detail(session, ref)
+    except AppError:
+        rows, _total = await property_service.list_public(session, search=ref, limit=1, offset=0)
+        return rows[0] if rows else None
+
+
+async def _compare_properties(session: AsyncSession, ctx: AgentContext, args) -> dict:
+    a: CompareIn = args
+    refs = list(dict.fromkeys(r.strip() for r in a.properties if r.strip()))[:4]
+    found, missing, seen = [], [], set()
+    for ref in refs:
+        prop = await _find_public(session, ref[:160])
+        if prop is None:
+            missing.append(ref[:80])
+        elif prop.id not in seen:
+            seen.add(prop.id)
+            found.append(prop)
+    if len(found) < 2:
+        raise AppError(
+            "NEED_TWO",
+            "Comparing needs at least two published properties"
+            + (f"; not found: {', '.join(missing)}." if missing else "."),
+            status_code=422,
+        )
+    names = await property_service._owner_names(session, found)
+    items = []
+    for prop in found:
+        card = _card(property_service.serialize_summary(prop, names))
+        content = prop.content if isinstance(prop.content, dict) else {}
+        risks = [r for r in content.get("risks") or [] if isinstance(r, dict) and r.get("label")]
+        levels = [str(r.get("level")) for r in risks if r.get("level") in _RISK_ORDER]
+        exits = [
+            str(m["name"])
+            for m in content.get("exitMechanisms") or []
+            if isinstance(m, dict) and m.get("name")
+        ]
+        if not exits and (content.get("terms") or {}).get("exitOptions"):
+            exits = [str(content["terms"]["exitOptions"])]
+        exit_fee = (content.get("fees") or {}).get("exit")
+        offplan = listing_service.profile_of(prop.model) in listing_service.OFFPLAN_PROFILES
+        items.append(
+            {
+                **{k: card[k] for k in CompareItem.model_fields if k in card},
+                "purchase": "installment" if offplan else "direct",
+                "expected_completion": _s(prop.expected_completion),
+                "exit_options": exits[:4],
+                "exit_fee_pct": float(exit_fee) if isinstance(exit_fee, int | float) else None,
+                "risks": [
+                    f"{r['label']}: {r['level']}" if r.get("level") else str(r["label"])
+                    for r in risks[:4]
+                ],
+                "highest_risk": max(levels, key=_RISK_ORDER.get) if levels else None,
+                "page_path": f"/property/{prop.slug or prop.id}",
+            }
+        )
+    rates = await settings_service.get_fee_rates(session)
+    return {
+        "items": items,
+        "not_found": missing,
+        "platform_fee_pct": f"{rates['platform_fee_pct'].normalize():f}",
+        "note": "Yields and returns are the listings' projections, not promises. The comparison "
+        "is information, not a recommendation.",
+        "as_of": _now(),
+    }
+
+
+register(
+    ToolSpec(
+        "compare_properties",
+        "Compare 2 to 4 published properties side by side (by slug, id or name): price, "
+        "minimum, projected yield and return, stage and how it is bought, funding, completion, "
+        "exit options and fee, and the listed risk disclosures. The user sees a comparison "
+        "table card.",
+        CompareIn,
+        CompareOut,
+        "informational",
+        _compare_properties,
+    )
+)
+
+
+# --------------------------------------------------------------------------- #
 # search_kb (approved articles only)
 # --------------------------------------------------------------------------- #
 class SearchKbIn(BaseModel):
@@ -623,12 +754,11 @@ async def _quote_investment(session: AsyncSession, ctx: AgentContext, args) -> d
         down_pct = table[months]
         fee_pct = await settings_service.get_installment_fee_pct(session)
         inst_fee = f"{fee_pct.normalize():f}"
-        down_base = (subtotal * down_pct / 100).quantize(_CENTS)
-        rest = subtotal - down_base
-        per = (rest / months).quantize(_CENTS) if months else decimal.Decimal(0)
-        rows_ = [("down_payment", down_base)] + [("installment", per)] * months
-        for i, (kind, base) in enumerate(rows_):
-            fee = (base * fee_pct / 100).quantize(_CENTS)
+        # the platform's own split: down payment + (months - 1) installments, as a plan is made
+        bases = installment_service.schedule_bases(subtotal, months)
+        for i, base in enumerate(bases):
+            kind = "down_payment" if i == 0 else "final" if i == len(bases) - 1 else "installment"
+            fee = installment_service.fee_for(base, fee_pct)
             schedule.append(
                 {
                     "seq": i,

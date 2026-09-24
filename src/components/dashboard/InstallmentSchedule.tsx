@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -64,8 +65,17 @@ const statusMeta: Record<
 };
 
 const num = (s: string) => Number(s) || 0;
-const fmtUSD = (n: number) =>
-  n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+// Whole dollars stay short ($2,688); an amount with cents shows them ($85.09), so what the
+// Pay button says is exactly what the wallet is charged.
+const fmtUSD = (n: number) => {
+  const digits = Math.round(n * 100) % 100 === 0 ? 0 : 2;
+  return n.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+};
 
 function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -100,13 +110,34 @@ function Stat({
   );
 }
 
-function PlanCard({ plan }: { plan: InstallmentPlan }) {
+function PlanCard({
+  plan,
+  prepareId = null,
+  onPrepared,
+}: {
+  plan: InstallmentPlan;
+  /** A payment the assistant prepared (?pay=<id>): open its confirmation. */
+  prepareId?: string | null;
+  onPrepared?: () => void;
+}) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
   // The installment the user tapped "Pay now" on — drives the confirmation dialog. The charge
   // is a REAL wallet debit, so we confirm the amount + source before it goes through.
   const [confirming, setConfirming] = useState<InstallmentPayment | null>(null);
+  const [prepared, setPrepared] = useState(false);
+  useEffect(() => {
+    const payment = prepareId ? plan.payments.find((p) => p.id === prepareId) : undefined;
+    if (!payment) return;
+    // only a payment the user could pay here themselves; paying stays their own click
+    if ((payment.status === "scheduled" || payment.status === "overdue") && payment.seq > 0) {
+      setConfirming(payment);
+      setPrepared(true);
+      setOpen(true);
+    }
+    onPrepared?.();
+  }, [prepareId, plan.payments, onPrepared]);
 
   // Wallet balance, so the confirmation can show what's available and flag a shortfall up front.
   const { data: wallet } = useQuery({ queryKey: ["wallet"], queryFn: walletApi.getMe });
@@ -347,7 +378,15 @@ function PlanCard({ plan }: { plan: InstallmentPlan }) {
       {/* Payment confirmation — makes the charge a deliberate, clearly wallet-funded step
           (not an instant "fake" click). Shows the amount, the wallet source + balance, what
           it vests, and blocks when the balance is short. */}
-      <AlertDialog open={!!confirming} onOpenChange={(o) => !o && setConfirming(null)}>
+      <AlertDialog
+        open={!!confirming}
+        onOpenChange={(o) => {
+          if (!o) {
+            setConfirming(null);
+            setPrepared(false);
+          }
+        }}
+      >
         <AlertDialogContent>
           {confirming &&
             (() => {
@@ -363,6 +402,15 @@ function PlanCard({ plan }: { plan: InstallmentPlan }) {
                     <AlertDialogTitle>Confirm installment payment</AlertDialogTitle>
                     <AlertDialogDescription asChild>
                       <div className="space-y-3 pt-1">
+                        {prepared && (
+                          <div
+                            data-testid="assistant-installment-banner"
+                            className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2"
+                          >
+                            <span className="font-semibold text-primary">Prepared by PropShare AI.</span>{" "}
+                            Nothing is charged until you press Pay.
+                          </div>
+                        )}
                         <p>
                           You're about to pay the {label} for{" "}
                           <span className="font-medium text-foreground">{plan.property_title}</span>.
@@ -432,6 +480,18 @@ function PlanCard({ plan }: { plan: InstallmentPlan }) {
 }
 
 export const InstallmentSchedule = () => {
+  // ?pay=<payment id>: a payment the assistant prepared. Remember it, consume the link.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [payId, setPayId] = useState<string | null>(null);
+  const clearPayId = useCallback(() => setPayId(null), []);
+  useEffect(() => {
+    const id = searchParams.get("pay");
+    if (!id) return;
+    setPayId(id);
+    const rest = new URLSearchParams(searchParams);
+    rest.delete("pay");
+    setSearchParams(rest, { replace: true });
+  }, [searchParams, setSearchParams]);
   const { data: plans, isLoading } = useQuery({
     queryKey: ["installments"],
     queryFn: installmentsApi.list,
@@ -466,7 +526,9 @@ export const InstallmentSchedule = () => {
           </CardContent>
         </Card>
       ) : (
-        list.map((plan) => <PlanCard key={plan.id} plan={plan} />)
+        list.map((plan) => (
+          <PlanCard key={plan.id} plan={plan} prepareId={payId} onPrepared={clearPayId} />
+        ))
       )}
     </div>
   );

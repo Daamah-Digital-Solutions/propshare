@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Building2, LogIn, UserPlus, Wallet } from "lucide-react";
-import { greeting, linkIcon, pageStarters, toolLabel } from "./assistantUi";
+import { coveredPaths, greeting, linkIcon, pageStarters, toolLabel } from "./assistantUi";
 
 describe("assistant UI helpers", () => {
   it("names tool work in plain language, never the raw tool name", () => {
@@ -37,6 +37,45 @@ describe("assistant UI helpers", () => {
     expect(pageStarters("/marketplace", "", true)).toBeNull();
     const all = [member, visitor, pageStarters("/dashboard", "?tab=wallet", true)];
     for (const s of all) expect(s?.ar).toHaveLength(s?.en.length ?? -1);
+  });
+
+  it("knows which page buttons a card already covers", () => {
+    expect(
+      coveredPaths({
+        kind: "sale",
+        property_title: "x",
+        units: 1,
+        price_per_unit: "1",
+        reference_price: "1",
+        vs_reference_pct: "0",
+        you_receive: "1",
+        resale_fee_pct: "1",
+        buyer_fee: "0",
+        buyer_pays: "1",
+        notes: [],
+        ready: true,
+        path: "/secondary-market?tab=sell&property=p&units=1&price=1",
+      }),
+    ).toEqual(["/secondary-market", "/secondary-market?tab=sell"]);
+    expect(coveredPaths({ kind: "link", path: "/fees", label: "Fees" })).toEqual([]);
+    expect(
+      coveredPaths({
+        kind: "comparison",
+        platform_fee_pct: "2.5",
+        items: [{ path: "/property/a" }, { path: null }] as never,
+      }),
+    ).toEqual(["/property/a"]);
+  });
+
+  it("offers installment and resale questions on those pages, and comparing on a property", () => {
+    expect(pageStarters("/dashboard", "?tab=installments", true)?.en).toContain("Pay my next installment now");
+    expect(pageStarters("/secondary-market", "", true)?.en).toContain("Help me sell some of my units");
+    expect(pageStarters("/secondary-market", "", false)).toBeNull();
+    for (const member of [true, false]) {
+      expect(pageStarters("/property/x", "", member)?.en).toContain("Compare it with similar properties");
+    }
+    expect(toolLabel("compare_properties", "running")).toBe("Comparing properties…");
+    expect(toolLabel("prepare_sale", "ok")).toBe("Prepared your listing");
   });
 
   it("greets by time of day and name", () => {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,11 +25,20 @@ import {
 import { toast } from "sonner";
 import { ApiError, holdingsApi, secondaryApi } from "@/lib/api";
 
-const SellUnitsForm = () => {
+/** A sale the assistant prepared (from /secondary-market?tab=sell&property=…&units=…&price=…). */
+export type SellPrefill = { propertyId: string; units?: number; price?: number };
+
+const SellUnitsForm = ({ prefill = null }: { prefill?: SellPrefill | null }) => {
   const queryClient = useQueryClient();
-  const [selectedProperty, setSelectedProperty] = useState("");
-  const [unitsToSell, setUnitsToSell] = useState("");
-  const [pricePerUnit, setPricePerUnit] = useState("");
+  const [selectedProperty, setSelectedProperty] = useState(prefill?.propertyId ?? "");
+  const [unitsToSell, setUnitsToSell] = useState(prefill?.units ? String(prefill.units) : "");
+  const [pricePerUnit, setPricePerUnit] = useState(prefill?.price ? String(prefill.price) : "");
+  const [prepared, setPrepared] = useState(Boolean(prefill)); // banner until the listing is made
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // arriving from the assistant: bring the filled-in form into view
+    if (prefill) cardRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [prefill]);
 
   const { data: holdings } = useQuery({
     queryKey: ["secondary", "holdings"],
@@ -66,6 +75,7 @@ const SellUnitsForm = () => {
       setSelectedProperty("");
       setUnitsToSell("");
       setPricePerUnit("");
+      setPrepared(false);
       queryClient.invalidateQueries({ queryKey: ["secondary"] });
     },
     onError: (err) => {
@@ -87,7 +97,7 @@ const SellUnitsForm = () => {
   };
 
   return (
-    <Card className="bg-card border-border">
+    <Card ref={cardRef} className="bg-card border-border scroll-mt-24">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Tag className="h-5 w-5 text-primary" />
@@ -95,6 +105,18 @@ const SellUnitsForm = () => {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
+        {prepared && (
+          <div
+            data-testid="assistant-sale-banner"
+            className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm"
+          >
+            <div className="font-semibold text-primary">Prepared by PropShare AI</div>
+            <div className="text-xs text-muted-foreground">
+              Check the units and the price, then press Create Listing yourself. Nothing is listed
+              before that.
+            </div>
+          </div>
+        )}
         {/* Form Fields */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">

@@ -3,6 +3,8 @@ import {
   BadgeCheck,
   BookOpen,
   Building2,
+  CalendarClock,
+  Clock,
   Compass,
   FileText,
   HelpCircle,
@@ -11,11 +13,14 @@ import {
   LogIn,
   type LucideIcon,
   Receipt,
+  Scale,
   ShieldCheck,
+  Tag,
   TrendingUp,
   UserPlus,
   Wallet,
 } from "lucide-react";
+import type { AssistantCard } from "@/lib/assistantApi";
 
 /**
  * Presentation helpers for the assistant widget: what a tool call is called while it runs
@@ -52,6 +57,9 @@ const TOOL_LABELS: Record<string, ToolLabel> = {
   prepare_deposit: { running: "Preparing your deposit", done: "Prepared your deposit" },
   prepare_withdrawal: { running: "Preparing your withdrawal", done: "Prepared your withdrawal" },
   prepare_statement: { running: "Preparing your statement", done: "Prepared your statement" },
+  prepare_sale: { running: "Preparing your listing", done: "Prepared your listing" },
+  prepare_installment_payment: { running: "Preparing your installment", done: "Prepared your installment" },
+  compare_properties: { running: "Comparing properties", done: "Compared properties" },
   prepare_deep_link: { running: "Finding the right page", done: "Found the right page" },
   propose_action: { running: "Preparing a confirmation", done: "Prepared a confirmation" },
   report_knowledge_gap: { running: "Passing this to the team", done: "Passed this to the team" },
@@ -92,6 +100,30 @@ export function linkIcon(path: string): LucideIcon {
   return Compass;
 }
 
+/** Page paths a card already opens: a plain page button beside it would say the same twice. */
+export function coveredPaths(card: AssistantCard): string[] {
+  switch (card.kind) {
+    case "properties":
+      return card.items.flatMap((p) => (p.path ? [p.path] : []));
+    case "comparison":
+      return card.items.flatMap((p) => (p.path ? [p.path] : []));
+    case "property":
+      return [card.path];
+    case "checkout":
+      return [card.path.split("?")[0]];
+    case "deposit":
+    case "withdrawal":
+    case "statement":
+      return ["/dashboard?tab=wallet"];
+    case "sale":
+      return ["/secondary-market", "/secondary-market?tab=sell"];
+    case "installment":
+      return ["/dashboard?tab=installments"];
+    default:
+      return [];
+  }
+}
+
 export type PageStarters = {
   title: Record<"en" | "ar", string>;
   en: string[];
@@ -110,24 +142,51 @@ export function pageStarters(pathname: string, search: string, member: boolean):
             "Summarize this property for me",
             "Prepare 10 units of this property",
             "What are the fees and exit options here?",
-            "How are returns paid on this one?",
+            "Compare it with similar properties",
           ],
-          ar: ["لخّصلي العقار ده", "جهّزلي 10 وحدات من العقار ده", "إيه الرسوم وطرق الخروج هنا؟", "العائد بيتصرف إزاي في العقار ده؟"],
-          icons: [Building2, Receipt, HelpCircle, TrendingUp],
+          ar: ["لخّصلي العقار ده", "جهّزلي 10 وحدات من العقار ده", "إيه الرسوم وطرق الخروج هنا؟", "قارنه بعقارات شبهه"],
+          icons: [Building2, Receipt, HelpCircle, Scale],
         }
       : {
           title: { en: "About this property", ar: "عن العقار ده" },
           en: [
             "Summarize this property for me",
             "What are the risks and exit options?",
-            "What fees apply to this one?",
+            "Compare it with similar properties",
             "How do I invest in this property?",
           ],
-          ar: ["لخّصلي العقار ده", "إيه المخاطر وطرق الخروج؟", "إيه الرسوم على العقار ده؟", "أستثمر في العقار ده إزاي؟"],
-          icons: [Building2, ShieldCheck, Receipt, TrendingUp],
+          ar: ["لخّصلي العقار ده", "إيه المخاطر وطرق الخروج؟", "قارنه بعقارات شبهه", "أستثمر في العقار ده إزاي؟"],
+          icons: [Building2, ShieldCheck, Scale, TrendingUp],
         };
   }
-  if (member && pathname === "/dashboard" && new URLSearchParams(search).get("tab") === "wallet") {
+  const tab = new URLSearchParams(search).get("tab");
+  if (member && pathname === "/dashboard" && tab === "installments") {
+    return {
+      title: { en: "For your installments", ar: "لأقساطك" },
+      en: [
+        "Pay my next installment now",
+        "When is my next installment due?",
+        "How much is left on my plan?",
+        "What happens if I miss a payment?",
+      ],
+      ar: ["ادفع القسط الجاي دلوقتي", "القسط الجاي معاده امتى؟", "فاضل كام على خطتي؟", "إيه اللي يحصل لو فوّت قسط؟"],
+      icons: [CalendarClock, Clock, Receipt, HelpCircle],
+    };
+  }
+  if (member && pathname === "/secondary-market") {
+    return {
+      title: { en: "For the secondary market", ar: "للسوق الثانوي" },
+      en: [
+        "Help me sell some of my units",
+        "Which of my units can I sell now?",
+        "How does the resale fee work?",
+        "How do I buy units from other investors?",
+      ],
+      ar: ["ساعدني أبيع جزء من وحداتي", "أقدر أبيع أنهي وحدات دلوقتي؟", "رسوم إعادة البيع بتتحسب إزاي؟", "أشتري وحدات من مستثمرين تانيين إزاي؟"],
+      icons: [Tag, Building2, Receipt, HelpCircle],
+    };
+  }
+  if (member && pathname === "/dashboard" && tab === "wallet") {
     return {
       title: { en: "For your wallet", ar: "لمحفظتك" },
       en: [
