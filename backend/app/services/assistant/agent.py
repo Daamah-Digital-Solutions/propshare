@@ -317,6 +317,8 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
             "kind": "property",
             "slug": result["slug"],
             "title": result.get("title"),
+            "city": result.get("city"),
+            "image": result.get("image"),
             "path": guard.make_link("property", result["slug"])["path"],
         }
     if name == "search_properties":
@@ -328,6 +330,7 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
                 "status": p.get("status"),
                 "unit_price": p.get("unit_price"),
                 "expected_yield": p.get("expected_yield"),
+                "image": p.get("image"),
                 "path": guard.make_link("property", p["slug"])["path"] if p.get("slug") else None,
             }
             for p in result.get("items", [])

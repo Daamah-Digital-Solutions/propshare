@@ -63,6 +63,8 @@ export interface PropertyCard {
   kind: "property";
   slug: string;
   title: string | null;
+  city?: string | null;
+  image?: string | null;
   path: string;
 }
 export interface PropertiesCard {
@@ -74,6 +76,7 @@ export interface PropertiesCard {
     status: string | null;
     unit_price: number | null;
     expected_yield: number | null;
+    image?: string | null;
     path: string | null;
   }[];
 }

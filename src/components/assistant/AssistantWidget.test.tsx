@@ -104,7 +104,7 @@ describe("AssistantWidget", () => {
     await waitFor(() => expect(screen.getByText(/\$5,000\.00/)).toBeInTheDocument());
     expect(api.createConversation).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem("capimax_assistant_conversation:u1")).toBe("conv-1");
-    expect(screen.getByText("get my wallet")).toBeInTheDocument();
+    expect(screen.getByText("Checked your wallet")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /open your wallet/i })).toHaveAttribute("href", "/wallet");
     expect(screen.getByTestId("confirm-card")).toBeInTheDocument();
     expect(screen.queryByText("tok-secret")).toBeNull(); // the token is never rendered
@@ -193,7 +193,59 @@ describe("AssistantWidget", () => {
     open();
     await screen.findByTestId("assistant-starters");
     expect(screen.queryByRole("button", { name: /switch language/i })).toBeNull();
-    expect(screen.getByText(/^Hi! I can explain/)).toBeInTheDocument();
+    expect(screen.getByText(/your Capimax concierge/)).toBeInTheDocument();
     expect(screen.getByTestId("assistant-starters")).toHaveTextContent(/what is my balance/i);
+  });
+  it("shows a one-time teaser next to the launcher, and never again once dismissed", async () => {
+    vi.useFakeTimers();
+    try {
+      api.status.mockResolvedValue(enabled);
+      const { unmount } = renderIt(enabled);
+      expect(screen.queryByText(/questions about investing/i)).toBeNull();
+      await vi.advanceTimersByTimeAsync(4100);
+      expect(screen.getByText(/questions about investing/i)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+      expect(screen.queryByText(/questions about investing/i)).toBeNull();
+      unmount();
+      renderIt(enabled);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(screen.queryByText(/questions about investing/i)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("greets a member by name on the welcome screen", async () => {
+    const prev = authState.user;
+    (authState as { user: unknown }).user = { id: "u1", full_name: "Sara Investor" };
+    try {
+      api.status.mockResolvedValue(enabled);
+      renderIt(enabled);
+      open();
+      const hero = await screen.findByTestId("assistant-hero");
+      expect(hero).toHaveTextContent(/, Sara/);
+    } finally {
+      (authState as { user: unknown }).user = prev;
+    }
+  });
+  it("does not repeat a property shown as a tile as a second button", async () => {
+    api.status.mockResolvedValue(enabled);
+    stream.events = [
+      { event: "started", data: { conversation_id: "conv-1" } },
+      { event: "delta", data: { text: "Two towers match." } },
+      { event: "card", data: { kind: "properties", items: [{ slug: "eval-tower", title: "Eval Tower", city: "Dubai", status: "active", unit_price: 100, expected_yield: 7, path: "/property/eval-tower" }] } },
+      { event: "card", data: { kind: "link", path: "/property/eval-tower", label: "Eval Tower" } },
+      { event: "card", data: { kind: "link", path: "/marketplace", label: "Marketplace" } },
+      { event: "done", data: { message_id: "m1", confidence: "normal", safe_mode: null } },
+    ];
+    renderIt(enabled);
+    open();
+    await screen.findByTestId("assistant-starters");
+    fireEvent.change(screen.getByPlaceholderText(/type your message/i), { target: { value: "towers?" } });
+    fireEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await screen.findByText(/two towers match/i);
+    expect(screen.getAllByRole("link", { name: /eval tower/i })).toHaveLength(1); // the tile only
+    expect(screen.getByRole("link", { name: /marketplace/i })).toHaveAttribute("href", "/marketplace");
+    expect(screen.queryByTestId("assistant-hero")).toBeNull();
   });
 });

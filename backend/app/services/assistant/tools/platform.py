@@ -208,6 +208,7 @@ class PropertyCard(ToolOutput):
     available_units: int
     developer_name: str | None
     developer_slug: str | None
+    image: str | None  # platform-relative file URL, for the chat card thumbnail
 
 
 class SearchPropertiesOut(ToolOutput):
@@ -239,6 +240,7 @@ def _card(row: dict) -> dict:
         "available_units": row["available_units"],
         "developer_name": row["developer_name"],
         "developer_slug": row.get("developer_slug"),
+        "image": row.get("image"),
     }
 
 
