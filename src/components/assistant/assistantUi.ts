@@ -92,5 +92,5 @@ export function linkIcon(path: string): LucideIcon {
 export function greeting(firstName: string | null, now = new Date()): string {
   const h = now.getHours();
   const part = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
-  return firstName ? `${part}, ${firstName}` : "Welcome to Capimax";
+  return firstName ? `${part}, ${firstName}` : "Welcome to Capimax PropShare";
 }

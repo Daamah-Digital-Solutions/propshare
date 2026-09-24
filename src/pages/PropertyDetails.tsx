@@ -184,7 +184,7 @@ const PropertyDetails = () => {
         data-testid="assistant-order-banner"
         className="mb-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-foreground"
       >
-        <div className="font-semibold text-primary">Prepared by Capimax AI</div>
+        <div className="font-semibold text-primary">Prepared by PropShare AI</div>
         <div className="mt-0.5 text-xs text-muted-foreground">
           {orderUnits} units are filled in below. Review the total, then confirm payment yourself —
           nothing is charged before that.

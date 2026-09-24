@@ -21,6 +21,6 @@ describe("assistant UI helpers", () => {
   it("greets by time of day and name", () => {
     expect(greeting("Sara", new Date(2026, 8, 24, 9))).toBe("Good morning, Sara");
     expect(greeting("Sara", new Date(2026, 8, 24, 15))).toBe("Good afternoon, Sara");
-    expect(greeting(null, new Date(2026, 8, 24, 21))).toBe("Welcome to Capimax");
+    expect(greeting(null, new Date(2026, 8, 24, 21))).toBe("Welcome to Capimax PropShare");
   });
 });

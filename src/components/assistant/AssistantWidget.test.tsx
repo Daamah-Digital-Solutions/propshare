@@ -55,7 +55,7 @@ function renderIt(status: AssistantStatus) {
     </MemoryRouter>,
   );
 }
-const open = () => fireEvent.click(screen.getByRole("button", { name: /open capimax assistant/i }));
+const open = () => fireEvent.click(screen.getByRole("button", { name: /open propshare assistant/i }));
 
 describe("AssistantWidget", () => {
   beforeEach(() => {
@@ -193,7 +193,7 @@ describe("AssistantWidget", () => {
     open();
     await screen.findByTestId("assistant-starters");
     expect(screen.queryByRole("button", { name: /switch language/i })).toBeNull();
-    expect(screen.getByText(/your Capimax concierge/)).toBeInTheDocument();
+    expect(screen.getByText(/your PropShare concierge/)).toBeInTheDocument();
     expect(screen.getByTestId("assistant-starters")).toHaveTextContent(/what is my balance/i);
   });
   it("shows a one-time teaser next to the launcher, and never again once dismissed", async () => {

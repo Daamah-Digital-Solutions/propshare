@@ -67,7 +67,7 @@ const uid = () =>
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const WELCOME_EN =
-  "I'm your Capimax concierge. I can explain how PropShare works, look up your own account and take you to the right page. What do you need?";
+  "I'm your PropShare concierge. I can explain how PropShare works, look up your own account and take you to the right page. What do you need?";
 const WELCOME_AR =
   "أهلًا! أقدر أشرح لك كيف تعمل Capimax PropShare، وأراجع حسابك، وأوصّلك للصفحة الصحيحة. كيف أساعدك؟";
 
@@ -464,7 +464,7 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
           )}
           <button
             type="button"
-            aria-label="Open Capimax assistant"
+            aria-label="Open PropShare assistant"
             onClick={openPanel}
             className="group relative flex h-14 items-center gap-2.5 rounded-full bg-[linear-gradient(135deg,hsl(152_69%_24%),hsl(158_62%_36%))] pl-2 pr-2 text-white shadow-[0_14px_34px_-10px_hsl(152_69%_20%/0.75)] ring-1 ring-white/10 transition hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-10px_hsl(152_69%_20%/0.85)] active:translate-y-0 sm:pr-5"
           >
@@ -475,7 +475,7 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                 <span className="relative inline-flex h-3 w-3 rounded-full border-2 border-[hsl(152_69%_26%)] bg-accent" />
               </span>
             </span>
-            <span className="hidden text-sm font-semibold tracking-tight sm:inline">Ask Capimax AI</span>
+            <span className="hidden text-sm font-semibold tracking-tight sm:inline">Ask PropShare AI</span>
           </button>
         </div>
       )}
@@ -483,7 +483,7 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
       {open && (
         <div
           role="dialog"
-          aria-label="Capimax assistant"
+          aria-label="PropShare assistant"
           dir={dir}
           className={cn(
             "fixed inset-0 z-[60] flex animate-in fade-in slide-in-from-bottom-4 flex-col overflow-hidden bg-background duration-300",
@@ -501,9 +501,9 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                 <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[hsl(154_66%_24%)] bg-emerald-300" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[15px] font-semibold leading-tight tracking-tight">Capimax AI Concierge</div>
+                <div className="text-[15px] font-semibold leading-tight tracking-tight">PropShare AI Concierge</div>
                 <div className="mt-0.5 text-[11px] text-white/75">
-                  {lang === "ar" ? "متصل · يرد خلال ثوانٍ" : "Online · Replies in seconds"}
+                  {lang === "ar" ? "Capimax PropShare · متصل" : "Capimax PropShare · Online"}
                 </div>
               </div>
               {!englishOnly && (
