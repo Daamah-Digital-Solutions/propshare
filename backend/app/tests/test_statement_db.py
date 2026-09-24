@@ -144,9 +144,7 @@ async def test_statement_arithmetic_and_scope(client, db, asession):
 
 
 @pytest.mark.asyncio
-async def test_statement_ends_on_the_real_balance_when_history_is_incomplete(
-    client, db, asession
-):
+async def test_statement_ends_on_the_real_balance_when_history_is_incomplete(client, db, asession):
     """A balance set by hand (demo data) is not in the ledger: the statement must still end on
     the balance the user sees, never on an impossible negative figure."""
     from app.services import statement_service
@@ -207,6 +205,45 @@ async def test_pdf_and_excel_downloads(client, db):
     assert summary.cell(row=summary.max_row, column=3).value == pytest.approx(407.5)
 
     assert db("SELECT count(*) FROM audit_log WHERE action='statement.exported'")[0][0] == 2
+
+
+@pytest.mark.asyncio
+async def test_statement_is_english_only(client, db, asession):
+    """Owner's decision (2026-09-24): the statement is in English. Text in another script (an
+    Arabic name, property title or admin note) is replaced by an English equivalent instead of
+    being printed as empty boxes; English text keeps what the fonts can draw."""
+    from pypdf import PdfReader
+
+    from app.services import statement_service as svc
+
+    tok, uid = await _user(client, db, "arabic@x.io")
+    db("UPDATE users SET full_name='سارة المستثمرة' WHERE id=:u", u=uid)
+    pid = _prop(db, "برج الخور")
+    db("UPDATE properties SET slug='creek-tower' WHERE id=:p", p=pid)
+    _own(db, uid, pid, 2, "2026-02-10T00:00:00Z")
+    _tx(db, uid, "2026-02-10T00:00:00Z", "deposit", "500.00", desc="Deposit ✓ via card")
+    _tx(db, uid, "2026-02-11T00:00:00Z", "withdrawal", "-50.00", desc="سحب — الحساب غير صحيح")
+    _tx(db, uid, "2026-02-12T00:00:00Z", "fee", "-1.00", desc="Fee ref ١٢٣")
+    _tx(db, uid, "2026-02-13T00:00:00Z", "return", "3.00")
+    _balance(db, uid, "452.00")
+
+    s = await svc.build_statement(asession, uid, dt.date(2026, 2, 1), dt.date(2026, 2, 28))
+    assert s.holder == "arabic@x.io"
+    assert [r.description for r in s.rows] == ["Deposit via card", "Withdrawal", "Fee", ""]
+    assert [(h.property_title, h.units) for h in s.holdings] == [("Creek Tower", 2)]
+    for text in (
+        s.holder,
+        *(r.description for r in s.rows),
+        *(h.property_title for h in s.holdings),
+    ):
+        text.encode("cp1252")  # everything is drawable by the PDF's standard fonts
+
+    r = await client.get(
+        "/api/v1/wallet/statement?start=2026-02-01&end=2026-02-28&format=pdf", headers=_h(tok)
+    )
+    text = "".join(page.extract_text() for page in PdfReader(io.BytesIO(r.content)).pages)
+    assert "arabic@x.io" in text and "Creek Tower" in text and "Deposit via card" in text
+    assert not re.search("[؀-ۿ]", text)
 
 
 @pytest.mark.asyncio

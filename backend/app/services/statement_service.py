@@ -14,6 +14,11 @@ ends on the real balance instead of printing an impossible negative one.
 
 Periods are whole UTC days, both ends inclusive. Holdings are the units the user owned at the
 end of the period (``ownership_ledger``).
+
+Statements are in English only (owner's decision, 2026-09-24). The PDF is set in the standard
+Latin fonts, so free text written in another script — an Arabic name, property title or
+admin note — is replaced by an English equivalent (the email, the slug, the movement's type)
+instead of being printed as empty boxes; see ``english``.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import decimal
+import unicodedata
 import uuid
 
 from sqlalchemy import func, select
@@ -92,6 +98,29 @@ class Statement:
     rows: list[StatementRow]
     totals: list[TypeTotal]
     holdings: list[Holding]
+
+
+def english(text: str | None) -> str | None:
+    """``text`` if the statement fonts can print it, else None (the caller falls back).
+
+    Symbols the fonts lack (an emoji, an arrow) are simply dropped; a lost letter or digit
+    (Arabic or any other script) means the text cannot be shown faithfully, so None."""
+    if not text:
+        return None
+    kept: list[str] = []
+    lost = False
+    for ch in unicodedata.normalize("NFKC", text):
+        try:
+            ch.encode("cp1252")  # WinAnsi: what the PDF's standard fonts can draw
+            kept.append(ch)
+        except UnicodeEncodeError:
+            lost = lost or ch.isalnum()
+    out = " ".join("".join(kept).split())
+    return None if lost or not out else out
+
+
+def _humanize(slug: str | None) -> str | None:
+    return english(slug.replace("-", " ").title()) if slug else None
 
 
 def validate_period(start: dt.date, end: dt.date, today: dt.date | None = None) -> None:
@@ -187,12 +216,13 @@ async def build_statement(
         running += amount
         kind = str(tx.type)
         label = TYPE_LABELS.get(kind, kind.replace("_", " ").capitalize())
+        note = (tx.description or "").strip()
         rows.append(
             StatementRow(
                 at=tx.created_at,
                 type=kind,
                 type_label=label,
-                description=(tx.description or "").strip(),
+                description=(english(note) or label) if note else "",
                 status=STATUS_LABELS.get(tx.status, tx.status.capitalize()),
                 amount=amount,
                 balance=running,
@@ -209,18 +239,27 @@ async def build_statement(
 
     held = (
         await session.execute(
-            select(Property.title, func.sum(OwnershipLedger.units))
+            select(Property.id, Property.title, Property.slug, func.sum(OwnershipLedger.units))
             .join(Property, Property.id == OwnershipLedger.property_id)
             .where(OwnershipLedger.user_id == user_id, OwnershipLedger.created_at < hi)
-            .group_by(Property.title)
+            .group_by(Property.id, Property.title, Property.slug)
             .having(func.sum(OwnershipLedger.units) > 0)
-            .order_by(Property.title)
         )
     ).all()
+    holdings = sorted(
+        (
+            Holding(
+                english(title) or _humanize(slug) or f"Property {str(pid)[:8].upper()}",
+                int(units),
+            )
+            for pid, title, slug, units in held
+        ),
+        key=lambda h: h.property_title.lower(),
+    )
 
     return Statement(
         ref=statement_ref(user_id, start, end),
-        holder=(user.full_name or user.email).strip(),
+        holder=english(user.full_name) or user.email,
         email=user.email,
         currency=get_settings().wallet_currency,
         start=start,
@@ -232,7 +271,7 @@ async def build_statement(
         money_out=money_out,
         rows=rows,
         totals=[TypeTotal(k, v[0], v[1]) for k, v in sorted(by_type.items())],
-        holdings=[Holding(title, int(units)) for title, units in held],
+        holdings=holdings,
     )
 
 
