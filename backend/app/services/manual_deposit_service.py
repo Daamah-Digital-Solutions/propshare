@@ -40,9 +40,7 @@ async def create_bank_claim(
 ) -> Payment:
     if idempotency_key:
         existing = (
-            await session.execute(
-                select(Payment).where(Payment.idempotency_key == idempotency_key)
-            )
+            await session.execute(select(Payment).where(Payment.idempotency_key == idempotency_key))
         ).scalar_one_or_none()
         if existing is not None:
             return existing
@@ -85,6 +83,13 @@ async def create_bank_claim(
     return payment
 
 
+def claim_reference(payment: Payment) -> str | None:
+    """The transfer reference the member typed on their claim (kept in ``raw_payload``; a bank
+    claim has no provider payment id)."""
+    payload = payment.raw_payload if isinstance(payment.raw_payload, dict) else {}
+    return payload.get("reference") or payment.provider_payment_id
+
+
 async def list_pending_for_admin(session: AsyncSession) -> list[tuple[Payment, str | None]]:
     """Pending manual bank-transfer claims (newest first), each with the claimant's email."""
     res = await session.execute(
@@ -101,9 +106,7 @@ async def admin_confirm(
 ) -> Payment:
     """Confirm a claim: credit the wallet (idempotent — guarded on status under FOR UPDATE)."""
     payment = (
-        await session.execute(
-            select(Payment).where(Payment.id == payment_id).with_for_update()
-        )
+        await session.execute(select(Payment).where(Payment.id == payment_id).with_for_update())
     ).scalar_one_or_none()
     if payment is None or payment.provider != _PROVIDER:
         raise AppError("NOT_FOUND", "Deposit claim not found.", status_code=404)
@@ -150,9 +153,7 @@ async def admin_reject(
     session: AsyncSession, *, payment_id: uuid.UUID, actor_id: uuid.UUID, reason: str | None
 ) -> Payment:
     payment = (
-        await session.execute(
-            select(Payment).where(Payment.id == payment_id).with_for_update()
-        )
+        await session.execute(select(Payment).where(Payment.id == payment_id).with_for_update())
     ).scalar_one_or_none()
     if payment is None or payment.provider != _PROVIDER:
         raise AppError("NOT_FOUND", "Deposit claim not found.", status_code=404)

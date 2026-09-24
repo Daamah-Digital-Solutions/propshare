@@ -141,7 +141,8 @@ async def _candidates_kyc_in_review(session: AsyncSession, now: dt.datetime) -> 
         select(User)
         .join(KycVerification, KycVerification.user_id == User.id)
         .where(
-            KycVerification.status == "pending",
+            # a started verification is "submitted" (kyc_service); "pending" = not started
+            KycVerification.status == "submitted",
             KycVerification.submitted_at.is_not(None),
             KycVerification.submitted_at <= _cutoff(n.after_days, now),
             ~_already_nudged(n.kind, n.cooldown_days, now),

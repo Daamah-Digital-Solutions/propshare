@@ -68,12 +68,13 @@ async def _get_ops_overview(session: AsyncSession, ctx: AgentContext, args) -> d
 
     today = dt.datetime.now(dt.UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     deposits = await manual_deposit_service.list_pending_for_admin(session)
-    withdrawals = await withdrawal_service.list_for_admin(session, status="pending")
+    withdrawals = await withdrawal_service.list_awaiting_payout(session)
     return {
+        # verification started and waiting for the provider's (or a person's) decision
         "kyc_pending": await count(
             select(func.count())
             .select_from(KycVerification)
-            .where(KycVerification.status == "pending", KycVerification.submitted_at.is_not(None))
+            .where(KycVerification.status == "submitted")
         ),
         "kyc_manual_review": await count(
             select(func.count())
@@ -164,14 +165,14 @@ async def _list_queue(session: AsyncSession, ctx: AgentContext, args) -> dict:
                 "amount": str(p.amount),
                 "method": p.payment_method or "bank_transfer",
                 "status": str(p.status),
-                "reference": p.provider_payment_id,
+                "reference": manual_deposit_service.claim_reference(p),
                 "age_hours": _age_hours(p.created_at),
                 "created_at": _iso(p.created_at),
             }
             for p, email in rows
         ]
     elif a.queue == "withdrawals":
-        rows = await withdrawal_service.list_for_admin(session, status="pending")
+        rows = await withdrawal_service.list_awaiting_payout(session)
         items = [
             {
                 "id": str(w.id),
@@ -192,10 +193,7 @@ async def _list_queue(session: AsyncSession, ctx: AgentContext, args) -> dict:
                 .join(User, User.id == KycVerification.user_id)
                 .where(
                     (KycVerification.manual_review_required.is_(True))
-                    | (
-                        (KycVerification.status == "pending")
-                        & KycVerification.submitted_at.is_not(None)
-                    )
+                    | (KycVerification.status == "submitted")
                 )
                 .order_by(KycVerification.submitted_at.asc().nulls_last())
             )
@@ -205,7 +203,7 @@ async def _list_queue(session: AsyncSession, ctx: AgentContext, args) -> dict:
                 "id": str(k.id),
                 "user_masked": mask_email(email),
                 "amount": None,
-                "method": "manual_review" if k.manual_review_required else "pending",
+                "method": "manual_review" if k.manual_review_required else "in_review",
                 "status": str(k.status),
                 "reference": None,
                 "age_hours": _age_hours(k.submitted_at),

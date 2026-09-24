@@ -42,7 +42,9 @@ async def test_each_kind_fires_once_respects_cooldown_and_stops_when_resolved(cl
     unverified = await _user(client, db, "unv@n.io", verified_email=False, days_old=4)
     fresh = await _user(client, db, "fresh@n.io", verified_email=False, days_old=0)  # too new
     no_kyc = await _user(client, db, "nokyc@n.io", days_old=5)
-    in_review = await _user(client, db, "review@n.io", days_old=20)
+    # as kyc_service writes it: starting verification sets status 'submitted' + submitted_at
+    # (the nudge used to look for 'pending' + submitted_at, which never happens)
+    in_review = await _user(client, db, "review@n.io", days_old=20, kyc="submitted")
     db(
         "UPDATE kyc_verifications SET submitted_at=now() - interval '6 days' WHERE user_id=:u",
         u=in_review,
@@ -94,10 +96,14 @@ async def test_each_kind_fires_once_respects_cooldown_and_stops_when_resolved(cl
     db("UPDATE notifications SET created_at=now() - interval '10 days' WHERE type LIKE 'nudge:%'")
     db("UPDATE users SET email_verified=true WHERE id=:u", u=unverified)  # resolved
     db("UPDATE kyc_verifications SET status='verified' WHERE user_id=:u", u=in_review)  # resolved
-    db(
-        "INSERT INTO investments (user_id, property_id, units, amount, status) SELECT :u, id, 1, 100, 'confirmed' FROM properties LIMIT 1",
-        u=idle,
-    ) if db("SELECT count(*) FROM properties")[0][0] else None
+    (
+        db(
+            "INSERT INTO investments (user_id, property_id, units, amount, status) SELECT :u, id, 1, 100, 'confirmed' FROM properties LIMIT 1",
+            u=idle,
+        )
+        if db("SELECT count(*) FROM properties")[0][0]
+        else None
+    )
     third = await nudge_service.run_all(asession)
     await asession.commit()
     assert third["email_unverified"] == 0 and third["kyc_in_review"] == 0

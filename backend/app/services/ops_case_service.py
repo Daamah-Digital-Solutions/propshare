@@ -125,6 +125,7 @@ async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dic
         if key in open_keys:
             continue
         age = round((now - payment.created_at).total_seconds() / 3600)
+        ref = manual_deposit_service.claim_reference(payment) or "none given"
         new.append(
             await _open_case(
                 session,
@@ -134,16 +135,16 @@ async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dic
                 subject=f"Bank transfer claim unconfirmed for {age}h",
                 summary=(
                     f"A bank-transfer deposit claim of {payment.amount} {payment.currency} "
-                    f"(reference {payment.provider_payment_id or 'n/a'}) has been pending for "
-                    f"{age} hours. Confirm or reject it under Bank Deposit Claims."
+                    f"(reference {ref}) has been pending for {age} hours. Confirm or reject it "
+                    "under Bank Deposit Claims."
                 ),
                 context={"payment_id": str(payment.id), "age_hours": age},
             )
         )
         open_keys.add(key)
 
-    # 3) withdrawals waiting for a payout
-    for w, _email in await withdrawal_service.list_for_admin(session, status="pending"):
+    # 3) withdrawals waiting for a payout (in review, or approved but never sent)
+    for w, _email in await withdrawal_service.list_awaiting_payout(session):
         if w.created_at > cutoff:
             continue
         key = f"withdrawal:{w.id}"

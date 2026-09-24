@@ -55,7 +55,7 @@ async def test_drift_and_stale_rows_open_cases_once(client, db, asession, monkey
     # writes them (provider = manual bank transfer, status pending)
     provider = manual_deposit_service._PROVIDER
     db(
-        "INSERT INTO payments (user_id, provider, amount, currency, status, purpose, provider_payment_id, created_at) VALUES (:u,:pr,250,'USD','pending','deposit','REF-OLD', now() - interval '49 hours')",
+        "INSERT INTO payments (user_id, provider, amount, currency, status, purpose, raw_payload, created_at) VALUES (:u,:pr,250,'USD','pending','deposit',CAST('{\"reference\": \"REF-OLD\"}' AS jsonb), now() - interval '49 hours')",
         u=uid,
         pr=provider,
     )
@@ -64,11 +64,13 @@ async def test_drift_and_stale_rows_open_cases_once(client, db, asession, monkey
         u=uid,
         pr=provider,
     )
-    # a stale withdrawal (50h) in the admin queue
-    db(
-        "INSERT INTO withdrawals (user_id, amount, method, provider, destination, status, created_at) VALUES (:u,100,'bank','manual','{}'::jsonb,'pending', now() - interval '50 hours')",
-        u=uid,
-    )
+    # stale withdrawals (50h): one in review, one approved but never sent, one already paid
+    for status in ("pending_review", "approved", "completed"):
+        db(
+            "INSERT INTO withdrawals (user_id, amount, method, provider, destination, status, created_at) VALUES (:u,100,'bank','manual','{}'::jsonb,:s, now() - interval '50 hours')",
+            u=uid,
+            s=status,
+        )
     _ = h
     # ledger drift: a wallet whose balance disagrees with its ledger is one of the checks;
     # the simplest guaranteed drift is a negative ownership row
@@ -87,10 +89,14 @@ async def test_drift_and_stale_rows_open_cases_once(client, db, asession, monkey
     await asession.commit()
     cases = _cases(db)
     keys = [c[4] for c in cases]
-    assert out["opened"] == len(cases) >= 3 and out["drift_checks_failing"] >= 1
+    assert out["opened"] == len(cases) >= 4 and out["drift_checks_failing"] >= 1
     assert any(k.startswith("reconciliation:") for k in keys)
     assert sum(1 for k in keys if k.startswith("bank_claim:")) == 1  # only the stale claim
-    assert sum(1 for k in keys if k.startswith("withdrawal:")) == 1
+    # regression: the sweep looked for status 'pending', which withdrawals never have, so
+    # unpaid withdrawals never raised a case
+    assert sum(1 for k in keys if k.startswith("withdrawal:")) == 2  # not the paid one
+    claim = db("SELECT summary FROM support_tickets WHERE context->>'case_key' LIKE 'bank_claim:%'")
+    assert "reference REF-OLD" in claim[0][0]  # the member's own reference, not 'n/a'
     assert {c[1] for c in cases} >= {"reconciliation", "payments", "withdrawals"}
     assert (
         db("SELECT count(*) FROM notifications WHERE user_id=:a AND type='ops_case'", a=admin)[0][0]
@@ -105,7 +111,7 @@ async def test_drift_and_stale_rows_open_cases_once(client, db, asession, monkey
     assert again["opened"] == 0 and len(_cases(db)) == len(cases)
     # closing the withdrawal case re-arms it (the withdrawal is still unpaid)
     wid = db(
-        "SELECT id FROM support_tickets WHERE kind='ops_case' AND context->>'case_key' LIKE 'withdrawal:%'"
+        "SELECT id FROM support_tickets WHERE kind='ops_case' AND context->>'case_key' LIKE 'withdrawal:%' LIMIT 1"
     )[0][0]
     await ticket_service.set_status(asession, actor_id=admin, ticket_id=wid, status="closed")
     await asession.commit()

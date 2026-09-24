@@ -370,3 +370,35 @@ async def test_staff_tools_are_admin_only_read_only_and_masked(client, db, asess
     assert db("SELECT status FROM kyc_verifications WHERE user_id=:u", u=member)[0][0] == "pending"
     assert db("SELECT count(*) FROM audit_log WHERE action LIKE 'assistant.action%'")[0][0] == 0
     _ = r
+
+
+@pytest.mark.asyncio
+async def test_staff_counts_use_the_statuses_the_platform_writes(client, db, asession, keys):
+    """Regression (review 2026-09-24): the copilot counted withdrawals in status 'pending' and
+    verifications 'pending' with a submission date. Neither exists: a withdrawal waits in
+    'pending_review' (or 'approved' before it is sent) and a started verification is
+    'submitted'. Both counts were always 0."""
+    admin, _ = await _user(client, db, "admin2@b.io", roles=("admin",), active="admin")
+    member, _ = await _user(client, db, "member2@b.io", kyc="submitted")
+    for status in ("pending_review", "approved", "completed"):
+        db(
+            "INSERT INTO withdrawals (user_id, amount, method, provider, destination, status) "
+            "VALUES (:u, 100, 'bank', 'manual', '{}'::jsonb, :s)",
+            u=member,
+            s=status,
+        )
+    db(
+        "INSERT INTO payments (user_id, provider, amount, currency, status, purpose, raw_payload) "
+        "VALUES (:u, 'manual_bank', 250, 'USD', 'pending', 'deposit', "
+        """CAST('{"reference": "MY-TRANSFER-7"}' AS jsonb))""",
+        u=member,
+    )
+    actx = await _ctx(asession, admin)
+    ov = await _run(asession, actx, "get_ops_overview")
+    assert (ov["withdrawals_awaiting"], ov["kyc_pending"]) == (2, 1)
+    wq = await _run(asession, actx, "list_ops_queue", '{"queue":"withdrawals","limit":5}')
+    assert sorted(i["status"] for i in wq["items"]) == ["approved", "pending_review"]
+    kq = await _run(asession, actx, "list_ops_queue", '{"queue":"kyc","limit":5}')
+    assert [(i["status"], i["method"]) for i in kq["items"]] == [("submitted", "in_review")]
+    dq = await _run(asession, actx, "list_ops_queue", '{"queue":"bank_deposits","limit":5}')
+    assert dq["items"][0]["reference"] == "MY-TRANSFER-7"

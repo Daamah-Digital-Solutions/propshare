@@ -317,9 +317,7 @@ async def _resolve_manual_destination(
     fallback, an inline address). Raise NO_PAYOUT_METHOD if the user has nothing saved."""
     if method == "bank":
         if payout_method_id is not None:
-            acct = await payout_methods_service.get_bank_account(
-                session, user_id, payout_method_id
-            )
+            acct = await payout_methods_service.get_bank_account(session, user_id, payout_method_id)
         else:
             accts = await payout_methods_service.list_bank_accounts(session, user_id)
             acct = next((a for a in accts if a.is_default), accts[0] if accts else None)
@@ -509,9 +507,10 @@ async def execute_now(withdrawal_id: uuid.UUID) -> None:
         async with session_scope() as session:
             await execute_approved(session, limit=1, withdrawal_id=withdrawal_id)
     except Exception:  # noqa: BLE001 - background task: log-and-leave-for-the-cron
-        logger.exception("instant payout submit failed; cron will retry", extra={
-            "withdrawal_id": str(withdrawal_id)
-        })
+        logger.exception(
+            "instant payout submit failed; cron will retry",
+            extra={"withdrawal_id": str(withdrawal_id)},
+        )
 
 
 async def payout_config(session: AsyncSession) -> dict:
@@ -639,14 +638,28 @@ async def admin_mark_paid(
     return wd
 
 
+# Requested, not yet paid out, funds on hold: waiting for a person (review / mark paid) or for
+# the automatic submitter. ``processing`` is with the provider and has its own reconcile.
+AWAITING_PAYOUT = ("pending_review", "approved")
+
+
+async def list_awaiting_payout(session: AsyncSession) -> list[tuple[Withdrawal, str | None]]:
+    """Withdrawals nobody has paid yet (oldest first), each with the requester's email."""
+    res = await session.execute(
+        select(Withdrawal, User.email)
+        .join(User, User.id == Withdrawal.user_id, isouter=True)
+        .where(Withdrawal.status.in_(AWAITING_PAYOUT))
+        .order_by(Withdrawal.created_at)
+    )
+    return [(row[0], row[1]) for row in res.all()]
+
+
 async def list_for_admin(
     session: AsyncSession, *, status: str | None = None
 ) -> list[tuple[Withdrawal, str | None]]:
     """Withdrawals for the admin queue (optionally filtered by status), newest first, each
     paired with the requester's email."""
-    q = select(Withdrawal, User.email).join(
-        User, User.id == Withdrawal.user_id, isouter=True
-    )
+    q = select(Withdrawal, User.email).join(User, User.id == Withdrawal.user_id, isouter=True)
     if status:
         q = q.where(Withdrawal.status == status)
     q = q.order_by(Withdrawal.created_at.desc())
