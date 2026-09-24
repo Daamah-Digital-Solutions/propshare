@@ -700,7 +700,7 @@ const InstallmentCalculator = ({
               <label htmlFor="reviewed" className="text-sm cursor-pointer">
                 <span className="font-medium">I have reviewed and understand the installment schedule.</span>
                 <span className="text-muted-foreground block mt-1">
-                  I agree that installments will be due on the dates shown above and understand that late payments may incur additional fees.
+                  I agree that installments are due on the dates shown above and are charged from my wallet on those dates. If my wallet cannot cover one, it is retried automatically; there is no late fee.
                 </span>
               </label>
             </div>

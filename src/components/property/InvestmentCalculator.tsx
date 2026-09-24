@@ -26,6 +26,7 @@ import { investApi, ApiError, type InvestMethod } from "@/lib/api";
 
 interface PropertyData {
   propertyValue: number;
+  unitPrice?: number; // price of one unit: an amount buys whole units only
   minInvestment: number;
   maxInvestment: number;
   expectedYield: number;
@@ -33,7 +34,7 @@ interface PropertyData {
   fundingProgress: number;
   fundedAmount: number;
   investorsCount: number;
-  daysLeft: number;
+  daysLeft?: number; // real listings carry no funding countdown (unused here)
   // Backend-supplied fee rates (percent). Replaces the old hardcoded constants so
   // the displayed fee always matches what the server charges (admin-configurable).
   fees?: { platformFee?: number; managementFee?: number };
@@ -97,6 +98,9 @@ const InvestmentCalculator = ({
   const PURCHASE_FEE_RATE = platformPct / 100;
   const ANNUAL_MANAGEMENT_FEE_RATE = mgmtPct / 100;
   const reinvesting = reinvestState.isReinvesting;
+  // Whole units only (the server rounds the amount down at purchase): say how many it buys.
+  const unitPrice = Number(propertyData.unitPrice ?? 0);
+  const wholeUnits = unitPrice > 0 ? Math.floor((investmentAmount + 1e-9) / unitPrice) : 0;
 
   // The reinvest discount is REAL and applied SERVER-SIDE (admin-configurable
   // reinvest_discount_pct) as a discounted unit PRICE — you pay your returns and receive
@@ -318,6 +322,15 @@ const InvestmentCalculator = ({
               className="w-full pl-8 pr-4 py-3 bg-secondary border border-border rounded-xl text-foreground text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
+          {unitPrice > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground" data-testid="unit-price-hint">
+              Units cost ${unitPrice.toLocaleString()} each. This amount buys{" "}
+              <span className="font-medium text-foreground">
+                {wholeUnits.toLocaleString()} whole unit{wholeUnits === 1 ? "" : "s"}
+              </span>
+              ; the exact units are confirmed at purchase.
+            </p>
+          )}
         </div>
 
         {/* Payment Method */}

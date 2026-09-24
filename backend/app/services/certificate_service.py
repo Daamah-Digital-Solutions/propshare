@@ -48,8 +48,14 @@ _LOGO_PATH = pathlib.Path(__file__).resolve().parent.parent / "assets" / "capima
 
 
 def _spaced_centred(
-    c: canvas.Canvas, cx: float, y: float, font: str, size: float, text: str,
-    spacing: float, color: HexColor,
+    c: canvas.Canvas,
+    cx: float,
+    y: float,
+    font: str,
+    size: float,
+    text: str,
+    spacing: float,
+    color: HexColor,
 ) -> None:
     """Centred text with letter-spacing (Canvas has no setCharSpace — use a text object)."""
     w = stringWidth(text, font, size) + spacing * max(0, len(text) - 1)
@@ -78,8 +84,14 @@ def _wrap(text: str, font: str, size: float, max_width: float) -> list[str]:
 
 
 def _fit_centred(
-    c: canvas.Canvas, cx: float, y: float, font: str, base_size: float, text: str,
-    max_width: float, color: HexColor,
+    c: canvas.Canvas,
+    cx: float,
+    y: float,
+    font: str,
+    base_size: float,
+    text: str,
+    max_width: float,
+    color: HexColor,
 ) -> None:
     """Draw centred text, shrinking the font just enough that a long value never overflows."""
     size = base_size
@@ -181,8 +193,10 @@ def _seal(c: canvas.Canvas, cx: float, cy: float, r: float) -> None:
     for i in range(n):
         a = 2 * math.pi * i / n
         c.line(
-            cx + math.cos(a) * (r - 2), cy + math.sin(a) * (r - 2),
-            cx + math.cos(a) * (r - 9), cy + math.sin(a) * (r - 9),
+            cx + math.cos(a) * (r - 2),
+            cy + math.sin(a) * (r - 2),
+            cx + math.cos(a) * (r - 9),
+            cy + math.sin(a) * (r - 9),
         )
     c.setStrokeColor(_GREEN_D)
     c.setLineWidth(1.6)
@@ -425,7 +439,8 @@ async def build_for_holding(
         units=units,
         ownership=ownership,
         value=f"${value:,.2f}",
-        spv=f"{prop.title} SPV",
+        # the listing's registered SPV; never a name made up from the title
+        spv=(prop.spv_name or "").strip() or "-",
         jurisdiction=jurisdiction,
         cert_ref=cert_ref,
         issued=issued,
@@ -445,9 +460,7 @@ async def build_all_zip(
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for pid in pids:
-            fname, pdf = await build_for_holding(
-                session, user_id=user_id, property_id=pid, now=now
-            )
+            fname, pdf = await build_for_holding(session, user_id=user_id, property_id=pid, now=now)
             zf.writestr(fname, pdf)
     return "capimax-certificates.zip", buf.getvalue()
 

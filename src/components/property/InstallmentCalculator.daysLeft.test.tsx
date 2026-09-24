@@ -3,7 +3,7 @@
  * bare "days left" pill (literally "undefined days left" collapsed to " days left") on
  * every under-construction property page. The pill must only appear for a real countdown.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi } from "vitest";
 import InstallmentCalculator from "./InstallmentCalculator";
@@ -40,6 +40,17 @@ function renderCalc(propertyData: Record<string, unknown>) {
     </QueryClientProvider>,
   );
 }
+
+describe("InstallmentCalculator schedule agreement", () => {
+  it("tells the truth about a missed payment: retried automatically, no late fee", () => {
+    // Regression (review 2026-09-24): the text warned of late fees the platform never charges
+    renderCalc(base);
+    fireEvent.click(screen.getByRole("button", { name: /review full installment schedule/i }));
+    const agreement = screen.getByText(/I agree that installments are due/i);
+    expect(agreement).toHaveTextContent(/retried automatically; there is no late fee/i);
+    expect(screen.queryByText(/late payments may incur/i)).toBeNull();
+  });
+});
 
 describe("InstallmentCalculator days-left pill", () => {
   it("is hidden when the listing has no countdown", () => {

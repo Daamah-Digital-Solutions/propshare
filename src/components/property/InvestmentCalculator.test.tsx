@@ -57,6 +57,28 @@ function renderCalc(openReview = false) {
   );
 }
 
+describe("InvestmentCalculator unit price", () => {
+  it("shows the unit price and how many whole units the amount buys", () => {
+    // Regression (review 2026-09-24): the property page never showed the unit price, so an
+    // investor typed an amount without knowing what one unit costs
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReinvestProvider>
+          <InvestmentCalculator
+            propertyId="prop-123"
+            propertyData={{ ...propertyData, unitPrice: 300 }}
+            investmentAmount={1000}
+            setInvestmentAmount={() => {}}
+          />
+        </ReinvestProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("unit-price-hint")).toHaveTextContent(
+      "Units cost $300 each. This amount buys 3 whole units",
+    );
+  });
+});
+
 describe("InvestmentCalculator invest click path", () => {
   beforeEach(() => createMock.mockReset());
 

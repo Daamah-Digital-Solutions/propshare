@@ -59,6 +59,16 @@ const lines = (v: unknown): string[] =>
 
 const fmt = (n: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+// the price of one unit keeps its cents when it has any ($12.50, not $13; $100, not $100.00)
+const fmtExact = (n: number) => {
+  const digits = Math.round(n * 100) % 100 === 0 ? 0 : 2;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(n);
+};
 
 const tone = (t: string | undefined) => {
   switch (t) {
@@ -293,6 +303,9 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                   <div className="p-3 rounded-lg bg-card border border-border">
                     <div className="text-[10px] uppercase text-muted-foreground">Min. Ticket</div>
                     <div className="font-bold text-foreground">{fmt(detail.minimum_investment)}</div>
+                    {detail.unit_price > 0 && (
+                      <div className="text-[10px] text-muted-foreground">{fmtExact(detail.unit_price)} per unit</div>
+                    )}
                   </div>
                   <div className="p-3 rounded-lg bg-card border border-border">
                     <div className="text-[10px] uppercase text-muted-foreground">Appreciation</div>

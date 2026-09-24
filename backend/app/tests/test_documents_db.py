@@ -18,6 +18,8 @@ from PIL import Image
 from app.services.integrations import storage
 
 PW = "Passw0rd!23"
+
+
 def _real_png(w: int = 4, h: int = 4) -> bytes:
     """A real (decodable) PNG — uploads are validated by decoding since Step 2."""
     buf = io.BytesIO()
@@ -180,6 +182,22 @@ async def test_certificate_pdf_from_real_holding(client, db):
     assert b"Prop" in r.content  # real property title in the document
     assert b"12 fractional ownership" in r.content  # real units from the ledger (attestation)
     assert b"Capimax PropShare" in r.content  # branded header
+
+
+async def test_certificate_prints_the_registered_spv_never_a_made_up_one(client, db):
+    """Regression (review 2026-09-24): the certificate printed '<title> SPV' whatever the
+    listing's SPV was; a legal record must show the registered entity (or nothing)."""
+    tok, uid = await _user(client, db, "cert-spv@x.com")
+    pid = _seed_property(db, None, slug="cert-spv")
+    db("UPDATE properties SET spv_name='Marina Holdings SPV Ltd' WHERE id=:p", p=pid)
+    _ledger(db, uid, pid, 3)
+    pdf = (await client.get(f"/api/v1/investments/certificate/{pid}", headers=_h(tok))).content
+    assert b"Marina Holdings SPV Ltd" in pdf and b"Prop SPV" not in pdf
+
+    bare = _seed_property(db, None, slug="cert-no-spv")
+    _ledger(db, uid, bare, 2)
+    pdf = (await client.get(f"/api/v1/investments/certificate/{bare}", headers=_h(tok))).content
+    assert pdf.startswith(b"%PDF") and b"Prop SPV" not in pdf
 
 
 async def test_certificate_404_without_holding(client, db):

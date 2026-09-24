@@ -158,6 +158,7 @@ describe("UnderConstructionView", () => {
       expect(screen.getByRole("tab", { name: t })).toBeInTheDocument();
     }
     expect(screen.getByTestId("invest-calc")).toBeInTheDocument(); // investing still works
+    expect(screen.getByText("$100 per unit")).toBeInTheDocument(); // the unit price is shown
 
     // overview blocks
     expect(screen.getByTestId("installment-structure")).toHaveTextContent("15% down");

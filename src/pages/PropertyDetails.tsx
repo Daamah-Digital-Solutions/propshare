@@ -72,6 +72,7 @@ const toViewModel = (d: PropertyDetail) => {
     area: asNum(details.area),
     parking: asNum(details.parking),
     propertyValue: d.total_value,
+    unitPrice: d.unit_price,
     minInvestment: d.minimum_investment,
     maxInvestment: asNum(details.maxInvestment) ?? d.total_value,
     expectedYield: d.expected_yield ?? d.target_yield ?? 0,
@@ -463,6 +464,10 @@ const PropertyDetails = () => {
                     <div className="grid sm:grid-cols-2 gap-4">
                       {[
                         { label: "Property Value", value: `$${propertyData.propertyValue.toLocaleString()}` },
+                        {
+                          label: "Unit Price",
+                          value: propertyData.unitPrice ? `$${Number(propertyData.unitPrice).toLocaleString()}` : null,
+                        },
                         { label: "Minimum Investment", value: `$${propertyData.minInvestment}` },
                         { label: "Maximum Investment", value: `$${propertyData.maxInvestment.toLocaleString()}` },
                         // Listing-specific terms are shown only when the listing declares them.

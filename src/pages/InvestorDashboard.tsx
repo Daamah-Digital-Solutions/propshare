@@ -247,7 +247,8 @@ const InvestorDashboard = () => {
               </TabsContent>
 
               <TabsContent value="reinvest" className="space-y-6">
-                <ReinvestReturns availableReturns={19000} />
+                {/* the member's real returns come from the portfolio API inside the component */}
+                <ReinvestReturns />
               </TabsContent>
 
               <TabsContent value="family" className="space-y-6">
