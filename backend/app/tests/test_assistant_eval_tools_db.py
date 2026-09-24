@@ -32,6 +32,17 @@ def _load(name: str):
 PW = "Passw0rd!23"
 
 
+def test_installment_article_says_what_the_platform_does():
+    """The article claimed 'a grace period before a missed instalment becomes overdue'. The
+    platform marks an uncovered instalment overdue on its due date and retries it, with no
+    late fee and no forfeit (installment_service.run_due); both languages say so now."""
+    seed = _load("seed_kb")
+    en = next(body for slug, *_rest, body in seed.ARTICLES if slug == "installment-plans")
+    ar = next(body for slug, *_rest, body in seed.ARTICLES_AR if slug == "installment-plans")
+    assert "grace period" not in en and "no late fee" in en and "not forfeited" in en
+    assert "فترة سماح" not in ar and "لا توجد غرامة تأخير" in ar
+
+
 @pytest.mark.asyncio
 async def test_seed_kb_is_idempotent_and_versions_on_change(client, db, asession, monkeypatch):
     seed = _load("seed_kb")

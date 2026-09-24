@@ -157,9 +157,11 @@ on that page.""",
 instalments afterwards; the platform offers a set of plan lengths and the down payment
 depends on the length chosen. The full schedule, with the installment fee on each payment, is
 shown before you commit and afterwards under Portfolio -> Installments. Instalments are taken
-from your wallet on their due dates; you receive reminders before each one and there is a
-grace period before a missed instalment becomes overdue. Keep your wallet funded ahead of the
-due date. The assistant can show your plans, schedule and next due amount.""",
+from your wallet automatically on their due dates, and you receive a reminder a few days
+before each one. If the wallet cannot cover an instalment on its due date, it is marked
+overdue and retried automatically once funds are there: there is no late fee and your units
+are not forfeited. Keep your wallet funded ahead of the due date. You can also pay the next
+instalment early; the assistant can show your plans and schedule and prepare that payment.""",
     ),
     (
         "kyc-verification",
@@ -410,9 +412,11 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
         80,
         """في العقارات المباعة بالأقساط تدفع دفعة أولى الآن وأقساطًا شهرية بعدها؛ تقدّم المنصة
 مجموعة مدد للخطط وتعتمد الدفعة الأولى على المدة المختارة. يُعرض الجدول الكامل، مع رسوم الأقساط
-على كل دفعة، قبل التأكيد وبعده في المحفظة ← الأقساط. تُخصم الأقساط من محفظتك في مواعيدها؛ يصلك
-تذكير قبل كل قسط وهناك فترة سماح قبل أن يصبح القسط الفائت متأخرًا. احرص على شحن محفظتك قبل موعد
-الاستحقاق. يستطيع المساعد عرض خططك وجدولك والمبلغ المستحق التالي.""",
+على كل دفعة، قبل التأكيد وبعده في المحفظة ← الأقساط. تُخصم الأقساط من محفظتك تلقائيًا في
+مواعيدها، ويصلك تذكير قبل كل قسط بأيام. إذا لم يكفِ رصيد المحفظة يوم الاستحقاق يُسجَّل القسط
+متأخرًا ويُعاد خصمه تلقائيًا عند توفر الرصيد: لا توجد غرامة تأخير ولا تُسحب منك وحداتك. احرص على
+شحن محفظتك قبل موعد الاستحقاق. ويمكنك أيضًا دفع القسط التالي مبكرًا؛ يستطيع المساعد عرض خططك
+وجدولك وتجهيز هذه الدفعة.""",
     ),
     (
         "kyc-verification",
