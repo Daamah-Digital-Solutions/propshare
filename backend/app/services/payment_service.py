@@ -43,6 +43,11 @@ _CHECKOUT_LABEL = {
     "card": "Capimax investment",
     "pronova": "Capimax investment · Pronova",
 }
+# ...and an installment plan's down payment (0032).
+_PLAN_CHECKOUT_LABEL = {
+    "card": "Capimax installment plan · down payment",
+    "pronova": "Capimax installment plan · down payment · Pronova",
+}
 
 
 logger = logging.getLogger(__name__)
@@ -80,6 +85,24 @@ def provider_for(method: str) -> str:
 def provider_configured(method: str) -> bool:
     """Whether the rail behind ``method`` (card->stripe, crypto->nowpayments) is set up."""
     return _gateway(_PROVIDER_FOR_METHOD[method]).is_configured()
+
+
+def purchase_options() -> dict[str, bool]:
+    """Which ways to pay for a property are live right now. Every property offers the SAME
+    list (client feedback 2026-09-27); a rail whose provider is not set up is shown as not
+    available, never hidden. Card, Apple Pay, Google Pay and Pronova settle on Stripe (Apple /
+    Google Pay appear on Stripe's checkout on devices that support them); crypto on
+    NOWPayments; the wallet and a Nova Sukuk certificate need no provider."""
+    card = provider_configured("card")
+    return {
+        "wallet": True,
+        "card": card,
+        "apple_pay": card,
+        "google_pay": card,
+        "crypto": provider_configured("crypto"),
+        "pronova": provider_configured("pronova"),
+        "sukuk": True,
+    }
 
 
 async def create_deposit(
@@ -175,23 +198,24 @@ async def create_deposit(
     }
 
 
-async def create_investment_checkout(
+async def _purchase_checkout(
     session: AsyncSession,
     *,
     user_id: uuid.UUID,
-    investment_id: uuid.UUID,
+    purpose: str,
     amount: decimal.Decimal,
     method: str,
     success_url: str,
     cancel_url: str,
     ipn_url: str,
+    product_name: str,
+    investment_id: uuid.UUID | None = None,
+    plan_id: uuid.UUID | None = None,
 ) -> dict:
-    """Create a hosted-checkout intent for a DIRECT-PAY investment (purpose=investment).
-
-    Unlike a deposit, idempotency is anchored on the investment row (its unique
-    ``idempotency_key``), so the Payment itself carries no key. The amount is the
-    server-computed total charge (subtotal + platform fee), never client-supplied.
-    """
+    """A hosted-checkout intent that pays for units (a purchase, or an installment plan's
+    down payment). Idempotency is anchored on the investment / plan row (its unique
+    ``idempotency_key``), so the Payment itself carries no key. The amount is server-computed,
+    never client-supplied."""
     provider = _PROVIDER_FOR_METHOD[method]
     gateway = _gateway(provider)
     if not gateway.is_configured():
@@ -206,9 +230,10 @@ async def create_investment_checkout(
         amount=amount_dec,
         currency=currency,
         status="pending",
-        purpose="investment",
+        purpose=purpose,
         payment_method=method,
         related_investment_id=investment_id,
+        related_plan_id=plan_id,
     )
     session.add(payment)
     await session.flush()
@@ -223,7 +248,7 @@ async def create_investment_checkout(
             success_url=success_url,
             cancel_url=cancel_url,
             idempotency_key=None,
-            product_name=_CHECKOUT_LABEL.get(method, "Capimax investment"),
+            product_name=product_name,
             customer_id=await payment_method_service.checkout_customer(session, user_id),
         )
     else:
@@ -244,7 +269,7 @@ async def create_investment_checkout(
         entity_type="payment",
         entity_id=str(payment.id),
         actor_id=user_id,
-        after={"provider": provider, "amount": str(amount_dec), "purpose": "investment"},
+        after={"provider": provider, "amount": str(amount_dec), "purpose": purpose},
     )
     return {
         "payment_id": payment.id,
@@ -252,6 +277,60 @@ async def create_investment_checkout(
         "status": "pending",
         "checkout_url": result.checkout_url,
     }
+
+
+async def create_investment_checkout(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    investment_id: uuid.UUID,
+    amount: decimal.Decimal,
+    method: str,
+    success_url: str,
+    cancel_url: str,
+    ipn_url: str,
+) -> dict:
+    """Create a hosted-checkout intent for a DIRECT-PAY investment (purpose=investment); the
+    amount is the server-computed total charge (subtotal + platform fee − any discount)."""
+    return await _purchase_checkout(
+        session,
+        user_id=user_id,
+        purpose="investment",
+        amount=amount,
+        method=method,
+        success_url=success_url,
+        cancel_url=cancel_url,
+        ipn_url=ipn_url,
+        product_name=_CHECKOUT_LABEL.get(method, "Capimax investment"),
+        investment_id=investment_id,
+    )
+
+
+async def create_plan_checkout(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    plan_id: uuid.UUID,
+    amount: decimal.Decimal,
+    method: str,
+    success_url: str,
+    cancel_url: str,
+    ipn_url: str,
+) -> dict:
+    """Create a hosted-checkout intent for an installment plan's DOWN PAYMENT
+    (purpose=installment); its settlement starts the plan (installment_service)."""
+    return await _purchase_checkout(
+        session,
+        user_id=user_id,
+        purpose="installment",
+        amount=amount,
+        method=method,
+        success_url=success_url,
+        cancel_url=cancel_url,
+        ipn_url=ipn_url,
+        product_name=_PLAN_CHECKOUT_LABEL.get(method, _PLAN_CHECKOUT_LABEL["card"]),
+        plan_id=plan_id,
+    )
 
 
 async def get_payment(
@@ -332,6 +411,11 @@ async def _apply(
             from app.services import investment_service
 
             return await investment_service.confirm_investment(session, payment=locked)
+        if locked.purpose == "installment":
+            # An installment plan's down payment: start the plan. No wallet credit.
+            from app.services import installment_service
+
+            return await installment_service.confirm_down_payment(session, payment=locked)
 
         # Deposit: credit the wallet with the provider-captured amount.
         pm = PaymentMethod.crypto if locked.payment_method == "crypto" else None
@@ -371,6 +455,13 @@ async def _apply(
             from app.services import investment_service
 
             await investment_service.release_reservation_for_payment(
+                session, payment=locked, reason=f"payment_{parsed.status}"
+            )
+        elif locked.purpose == "installment":
+            # The plan never started: its units go back on sale.
+            from app.services import installment_service
+
+            await installment_service.release_plan_for_payment(
                 session, payment=locked, reason=f"payment_{parsed.status}"
             )
         return {"status": "processed", "result": "failed"}

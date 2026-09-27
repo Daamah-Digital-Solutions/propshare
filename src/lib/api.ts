@@ -5,8 +5,11 @@
 //   - the REFRESH token is an httpOnly cookie set by the backend (credentials:
 //     "include" sends it). On a 401 we transparently call /auth/refresh once.
 // Supabase is gone — this is the only backend the SPA talks to.
+import type { PaymentOptions } from "@/lib/paymentMethods";
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
+export type { PaymentOptions };
+
+const API_BASE =(import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 let accessToken: string | null = null;
 
@@ -753,6 +756,27 @@ export const investApi = {
   pronovaSettings(): Promise<{ discount_pct: string }> {
     return apiRequest("/api/v1/investments/pronova-settings");
   },
+  /** The ways to pay for a property (the same on every property) and which are live now. */
+  paymentOptions(): Promise<PaymentOptions> {
+    return apiRequest<PaymentOptions>("/api/v1/investments/payment-options");
+  },
+  /** Buy units paying with a Nova Sukuk certificate: the units are held while our team
+   * reviews it. */
+  buyWithSukuk(
+    input: { property_id: string; amount: number },
+    cert: SukukCertificateInput,
+    idempotencyKey: string,
+  ): Promise<SukukCertificate> {
+    return apiRequest<SukukCertificate>("/api/v1/investments/sukuk", {
+      method: "POST",
+      body: sukukForm(input, cert),
+      headers: { "Idempotency-Key": idempotencyKey },
+    });
+  },
+  /** The caller's Nova Sukuk certificates and their review. */
+  mySukuk(): Promise<SukukCertificate[]> {
+    return apiRequest<SukukCertificate[]>("/api/v1/investments/sukuk");
+  },
   /** Reinvest returns from the wallet at the server-applied discount. SERVER computes
    * the discounted units/price — the client only sends an amount. */
   reinvest(
@@ -1070,7 +1094,18 @@ export interface InstallmentPlan {
   duration_months: number;
   fee_rate: string;
   vested_units: number;
-  status: string; // active | completed
+  // active | completed; before it starts: pending_payment (down-payment checkout open) |
+  // pending_review (Nova certificate with our team); never started: cancelled | expired
+  status: string;
+  /** how the down payment is paid: wallet | card | crypto | pronova | sukuk */
+  payment_method?: string;
+  /** Pronova discount on the down payment */
+  discount_amount?: string;
+  reservation_expires_at?: string | null;
+  failure_reason?: string | null;
+  /** a down-payment checkout still open: where to pay it */
+  checkout_url?: string | null;
+  payment_id?: string | null;
   created_at: string;
   completed_at: string | null;
   payments: InstallmentPayment[];
@@ -1079,6 +1114,50 @@ export interface InstallmentPlanPayload {
   property_id: string;
   amount: number; // USD; the server floors to whole units at the locked unit_price
   duration_months: number; // 6 | 12 | 18 | 24
+  /** how the down payment is paid (a Nova certificate goes through createPlanWithSukuk) */
+  method?: "wallet" | "card" | "crypto" | "pronova";
+}
+
+/** A Nova Sukuk certificate the investor submitted, and where its review stands. */
+export interface SukukCertificate {
+  certificate_id: string;
+  kind: "purchase" | "installment";
+  /** pending | approved (units pledged to Nova Finance) | rejected | released */
+  status: string;
+  investment_id: string | null;
+  plan_id: string | null;
+  property_id: string;
+  property_title: string;
+  property_slug: string | null;
+  units: number;
+  amount_due: string;
+  certificate_no: string | null;
+  issuer: string | null;
+  /** staff's reason when not accepted, or their note */
+  review_note: string | null;
+  created_at: string | null;
+  reviewed_at: string | null;
+  released_at: string | null;
+}
+
+/** The certificate file and what it states; empty details are simply not sent. */
+export interface SukukCertificateInput {
+  file: File;
+  certificate_no?: string;
+  issuer?: string;
+  certificate_value?: string;
+  valid_until?: string;
+}
+
+function sukukForm(fields: Record<string, string | number>, cert: SukukCertificateInput): FormData {
+  const fd = new FormData();
+  Object.entries(fields).forEach(([k, v]) => fd.append(k, String(v)));
+  fd.append("file", cert.file);
+  (["certificate_no", "issuer", "certificate_value", "valid_until"] as const).forEach((k) => {
+    const v = cert[k]?.trim();
+    if (v) fd.append(k, v);
+  });
+  return fd;
 }
 
 /** The caller's installment plans. Creating a plan reserves the allocation + charges the
@@ -1092,6 +1171,17 @@ export const installmentsApi = {
     return apiRequest<InstallmentPlan>("/api/v1/installments", {
       method: "POST",
       body: payload,
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    });
+  },
+  /** A plan whose down payment a Nova Sukuk certificate covers: our team reviews it. */
+  createPlanWithSukuk(
+    payload: { property_id: string; amount: number; duration_months: number },
+    cert: SukukCertificateInput,
+  ): Promise<SukukCertificate> {
+    return apiRequest<SukukCertificate>("/api/v1/installments/sukuk", {
+      method: "POST",
+      body: sukukForm(payload, cert),
       headers: { "Idempotency-Key": crypto.randomUUID() },
     });
   },
@@ -1401,6 +1491,8 @@ export interface Holding {
   location: string | null;
   units: number;
   listed_units: number;
+  /** held for Nova Finance until the pledge is released (paid with a Nova Sukuk certificate) */
+  pledged_units?: number;
   sellable_units: number;
   unit_price: string;
 }

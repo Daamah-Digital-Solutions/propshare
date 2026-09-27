@@ -37,6 +37,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { format } from "date-fns";
+import { PaymentReturnStatus } from "@/components/dashboard/PaymentReturnStatus";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -62,6 +63,27 @@ const statusMeta: Record<
   scheduled: { label: "Scheduled", variant: "secondary" },
   paid: { label: "Paid", variant: "default" },
   overdue: { label: "Overdue", variant: "destructive" },
+  cancelled: { label: "Cancelled", variant: "outline" },
+};
+
+// A plan that has not started, or never did: what it waits for / why it ended.
+const PLAN_STATE: Record<string, { label: string; hint: string }> = {
+  pending_payment: {
+    label: "Waiting for the down payment",
+    hint: "Its units are held for you while the down payment is being paid.",
+  },
+  pending_review: {
+    label: "Nova certificate under review",
+    hint: "Our team is reviewing your Nova Sukuk certificate; the units are held for you meanwhile. The plan starts once it is approved.",
+  },
+  cancelled: {
+    label: "Not started",
+    hint: "The down payment was not completed, so the units held for this plan went back on sale.",
+  },
+  expired: {
+    label: "Not started",
+    hint: "The down payment was not made in time, so the units held for this plan went back on sale.",
+  },
 };
 
 const num = (s: string) => Number(s) || 0;
@@ -131,13 +153,17 @@ function PlanCard({
     const payment = prepareId ? plan.payments.find((p) => p.id === prepareId) : undefined;
     if (!payment) return;
     // only a payment the user could pay here themselves; paying stays their own click
-    if ((payment.status === "scheduled" || payment.status === "overdue") && payment.seq > 0) {
+    if (
+      plan.status === "active" &&
+      (payment.status === "scheduled" || payment.status === "overdue") &&
+      payment.seq > 0
+    ) {
       setConfirming(payment);
       setPrepared(true);
       setOpen(true);
     }
     onPrepared?.();
-  }, [prepareId, plan.payments, onPrepared]);
+  }, [prepareId, plan.payments, plan.status, onPrepared]);
 
   // Wallet balance, so the confirmation can show what's available and flag a shortfall up front.
   const { data: wallet } = useQuery({ queryKey: ["wallet"], queryFn: walletApi.getMe });
@@ -230,12 +256,36 @@ function PlanCard({
               <Badge className="gap-1 shrink-0">
                 <CheckCircle2 size={12} /> Handover complete
               </Badge>
+            ) : PLAN_STATE[plan.status] ? (
+              <Badge variant="outline" className="gap-1 shrink-0">
+                <Clock size={12} /> {PLAN_STATE[plan.status].label}
+              </Badge>
             ) : (
               <Badge variant="secondary" className="gap-1 shrink-0">
                 <Clock size={12} /> Active
               </Badge>
             )}
           </div>
+
+          {PLAN_STATE[plan.status] && (
+            <div
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground"
+              data-testid="plan-state"
+            >
+              <span>
+                {plan.failure_reason === "units_unavailable_refunded"
+                  ? "Its units were taken before your down payment confirmed, so the payment was refunded to your wallet."
+                  : PLAN_STATE[plan.status].hint}
+                {plan.failure_reason === "sukuk_rejected" &&
+                  " Your Nova certificate was not accepted — the reason is in your notifications."}
+              </span>
+              {plan.status === "pending_payment" && plan.checkout_url && (
+                <Button asChild size="sm" variant="outline">
+                  <a href={plan.checkout_url}>Complete the payment</a>
+                </Button>
+              )}
+            </div>
+          )}
 
           <div className="text-sm text-muted-foreground">
             {plan.units_total} units · ${plan.unit_price}/unit · {plan.duration_months} months ·{" "}
@@ -335,7 +385,12 @@ function PlanCard({
                     label: p.status,
                     variant: "secondary" as const,
                   };
-                  const payable = (p.status === "scheduled" || p.status === "overdue") && p.seq > 0;
+                  // only a running plan is paid (one waiting for its down payment or a Nova
+                  // review, or one that never started, is not)
+                  const payable =
+                    plan.status === "active" &&
+                    (p.status === "scheduled" || p.status === "overdue") &&
+                    p.seq > 0;
                   return (
                     <TableRow key={p.id}>
                       <TableCell className="font-medium">
@@ -501,6 +556,8 @@ export const InstallmentSchedule = () => {
 
   return (
     <div className="space-y-6">
+      {/* Back from a down-payment checkout: follow it until the plan starts */}
+      <PaymentReturnStatus kind="plan" />
       <div className="flex items-center gap-2">
         <Calendar className="h-5 w-5 text-primary" />
         <h2 className="text-2xl font-bold">Installment Plans</h2>

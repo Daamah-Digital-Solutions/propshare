@@ -70,6 +70,19 @@ class DepositRails(ToolOutput):
     bank_transfer: bool
 
 
+class PurchaseMethods(ToolOutput):
+    """How units are paid for — the same on every property (0032)."""
+
+    wallet: bool
+    card: bool
+    apple_pay: bool
+    google_pay: bool
+    crypto: bool
+    pronova: bool
+    nova_sukuk: bool
+    note: str
+
+
 class WithdrawalRails(ToolOutput):
     bank: str  # "automatic" (paid through the provider on request) or "reviewed" (by the team)
     crypto: str
@@ -84,6 +97,7 @@ class PlatformSettingsOut(ToolOutput):
     discounts: Discounts
     installment: InstallmentTerms
     deposit_rails: DepositRails
+    purchase_methods: PurchaseMethods
     withdrawal_rails: WithdrawalRails
     currency: str
     as_of: str
@@ -125,9 +139,32 @@ async def _get_platform_settings(session: AsyncSession, ctx: AgentContext, args)
             "crypto": payment_service.provider_configured("crypto"),
             "bank_transfer": len(banks) > 0,
         },
+        "purchase_methods": _purchase_methods(),
         "withdrawal_rails": await _withdrawal_rails(session),
         "currency": get_settings().wallet_currency,
         "as_of": _now(),
+    }
+
+
+def _purchase_methods() -> dict:
+    live = payment_service.purchase_options()
+    return {
+        "wallet": live["wallet"],
+        "card": live["card"],
+        "apple_pay": live["apple_pay"],
+        "google_pay": live["google_pay"],
+        "crypto": live["crypto"],
+        "pronova": live["pronova"],
+        "nova_sukuk": live["sukuk"],
+        "note": (
+            "The same methods on every property, for a purchase and for an installment plan's "
+            "down payment (the installments then come from the wallet). Card, Apple Pay, Google "
+            "Pay and Pronova pay on Stripe's checkout — Pronova takes pronova_discount_pct off "
+            "what is paid now; crypto on NOWPayments' page, where the payer picks the coin. A "
+            "Nova Sukuk certificate (PDF) is reviewed by the team while the units are held; "
+            "approved, the units are the investor's but stay pledged to Nova Finance (not "
+            "sellable or transferable) until the team releases the pledge."
+        ),
     }
 
 

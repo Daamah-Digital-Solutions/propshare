@@ -14,6 +14,7 @@ import {
 import { Link } from "react-router-dom";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { PaymentReturnStatus } from "@/components/dashboard/PaymentReturnStatus";
+import { SukukCertificatesCard } from "@/components/dashboard/SukukCertificatesCard";
 import { holdingsApi, investApi } from "@/lib/api";
 
 const money = (v: number) => `$${v.toLocaleString()}`;
@@ -25,7 +26,15 @@ export const ActiveInvestments = () => {
   // Purchases paid through a hosted checkout that the server has not confirmed yet: the
   // units are reserved, the money is with the provider — show them instead of nothing.
   const { data: investments } = useQuery({ queryKey: ["investments", "list"], queryFn: investApi.list });
-  const awaiting = (investments?.items ?? []).filter((i) => i.status === "pending");
+  // a purchase paid with a Nova certificate waits for our review, not for a payment: it is
+  // shown with its certificate below
+  const { data: sukuk } = useQuery({ queryKey: ["sukuk", "mine"], queryFn: investApi.mySukuk });
+  const inReview = new Set(
+    (sukuk ?? []).filter((c) => c.status === "pending").map((c) => c.investment_id),
+  );
+  const awaiting = (investments?.items ?? []).filter(
+    (i) => i.status === "pending" && !inReview.has(i.id),
+  );
 
   const totalValue = holdings.reduce((s, h) => s + h.units * Number(h.unit_price), 0);
   const totalUnits = holdings.reduce((s, h) => s + h.units, 0);
@@ -56,6 +65,7 @@ export const ActiveInvestments = () => {
           </CardContent>
         </Card>
       )}
+      <SukukCertificatesCard />
       {/* Summary Cards — live */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">
@@ -161,6 +171,11 @@ export const ActiveInvestments = () => {
                   <div className="p-2 rounded-lg bg-muted/50">
                     <p className="text-xs text-muted-foreground">Sellable</p>
                     <p className="text-sm font-semibold">{h.sellable_units}</p>
+                    {(h.pledged_units ?? 0) > 0 && (
+                      <p className="text-[11px] text-muted-foreground">
+                        {h.pledged_units} pledged to Nova Finance
+                      </p>
+                    )}
                   </div>
                 </div>
 

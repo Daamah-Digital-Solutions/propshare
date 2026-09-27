@@ -560,7 +560,7 @@ from app.models.mfa import UserMfa, UserRecoveryCode  # noqa: E402
 from app.models.milestones import PropertyMilestone  # noqa: E402
 from app.models.notifications import EmailOutbox, NotificationPreference  # noqa: E402
 from app.models.payment_methods import PaymentCustomer, SavedPaymentMethod  # noqa: E402
-from app.models.payments import Payment, PaymentEvent  # noqa: E402
+from app.models.payments import Payment, PaymentEvent, SukukCertificate  # noqa: E402
 from app.models.payout_methods import (  # noqa: E402
     PlatformBankAccount,
     UserBankAccount,
@@ -600,6 +600,7 @@ __all__ = [
     # payments (Phase 4)
     "Payment",
     "PaymentEvent",
+    "SukukCertificate",
     # investments (Phase 5)
     "PlatformSetting",
     "OwnershipLedger",

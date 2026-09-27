@@ -30,8 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.core.errors import AppError
-from app.models import AuditLog, Investment, Property
-from app.models.base import InvestmentStatus, PropertyStatus, TransactionType
+from app.models import AuditLog, Investment, Property, Wallet
+from app.models.base import InvestmentStatus, PaymentMethod, PropertyStatus, TransactionType
 from app.models.investments import OwnershipLedger
 from app.services import (
     broker_service,
@@ -132,6 +132,37 @@ def _quote(unit_price: decimal.Decimal, amount: decimal.Decimal, rates: dict) ->
     }
 
 
+async def _lock_and_quote(
+    session: AsyncSession, *, property_id: uuid.UUID, amount: float
+) -> tuple[Property, dict, dict]:
+    """Lock the property (serializes concurrent buyers: oversell protection), check it is
+    open and has the units, and price the purchase. Returns (property, fee rates, quote)."""
+    prop = (
+        await session.execute(select(Property).where(Property.id == property_id).with_for_update())
+    ).scalar_one_or_none()
+    if prop is None:
+        raise AppError("NOT_FOUND", "Property not found", status_code=404)
+    if prop.status != PropertyStatus.active:
+        raise AppError(
+            "PROPERTY_NOT_OPEN", "This property is not open for investment.", status_code=409
+        )
+    refuse_sample(prop)
+
+    amount_dec = decimal.Decimal(str(amount))
+    rates = await settings_service.get_fee_rates(session)
+    quote = _quote(prop.unit_price, amount_dec, rates)
+    if below_minimum(prop, quote["units"]):
+        raise minimum_error(prop)
+    if quote["units"] > prop.available_units:
+        raise AppError(
+            "INSUFFICIENT_UNITS",
+            "Not enough units remain for this investment.",
+            status_code=409,
+            details={"available_units": prop.available_units, "requested": quote["units"]},
+        )
+    return prop, rates, quote
+
+
 # --- Create (entry point) -------------------------------------------------- #
 async def create_investment(
     session: AsyncSession,
@@ -161,30 +192,7 @@ async def create_investment(
             "PAYMENTS_NOT_CONFIGURED", f"{provider} is not configured yet.", status_code=503
         )
 
-    # Lock the property row: this serializes concurrent buyers (oversell protection).
-    prop = (
-        await session.execute(select(Property).where(Property.id == property_id).with_for_update())
-    ).scalar_one_or_none()
-    if prop is None:
-        raise AppError("NOT_FOUND", "Property not found", status_code=404)
-    if prop.status != PropertyStatus.active:
-        raise AppError(
-            "PROPERTY_NOT_OPEN", "This property is not open for investment.", status_code=409
-        )
-    refuse_sample(prop)
-
-    amount_dec = decimal.Decimal(str(amount))
-    rates = await settings_service.get_fee_rates(session)
-    quote = _quote(prop.unit_price, amount_dec, rates)
-    if below_minimum(prop, quote["units"]):
-        raise minimum_error(prop)
-    if quote["units"] > prop.available_units:
-        raise AppError(
-            "INSUFFICIENT_UNITS",
-            "Not enough units remain for this investment.",
-            status_code=409,
-            details={"available_units": prop.available_units, "requested": quote["units"]},
-        )
+    prop, rates, quote = await _lock_and_quote(session, property_id=property_id, amount=amount)
 
     snapshot = {
         "platform_fee_pct": str(rates["platform_fee_pct"]),
@@ -362,6 +370,27 @@ def _allocate_units(
     )
 
 
+async def _count_invested(session: AsyncSession, inv: Investment) -> None:
+    """A purchase paid outside the wallet (a checkout, or a Nova Sukuk certificate) counts
+    toward the buyer's invested cost basis exactly like a wallet purchase: the portfolio's
+    current value already includes its units, so without this it shows a phantom gain.
+    Locks the buyer's wallet — with the referring broker's, whose commission follows, in the
+    global wallet lock order (as ``_fund_from_wallet`` does)."""
+    broker_id = await broker_service.referring_broker(session, inv.user_id)
+    await wallet_service.lock_wallets(
+        session, [inv.user_id, broker_id] if broker_id is not None else [inv.user_id]
+    )
+    wallet = (
+        await session.execute(
+            select(Wallet)
+            .where(Wallet.user_id == inv.user_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    if wallet is not None:
+        wallet.total_invested = wallet.total_invested + inv.amount
+
+
 # --- Webhook-driven confirmation / release --------------------------------- #
 async def confirm_investment(session: AsyncSession, *, payment) -> dict:
     """Finalize a direct-pay reservation. Called from payment_service.process_webhook
@@ -386,6 +415,7 @@ async def confirm_investment(session: AsyncSession, *, payment) -> dict:
     if inv.status == InvestmentStatus.pending:
         # Units already reserved at creation — just book the money + ledger.
         _allocate_units(session, prop, inv, confirmed_via=payment.payment_method or "card")
+        await _count_invested(session, inv)
         await _notify_confirmed(session, inv, prop)
         await write_audit(
             session,
@@ -409,6 +439,7 @@ async def _reconcile_late_payment(
         # Units still free — re-acquire and confirm.
         prop.available_units -= inv.units
         _allocate_units(session, prop, inv, confirmed_via=payment.payment_method or "card")
+        await _count_invested(session, inv)
         await _notify_confirmed(session, inv, prop)
         await write_audit(
             session,
@@ -458,8 +489,18 @@ async def release_reservation_for_payment(
     inv_id = payment.related_investment_id
     if inv_id is None:
         return {"status": "ignored_no_investment"}
+    return await _release_pending(session, investment_id=inv_id, reason=reason)
+
+
+async def _release_pending(
+    session: AsyncSession, *, investment_id: uuid.UUID, reason: str
+) -> dict:
+    """A pending purchase ends unpaid (its checkout failed, or its Nova certificate was
+    rejected): its units go back on sale (idempotent)."""
     inv = (
-        await session.execute(select(Investment).where(Investment.id == inv_id).with_for_update())
+        await session.execute(
+            select(Investment).where(Investment.id == investment_id).with_for_update()
+        )
     ).scalar_one_or_none()
     if inv is None or inv.status != InvestmentStatus.pending:
         return {"status": "noop"}
@@ -482,6 +523,93 @@ async def release_reservation_for_payment(
         after={"reason": reason, "restored_units": inv.units},
     )
     return {"status": "released"}
+
+
+# --- Nova Sukuk: a purchase paid with a certificate staff review (0032) ----- #
+async def reserve_for_sukuk(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    property_id: uuid.UUID,
+    amount: float,
+    idempotency_key: str,
+) -> tuple[Investment, Property]:
+    """A purchase paid with a Nova Sukuk certificate: priced like any purchase (subtotal +
+    platform fee, no discount) and its units HELD while staff review the certificate — with no
+    time limit, as a review takes time (``expire_reservations`` skips a NULL expiry)."""
+    prop, rates, quote = await _lock_and_quote(session, property_id=property_id, amount=amount)
+    inv = Investment(
+        user_id=user_id,
+        property_id=prop.id,
+        units=quote["units"],
+        amount=quote["subtotal"],
+        payment_method=PaymentMethod.nova_sukuk,
+        idempotency_key=idempotency_key,
+        unit_price_snapshot=prop.unit_price,
+        platform_fee_amount=quote["platform_fee"],
+        platform_fee_rate=rates["platform_fee_pct"],
+        management_fee_rate=rates["management_fee_pct"],
+        total_charged=quote["total_charge"],
+        fee_settings_snapshot={
+            "platform_fee_pct": str(rates["platform_fee_pct"]),
+            "management_fee_pct": str(rates["management_fee_pct"]),
+        },
+        status=InvestmentStatus.pending,
+    )
+    session.add(inv)
+    await session.flush()
+    prop.available_units -= inv.units
+    await write_audit(
+        session,
+        action="investment.reserved",
+        entity_type="investment",
+        entity_id=str(inv.id),
+        actor_id=user_id,
+        after={"via": "sukuk", "units": inv.units, "total": str(inv.total_charged)},
+    )
+    return inv, prop
+
+
+async def confirm_sukuk_purchase(
+    session: AsyncSession, *, investment_id: uuid.UUID, certificate_id: uuid.UUID
+) -> Investment:
+    """Staff approved the Nova Sukuk certificate: the held units become the buyer's, exactly
+    as when a checkout is paid."""
+    inv = (
+        await session.execute(
+            select(Investment).where(Investment.id == investment_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if inv is None or inv.status != InvestmentStatus.pending:
+        raise AppError(
+            "INVALID_TRANSITION",
+            "This purchase is no longer waiting for its Nova certificate.",
+            status_code=409,
+        )
+    prop = (
+        await session.execute(
+            select(Property).where(Property.id == inv.property_id).with_for_update()
+        )
+    ).scalar_one()
+    _allocate_units(session, prop, inv, confirmed_via="sukuk")
+    await _count_invested(session, inv)
+    inv.payment_reference = f"sukuk:{certificate_id}"
+    await write_audit(
+        session,
+        action="investment.confirmed",
+        entity_type="investment",
+        entity_id=str(inv.id),
+        after={"via": "sukuk", "units": inv.units, "property_id": str(prop.id)},
+    )
+    await _accrue_broker_commission(session, inv)
+    return inv
+
+
+async def release_sukuk_purchase(
+    session: AsyncSession, *, investment_id: uuid.UUID, reason: str
+) -> dict:
+    """Staff rejected the Nova Sukuk certificate: the held units go back on sale."""
+    return await _release_pending(session, investment_id=investment_id, reason=reason)
 
 
 async def expire_reservations(session: AsyncSession, *, now: dt.datetime | None = None) -> int:

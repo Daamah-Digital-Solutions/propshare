@@ -1,4 +1,4 @@
-import { CreditCard, Wallet, Bitcoin, Coins, Percent, ArrowRight } from "lucide-react";
+import { CreditCard, Wallet, Bitcoin, Coins, Percent, ArrowRight, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const paymentMethods = [
@@ -6,6 +6,7 @@ const paymentMethods = [
   { icon: Wallet, label: "Apple Pay / Google Pay", description: "One-tap checkout" },
   { icon: Bitcoin, label: "Cryptocurrency", description: "BTC, ETH, USDT" },
   { icon: Coins, label: "Pronova Token", description: "5% Discount" },
+  { icon: FileText, label: "Nova Sukuk", description: "Sharia-compliant financing" },
 ];
 
 const PaymentSection = () => {
@@ -25,7 +26,7 @@ const PaymentSection = () => {
           </div>
 
           {/* Payment Methods Grid */}
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-12">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-12">
             {paymentMethods.map((method, index) => (
               <div
                 key={index}

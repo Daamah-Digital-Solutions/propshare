@@ -73,7 +73,11 @@ expected yield, fees, exit options); the assistant reads them from the same data
    credited after the team matches your transfer reference; the wallet shows pending and
    available balance separately.
 4. Open a property, choose the number of units, review the total including fees and the
-   exit options, and confirm. Your investment then appears in your portfolio, and a digital
+   exit options, and confirm. Every property takes the same payment methods: your wallet
+   balance, a card (Apple Pay and Google Pay on devices that support them), cryptocurrency
+   (you pick the coin on NOWPayments' page), Pronova (a discount off what you pay now) or a
+   Nova Sukuk certificate (our team reviews it; the units stay pledged to Nova Finance until
+   it releases them). Your investment then appears in your portfolio, and a digital
    investment certificate can be downloaded from there.
 The assistant can show your own balance, verification status, investments and payments, and
 send you to the right page, but it never invests, deposits or withdraws for you.""",
@@ -155,8 +159,12 @@ on that page.""",
         80,
         """For properties sold in installments you pay a down payment now and monthly
 instalments afterwards; the platform offers a set of plan lengths and the down payment
-depends on the length chosen. The full schedule, with the installment fee on each payment, is
-shown before you commit and afterwards under Portfolio -> Installments. Instalments are taken
+depends on the length chosen. The down payment takes any of the platform's payment methods —
+the wallet, a card (Apple Pay / Google Pay), crypto, Pronova (its discount comes off the down
+payment) or a Nova Sukuk certificate (the plan starts once our team approves it) — and the
+plan's units are held for you until it is paid. The full schedule, with the installment fee
+on each payment, is shown before you commit and afterwards under Portfolio -> Installments.
+Instalments are taken
 from your wallet automatically on their due dates, and you receive a reminder a few days
 before each one. If the wallet cannot cover an instalment on its due date, it is marked
 overdue and retried automatically once funds are there: there is no late fee and your units
@@ -343,8 +351,11 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
    تعرض صفحة الحساب حالتك، وإن رُفض الطلب تجد السبب وطريقة إعادة الإرسال.
 3. أضف أموالًا إلى محفظتك: بطاقة، عملة رقمية، أو تحويل بنكي. يُقيَّد التحويل البنكي بعد
    مطابقة الفريق لمرجع التحويل؛ تعرض المحفظة الرصيد المعلّق والمتاح كلًّا على حدة.
-4. افتح عقارًا، اختر عدد الوحدات، راجع الإجمالي شاملًا الرسوم وخيارات الخروج، ثم أكّد. يظهر
-   استثمارك في محفظتك ويمكن تنزيل شهادة استثمار رقمية منها.
+4. افتح عقارًا، اختر عدد الوحدات، راجع الإجمالي شاملًا الرسوم وخيارات الخروج، ثم أكّد. كل
+   العقارات تقبل طرق الدفع نفسها: رصيد محفظتك، أو بطاقة (مع Apple Pay وGoogle Pay على الأجهزة
+   التي تدعمهما)، أو عملة رقمية (تختار العملة من صفحة NOWPayments)، أو Pronova (خصم على ما
+   تدفعه الآن)، أو شهادة صكوك نوفا (Nova Sukuk) يراجعها فريقنا، وتبقى وحداتها مرهونة لصالح
+   Nova Finance حتى تفكّ الرهن. يظهر استثمارك في محفظتك ويمكن تنزيل شهادة استثمار رقمية منها.
 يستطيع المساعد أن يعرض رصيدك وحالة التحقق واستثماراتك ومدفوعاتك ويرشدك للصفحة الصحيحة، لكنه لا
 يستثمر ولا يودع ولا يسحب نيابةً عنك أبدًا.""",
     ),
@@ -415,7 +426,10 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
         "installments",
         80,
         """في العقارات المباعة بالأقساط تدفع دفعة أولى الآن وأقساطًا شهرية بعدها؛ تقدّم المنصة
-مجموعة مدد للخطط وتعتمد الدفعة الأولى على المدة المختارة. يُعرض الجدول الكامل، مع رسوم الأقساط
+مجموعة مدد للخطط وتعتمد الدفعة الأولى على المدة المختارة. تُدفع الدفعة الأولى بأي طريقة دفع في
+المنصة — المحفظة، أو بطاقة (Apple Pay / Google Pay)، أو عملة رقمية، أو Pronova (خصمها على
+الدفعة الأولى)، أو شهادة صكوك نوفا (تبدأ الخطة بعد موافقة فريقنا) — وتبقى وحدات الخطة محجوزة لك
+حتى يكتمل الدفع. يُعرض الجدول الكامل، مع رسوم الأقساط
 على كل دفعة، قبل التأكيد وبعده في المحفظة ← الأقساط. تُخصم الأقساط من محفظتك تلقائيًا في
 مواعيدها، ويصلك تذكير قبل كل قسط بأيام. إذا لم يكفِ رصيد المحفظة يوم الاستحقاق يُسجَّل القسط
 متأخرًا ويُعاد خصمه تلقائيًا عند توفر الرصيد: لا توجد غرامة تأخير ولا تُسحب منك وحداتك. احرص على

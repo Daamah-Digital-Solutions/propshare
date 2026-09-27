@@ -227,7 +227,9 @@ async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dic
         if not card and payment.created_at > cutoff:
             continue
         age = round((now - payment.created_at).total_seconds() / 3600)
-        what = "purchase" if payment.purpose == "investment" else "deposit"
+        what = {"investment": "purchase", "installment": "down payment"}.get(
+            payment.purpose, "deposit"
+        )
         ref = payment.provider_payment_id or "none"
         if card:
             subject = f"Card {what} still pending {age}h after checkout"

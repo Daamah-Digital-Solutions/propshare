@@ -27,7 +27,7 @@ import datetime as dt
 import decimal
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
@@ -41,6 +41,7 @@ from app.models import (
     ScheduledGift,
     SecondaryListing,
     SecondaryTrade,
+    SukukCertificate,
     Wallet,
 )
 from app.models.base import TransactionType
@@ -122,13 +123,33 @@ async def reserved_units(session: AsyncSession, user_id: uuid.UUID, property_id:
             InstallmentPlan.status == "active",
         )
     )
+    nova_pledged = await pledged_units(session, user_id, property_id)
     return (
         int(secondary or 0)
         + int(lp_open or 0)
         + int(family_pending or 0)
         + int(gift_reserved or 0)
         + int(installment_vested or 0)
+        + int(nova_pledged or 0)
     )
+
+
+async def pledged_units(session: AsyncSession, user_id: uuid.UUID, property_id: uuid.UUID) -> int:
+    """0032: units paid with an APPROVED Nova Sukuk certificate stay pledged to Nova Finance
+    until staff release the pledge. A plan's pledged units are already held (as vested units of
+    an active plan) until it completes, so they count here only once it has."""
+    total = await session.scalar(
+        select(func.coalesce(func.sum(SukukCertificate.units), 0))
+        .select_from(SukukCertificate)
+        .outerjoin(InstallmentPlan, SukukCertificate.plan_id == InstallmentPlan.id)
+        .where(
+            SukukCertificate.user_id == user_id,
+            SukukCertificate.property_id == property_id,
+            SukukCertificate.status == "approved",
+            or_(SukukCertificate.plan_id.is_(None), InstallmentPlan.status != "active"),
+        )
+    )
+    return int(total or 0)
 
 
 async def _earliest_acquisition(
@@ -488,13 +509,15 @@ async def my_holdings(session: AsyncSession, user_id: uuid.UUID) -> list[dict]:
         if held <= 0:
             continue
         reserved = await reserved_units(session, user_id, pid)
+        pledged = await pledged_units(session, user_id, pid)
         out.append(
             {
                 "property_id": str(pid),
                 "title": title,
                 "location": location,
                 "units": held,
-                "listed_units": reserved,
+                "listed_units": reserved - pledged,
+                "pledged_units": pledged,
                 "sellable_units": max(0, held - reserved),
                 "unit_price": str(unit_price),
             }

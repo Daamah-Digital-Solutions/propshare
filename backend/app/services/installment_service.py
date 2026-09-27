@@ -35,18 +35,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.core.errors import AppError
-from app.models import InstallmentPayment, InstallmentPlan, Property
+from app.models import InstallmentPayment, InstallmentPlan, Payment, Property, Wallet
 from app.models.base import PropertyStatus, TransactionType
 from app.models.identity import User
 from app.models.investments import OwnershipLedger
 from app.services import (
     installment_pdf,
     notification_service,
+    payment_service,
     settings_service,
     wallet_service,
 )
 from app.services.distribution_service import hamilton
 from app.services.investment_service import (
+    RESERVATION_TTL,
     _recompute_progress,
     below_minimum,
     minimum_error,
@@ -59,6 +61,22 @@ _REMINDER_DAYS = 3  # notify this many days before an installment is due
 
 # Down-payment percent per duration — mirrors the frontend installmentDurations map.
 _DOWN_PCT: dict[int, int] = {6: 30, 12: 25, 18: 20, 24: 15}
+
+# How the down payment is paid (0032): from the wallet at once, or through a hosted checkout —
+# card (with Apple Pay / Google Pay), crypto or Pronova — whose webhook starts the plan. A Nova
+# Sukuk certificate goes through ``open_plan`` + staff review instead (sukuk_service).
+DIRECT_METHODS = frozenset({"card", "crypto", "pronova"})
+PLAN_METHODS = frozenset({"wallet", *DIRECT_METHODS})
+# A plan in one of these holds its units but has not started: nothing paid, nothing vested.
+PENDING_STATUSES = ("pending_payment", "pending_review")
+# How a receipt says the payment was made (None = charged from the wallet).
+_PAID_WITH = {
+    None: "from your wallet",
+    "card": "by card",
+    "crypto": "in crypto",
+    "pronova": "with Pronova",
+    "sukuk": "with your Nova Sukuk certificate",
+}
 
 
 def _utcnow() -> dt.datetime:
@@ -150,6 +168,10 @@ def serialize_plan(
         "fee_rate": str(plan.fee_rate),
         "vested_units": plan.vested_units,
         "status": plan.status,
+        "payment_method": plan.payment_method or "wallet",
+        "discount_amount": str(plan.discount_amount or 0),
+        "reservation_expires_at": plan.reservation_expires_at,
+        "failure_reason": plan.failure_reason,
         "created_at": plan.created_at,
         "completed_at": plan.completed_at,
         "payments": [serialize_payment(p) for p in sorted(payments, key=lambda x: x.seq)],
@@ -170,11 +192,17 @@ async def _plan_dict(session: AsyncSession, plan: InstallmentPlan) -> dict:
     client can present the schedule under the property it belongs to."""
     payments = await _payments_for(session, plan.id)
     prop = await session.get(Property, plan.property_id)
-    return serialize_plan(plan, payments, prop)
+    out = serialize_plan(plan, payments, prop)
+    # A down-payment checkout still open: where to pay it (an Idempotency-Key replay gets it too).
+    if plan.status == "pending_payment" and plan.payment_id:
+        pay = await session.get(Payment, plan.payment_id)
+        out["payment_id"] = plan.payment_id
+        out["checkout_url"] = ((pay.raw_payload or {}) if pay else {}).get("checkout_url")
+    return out
 
 
 # --- create a plan (reserve allocation + build schedule + pay down payment) --- #
-async def create_plan(
+async def open_plan(
     session: AsyncSession,
     *,
     investor_id: uuid.UUID,
@@ -182,16 +210,11 @@ async def create_plan(
     amount: float,
     duration_months: int,
     idempotency_key: str,
-) -> dict:
-    # Idempotency-Key replay -> the existing plan (no double reserve / double charge).
-    existing = (
-        await session.execute(
-            select(InstallmentPlan).where(InstallmentPlan.idempotency_key == idempotency_key)
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return await _plan_dict(session, existing)
-
+    status: str,
+    method: str,
+) -> tuple[InstallmentPlan, Property, InstallmentPayment]:
+    """Validate, lock the property, RESERVE the whole allocation and write the plan with its
+    schedule — nothing paid yet. Returns the plan, the LOCKED property and the down payment."""
     if duration_months not in _DOWN_PCT:
         raise AppError(
             "INVALID_DURATION",
@@ -240,7 +263,6 @@ async def create_plan(
 
     # Reserve the whole allocation out of the pool now (the plan holds the unvested units).
     prop.available_units -= units_total
-    prop.investors_count = prop.investors_count + 1
 
     plan = InstallmentPlan(
         investor_id=investor_id,
@@ -252,7 +274,8 @@ async def create_plan(
         fee_rate=fee_rate,
         management_fee_rate=mgmt_rate,
         vested_units=0,
-        status="active",
+        status=status,
+        payment_method=method,
         idempotency_key=idempotency_key,
     )
     session.add(plan)
@@ -295,16 +318,109 @@ async def create_plan(
             "duration_months": duration_months,
             "down_payment_pct": down_pct,
             "fee_rate": str(fee_rate),
+            "payment_method": method,
+            "status": status,
         },
     )
-
-    # Pay the down payment now (atomic). INSUFFICIENT_FUNDS propagates -> the whole plan
-    # rolls back (no reservation left behind).
     assert down_payment is not None
-    await _charge_payment(
-        session, plan=plan, prop=prop, payment=down_payment, idempotency_key=f"{idempotency_key}:0"
-    )
+    return plan, prop, down_payment
 
+
+async def create_plan(
+    session: AsyncSession,
+    *,
+    investor_id: uuid.UUID,
+    property_id: uuid.UUID,
+    amount: float,
+    duration_months: int,
+    idempotency_key: str,
+    method: str = "wallet",
+    success_url: str = "",
+    cancel_url: str = "",
+    ipn_url: str = "",
+) -> dict:
+    # Idempotency-Key replay -> the existing plan (no double reserve / double charge).
+    existing = (
+        await session.execute(
+            select(InstallmentPlan).where(InstallmentPlan.idempotency_key == idempotency_key)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return await _plan_dict(session, existing)
+
+    if method not in PLAN_METHODS:
+        raise AppError(
+            "INVALID_METHOD",
+            "Pay the down payment from the wallet, by card, in crypto or with Pronova.",
+            status_code=422,
+        )
+    # Fail fast on an unconfigured provider BEFORE reserving any units.
+    if method in DIRECT_METHODS and not payment_service.provider_configured(method):
+        provider = payment_service.provider_for(method)
+        raise AppError(
+            "PAYMENTS_NOT_CONFIGURED", f"{provider} is not configured yet.", status_code=503
+        )
+
+    plan, prop, down_payment = await open_plan(
+        session,
+        investor_id=investor_id,
+        property_id=property_id,
+        amount=amount,
+        duration_months=duration_months,
+        idempotency_key=idempotency_key,
+        status="active" if method == "wallet" else "pending_payment",
+        method=method,
+    )
+    if method == "wallet":
+        # Pay the down payment now (atomic). INSUFFICIENT_FUNDS propagates -> the whole plan
+        # rolls back (no reservation left behind).
+        prop.investors_count = prop.investors_count + 1
+        await _charge_payment(
+            session,
+            plan=plan,
+            prop=prop,
+            payment=down_payment,
+            idempotency_key=f"{idempotency_key}:0",
+        )
+        return await _plan_dict(session, plan)
+
+    # A hosted checkout pays the down payment and its webhook starts the plan. The units stay
+    # held meanwhile, like a direct purchase's, and go back on sale if it is not paid in time.
+    plan.reservation_expires_at = _utcnow() + RESERVATION_TTL
+    due = down_payment.total_amount
+    if method == "pronova":
+        # Pronova (D5, as on a purchase): a discount off what is paid now — the down payment
+        # and its fee. Platform-funded: the schedule, the vesting and the property's funding
+        # keep the full amounts.
+        pct = await settings_service.get_pronova_discount_pct(session)
+        plan.discount_amount = _q(due * pct / _HUNDRED)
+        due = _q(due - plan.discount_amount)
+    checkout = await payment_service.create_plan_checkout(
+        session,
+        user_id=investor_id,
+        plan_id=plan.id,
+        amount=due,
+        method=method,
+        success_url=success_url,
+        cancel_url=cancel_url,
+        ipn_url=ipn_url,
+    )
+    plan.payment_id = checkout["payment_id"]
+    await write_audit(
+        session,
+        action="installment.plan.reserved",
+        entity_type="installment_plan",
+        entity_id=str(plan.id),
+        actor_id=investor_id,
+        after={
+            "via": method,
+            "units": plan.units_total,
+            "due_now": str(due),
+            "discount": str(plan.discount_amount),
+            "expires_at": plan.reservation_expires_at.isoformat(),
+            "payment_id": str(checkout["payment_id"]),
+        },
+    )
     return await _plan_dict(session, plan)
 
 
@@ -316,29 +432,44 @@ async def _charge_payment(
     prop: Property,
     payment: InstallmentPayment,
     idempotency_key: str,
+    funded_by: str | None = None,
 ) -> None:
     """Debit the wallet (base + fee) and VEST the payment's units. Caller holds the property
     lock. Raises INSUFFICIENT_FUNDS BEFORE any write (the wallet check precedes the ledger
-    writes) so a caller that catches it leaves no partial state."""
+    writes) so a caller that catches it leaves no partial state.
+
+    ``funded_by`` (card | crypto | pronova | sukuk): the payment was made outside the wallet —
+    a down-payment checkout or a Nova Sukuk certificate — so nothing is debited; everything
+    else (vesting, funding, cost basis, receipt) is the same."""
     if payment.status == "paid":
         return  # idempotent
 
-    line_items: list[tuple[TransactionType, decimal.Decimal, str | None]] = [
-        (
-            TransactionType.investment,
-            payment.base_amount,
-            f"Installment {payment.seq} — {prop.title}",
+    if funded_by is None:
+        line_items: list[tuple[TransactionType, decimal.Decimal, str | None]] = [
+            (
+                TransactionType.investment,
+                payment.base_amount,
+                f"Installment {payment.seq} — {prop.title}",
+            )
+        ]
+        if payment.fee_amount > 0:
+            line_items.append((TransactionType.fee, payment.fee_amount, "Installment fee"))
+        inv_wallet = await wallet_service.debit(
+            session,
+            user_id=plan.investor_id,
+            reference_id=plan.id,
+            line_items=line_items,
+            actor_id=plan.investor_id,
         )
-    ]
-    if payment.fee_amount > 0:
-        line_items.append((TransactionType.fee, payment.fee_amount, "Installment fee"))
-    inv_wallet = await wallet_service.debit(
-        session,
-        user_id=plan.investor_id,
-        reference_id=plan.id,
-        line_items=line_items,
-        actor_id=plan.investor_id,
-    )
+    else:
+        inv_wallet = (
+            await session.execute(
+                select(Wallet)
+                .where(Wallet.user_id == plan.investor_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
     # Count the installment PRINCIPAL toward the investor's invested cost basis — parity with a
     # direct buy (investment_service adds the subtotal). The vested units already contribute to
     # the portfolio's current_value, so without this the portfolio reports a phantom gain.
@@ -407,18 +538,21 @@ async def _charge_payment(
     # auto-charge (this is the single settle path), so every installment charged from the
     # wallet reaches the investor as a confirmation, not just a silent balance change.
     prop_title = prop.title
+    paid_with = _PAID_WITH.get(funded_by, "from your wallet")
+    if funded_by == "pronova" and plan.discount_amount:
+        paid_with += f" (Pronova discount ${plan.discount_amount})"
     if plan.status == "completed":
         notif_title = "Installment plan completed"
         notif_msg = (
             f"Your final installment of ${payment.total_amount} for {prop_title} was paid "
-            f"from your wallet. All {plan.units_total} units are now fully vested — the plan "
+            f"{paid_with}. All {plan.units_total} units are now fully vested — the plan "
             "is complete."
         )
     else:
         label = "down payment" if payment.seq == 0 else f"installment {payment.seq}"
         notif_msg = (
-            f"Your {label} of ${payment.total_amount} for {prop_title} was paid from your "
-            f"wallet. {plan.vested_units} of {plan.units_total} units are now vested."
+            f"Your {label} of ${payment.total_amount} for {prop_title} was paid {paid_with}. "
+            f"{plan.vested_units} of {plan.units_total} units are now vested."
         )
         notif_title = "Installment paid"
     await notification_service.notify(
@@ -443,8 +577,287 @@ async def _charge_payment(
             "fee": str(payment.fee_amount),
             "vested_units": payment.vest_units,
             "plan_status": plan.status,
+            "funded_by": funded_by or "wallet",
         },
     )
+
+
+# --- a down payment paid outside the wallet: start / release the plan ---------- #
+# Lock order, as everywhere else in this module (pay_installment, run_due): the plan's payment
+# rows, then the plan, then the property — never the plan before its payments.
+async def _lock_plan_rows(
+    session: AsyncSession, plan_id: uuid.UUID
+) -> tuple[InstallmentPlan | None, list[InstallmentPayment]]:
+    rows = (
+        (
+            await session.execute(
+                select(InstallmentPayment)
+                .where(InstallmentPayment.plan_id == plan_id)
+                .order_by(InstallmentPayment.seq)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    plan = (
+        await session.execute(
+            select(InstallmentPlan)
+            .where(InstallmentPlan.id == plan_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+    return plan, list(rows)
+
+
+async def _lock_property(session: AsyncSession, property_id: uuid.UUID) -> Property:
+    return (
+        await session.execute(select(Property).where(Property.id == property_id).with_for_update())
+    ).scalar_one()
+
+
+async def _start_plan(
+    session: AsyncSession,
+    *,
+    plan: InstallmentPlan,
+    prop: Property,
+    payments: list[InstallmentPayment],
+    funded_by: str,
+    reference: str,
+) -> None:
+    """The down payment arrived outside the wallet (a checkout's webhook, or staff approving a
+    Nova Sukuk certificate): the plan starts. Caller holds the payment, plan and property locks.
+
+    The schedule runs from TODAY: a plan approved days after it was requested (a Nova review)
+    or paid late must not find its first installments already due, or overdue."""
+    today = _utcnow().date()
+    for p in payments:
+        if p.status != "paid":
+            p.status = "scheduled"
+            p.due_date = today if p.seq == 0 else _add_months(today, p.seq)
+            p.reminder_sent_at = None
+    plan.status = "active"
+    plan.reservation_expires_at = None
+    plan.failure_reason = None
+    plan.cancelled_at = None
+    prop.investors_count = prop.investors_count + 1
+    down = next(p for p in payments if p.seq == 0)
+    await _charge_payment(
+        session, plan=plan, prop=prop, payment=down, idempotency_key=reference, funded_by=funded_by
+    )
+    await write_audit(
+        session,
+        action="installment.plan.started",
+        entity_type="installment_plan",
+        entity_id=str(plan.id),
+        after={"via": funded_by, "units": plan.units_total, "reference": reference},
+    )
+
+
+async def _release_plan(
+    session: AsyncSession,
+    *,
+    plan: InstallmentPlan,
+    prop: Property,
+    payments: list[InstallmentPayment],
+    status: str,
+    reason: str,
+) -> None:
+    """A plan that never started gives its units back (its checkout failed or expired, or its
+    Nova certificate was rejected). Caller holds the payment, plan and property locks."""
+    restored = plan.units_total - plan.vested_units
+    prop.available_units += restored
+    if prop.status == PropertyStatus.funded and prop.available_units > 0:
+        prop.status = PropertyStatus.active
+    plan.status = status
+    plan.failure_reason = reason
+    plan.cancelled_at = _utcnow()
+    plan.reservation_expires_at = None
+    for p in payments:
+        if p.status != "paid":
+            p.status = "cancelled"
+    await write_audit(
+        session,
+        action="installment.plan.released",
+        entity_type="installment_plan",
+        entity_id=str(plan.id),
+        after={"status": status, "reason": reason, "restored_units": restored},
+    )
+
+
+async def _refund_down_payment(
+    session: AsyncSession, *, payment: Payment, user_id: uuid.UUID, title: str, why: str
+) -> None:
+    """Money arrived for a down payment that cannot start its plan: it goes to the wallet."""
+    captured = payment.amount_captured or payment.amount
+    await wallet_service.credit(
+        session,
+        user_id=user_id,
+        amount=captured,
+        reference_id=payment.id,
+        tx_type=TransactionType.deposit,
+        description="Refund — installment plan could not start",
+    )
+    await notification_service.notify(
+        session,
+        user_id=user_id,
+        type="installment",
+        title="Installment plan refunded",
+        message=f"{why} We refunded {captured} {payment.currency} to your wallet.",
+        email_category="investment_updates",
+    )
+    await write_audit(
+        session,
+        action="installment.plan.reconciled_refunded",
+        entity_type="payment",
+        entity_id=str(payment.id),
+        after={"refunded": str(captured), "plan": title},
+    )
+
+
+async def confirm_down_payment(session: AsyncSession, *, payment: Payment) -> dict:
+    """A down-payment checkout was paid (payment_service._apply, under the payment row lock):
+    start the plan. Paid after the plan was released: start it if its units are still free,
+    else refund the money to the wallet — as when its plan cannot be found at all."""
+    plan = None
+    rows: list[InstallmentPayment] = []
+    if payment.related_plan_id is not None:
+        plan, rows = await _lock_plan_rows(session, payment.related_plan_id)
+    if plan is None or not rows:
+        await _refund_down_payment(
+            session,
+            payment=payment,
+            user_id=payment.user_id,
+            title="unknown",
+            why="Your down payment reached us, but its installment plan no longer exists.",
+        )
+        return {"status": "processed", "result": "refunded"}
+    if plan.status in ("active", "completed"):
+        return {"status": "already_confirmed"}
+    prop = await _lock_property(session, plan.property_id)
+    funded_by = payment.payment_method or "card"
+    reference = f"payment:{payment.id}"
+    if plan.status == "pending_payment":
+        await _start_plan(
+            session, plan=plan, prop=prop, payments=rows, funded_by=funded_by, reference=reference
+        )
+        return {"status": "processed", "result": "plan_started"}
+
+    if prop.status == PropertyStatus.active and prop.available_units >= plan.units_total:
+        prop.available_units -= plan.units_total
+        await _start_plan(
+            session, plan=plan, prop=prop, payments=rows, funded_by=funded_by, reference=reference
+        )
+        await write_audit(
+            session,
+            action="installment.plan.reconciled_started",
+            entity_type="installment_plan",
+            entity_id=str(plan.id),
+            after={"payment_id": str(payment.id)},
+        )
+        return {"status": "processed", "result": "reconciled_started"}
+
+    plan.failure_reason = "units_unavailable_refunded"
+    await _refund_down_payment(
+        session,
+        payment=payment,
+        user_id=plan.investor_id,
+        title=prop.title,
+        why=f"The units of {prop.title} were taken before your down payment confirmed.",
+    )
+    return {"status": "processed", "result": "refunded"}
+
+
+async def release_plan_for_payment(
+    session: AsyncSession, *, payment: Payment, reason: str = "payment_failed"
+) -> dict:
+    """A down-payment checkout failed or expired at the provider: release the plan's units."""
+    if payment.related_plan_id is None:
+        return {"status": "ignored_no_plan"}
+    plan, rows = await _lock_plan_rows(session, payment.related_plan_id)
+    if plan is None or plan.status != "pending_payment":
+        return {"status": "noop"}
+    prop = await _lock_property(session, plan.property_id)
+    await _release_plan(
+        session, plan=plan, prop=prop, payments=rows, status="cancelled", reason=reason
+    )
+    return {"status": "released"}
+
+
+async def expire_pending_plans(session: AsyncSession, *, now: dt.datetime | None = None) -> int:
+    """Release the units of plans whose down-payment checkout was not paid in time (the same
+    window as a direct purchase). A webhook starting the same plan first wins: the status is
+    checked again under the locks."""
+    cutoff = now or _utcnow()
+    candidates = (
+        (
+            await session.execute(
+                select(InstallmentPlan.id).where(
+                    InstallmentPlan.status == "pending_payment",
+                    InstallmentPlan.reservation_expires_at < cutoff,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    released = 0
+    for plan_id in candidates:
+        plan, rows = await _lock_plan_rows(session, plan_id)
+        if plan is None or plan.status != "pending_payment":
+            continue
+        if plan.reservation_expires_at is None or plan.reservation_expires_at >= cutoff:
+            continue
+        prop = await _lock_property(session, plan.property_id)
+        await _release_plan(
+            session,
+            plan=plan,
+            prop=prop,
+            payments=rows,
+            status="expired",
+            reason="reservation_expired",
+        )
+        released += 1
+    return released
+
+
+async def start_sukuk_plan(
+    session: AsyncSession, *, plan_id: uuid.UUID, certificate_id: uuid.UUID
+) -> InstallmentPlan:
+    """Staff approved the Nova Sukuk certificate that pays this plan's down payment."""
+    plan, rows = await _lock_plan_rows(session, plan_id)
+    if plan is None or plan.status != "pending_review":
+        raise AppError(
+            "INVALID_TRANSITION",
+            "This plan is not waiting for a Nova certificate.",
+            status_code=409,
+        )
+    prop = await _lock_property(session, plan.property_id)
+    await _start_plan(
+        session,
+        plan=plan,
+        prop=prop,
+        payments=rows,
+        funded_by="sukuk",
+        reference=f"sukuk:{certificate_id}",
+    )
+    return plan
+
+
+async def cancel_sukuk_plan(
+    session: AsyncSession, *, plan_id: uuid.UUID, reason: str
+) -> InstallmentPlan | None:
+    """Staff rejected the Nova Sukuk certificate: the plan never starts, its units go back."""
+    plan, rows = await _lock_plan_rows(session, plan_id)
+    if plan is None or plan.status != "pending_review":
+        return plan
+    prop = await _lock_property(session, plan.property_id)
+    await _release_plan(
+        session, plan=plan, prop=prop, payments=rows, status="cancelled", reason=reason
+    )
+    return plan
 
 
 # --- pay a specific installment (manual, early/catch-up) -------------------- #
@@ -625,12 +1038,15 @@ async def run_due(session: AsyncSession, *, now: dt.datetime | None = None) -> d
         (
             await session.execute(
                 select(InstallmentPayment)
+                .join(InstallmentPlan, InstallmentPlan.id == InstallmentPayment.plan_id)
                 .where(
                     InstallmentPayment.status.in_(("scheduled", "overdue")),
                     InstallmentPayment.due_date <= today,
                     InstallmentPayment.seq > 0,
+                    # a plan that has not started (0032) is not charged, nor its rows locked
+                    InstallmentPlan.status == "active",
                 )
-                .with_for_update(skip_locked=True)
+                .with_for_update(skip_locked=True, of=InstallmentPayment)
                 .order_by(InstallmentPayment.due_date)
             )
         )

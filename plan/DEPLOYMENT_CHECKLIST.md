@@ -53,6 +53,20 @@ Conventions used below:
 4. Reach: from a US platform, Connect pays connected accounts in the US, UK, EEA, Canada and
    Switzerland only. GCC investors stay on the manual (admin-paid) rail.
 
+### 1.2b Payment methods on every property (0032)
+Every property offers the same list, for a purchase and for an installment plan's down payment:
+wallet, card, Apple Pay, Google Pay (all three on Stripe's checkout — the wallets appear on
+devices that support them), crypto (NOWPayments' page), Pronova (`pronova_discount_pct` off
+what is paid now, settled on Stripe) and Nova Sukuk. A rail whose keys are missing shows as
+"not available", never hidden (`GET /api/v1/investments/payment-options`).
+- **Nova Sukuk** needs no keys: the investor uploads a Nova Digital Finance certificate (PDF);
+  staff review it in `/admin` → **Nova Sukuk** (approve / reject with a reason). The units are
+  held during the review; approved, they stay pledged to Nova Finance (not sellable or
+  transferable) until staff press **Release the pledge**. Set `SUPPORT_INBOX_EMAIL` so new
+  certificates also arrive by email.
+- The `investments/maintenance/expire-reservations` cron also releases installment plans whose
+  down-payment checkout was not paid in time (30 minutes).
+
 ### 1.3 NOWPayments — crypto deposits (IPN)
 1. Create a NOWPayments account; get the **API key** and set an **IPN secret**.
 2. Register the **IPN callback** → `API/api/v1/payments/webhooks/nowpayments`

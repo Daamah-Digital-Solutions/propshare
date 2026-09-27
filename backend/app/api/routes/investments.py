@@ -14,11 +14,13 @@ signed webhook (see routes/payments.py), never on a browser redirect.
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import Response
 
 from app.api.deps import AdminOrCronDep, KycVerifiedDep, PrincipalDep, SessionDep
+from app.api.routes._sukuk_form import certificate_upload
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import Investment
@@ -28,17 +30,22 @@ from app.schemas.investment import (
     InvestmentCreateOut,
     InvestmentListOut,
     InvestmentOut,
+    PaymentOptionsOut,
     PortfolioOut,
     PronovaSettingsOut,
     ReinvestIn,
     ReinvestOut,
     ReinvestSettingsOut,
+    SukukCertificateOut,
 )
 from app.services import (
     certificate_service,
     distribution_service,
+    installment_service,
     investment_service,
+    payment_service,
     settings_service,
+    sukuk_service,
 )
 
 router = APIRouter(prefix="/api/v1/investments", tags=["investments"])
@@ -96,7 +103,9 @@ async def expire_reservations(caller: AdminOrCronDep, session: SessionDep) -> di
     """Release units held by direct-pay reservations that lapsed unpaid. Cron target
     (admin OR X-Cron-Secret); idempotent (SKIP LOCKED), also runs on demand."""
     count = await investment_service.expire_reservations(session)
-    return {"expired": count}
+    # installment plans whose down-payment checkout was not paid in time (0032)
+    plans = await installment_service.expire_pending_plans(session)
+    return {"expired": count, "expired_plans": plans}
 
 
 @router.get("", response_model=InvestmentListOut)
@@ -201,6 +210,57 @@ async def my_property_documents_zip(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/payment-options", response_model=PaymentOptionsOut)
+async def payment_options(session: SessionDep):
+    """The ways to pay for a property — the SAME list on every property — and which are live
+    now (a rail whose provider is not set up is shown as not available, never hidden). Public:
+    the property page shows them before sign-in."""
+    pct = await settings_service.get_pronova_discount_pct(session)
+    return PaymentOptionsOut(**payment_service.purchase_options(), pronova_discount_pct=str(pct))
+
+
+@router.post("/sukuk", response_model=SukukCertificateOut, status_code=201)
+async def buy_with_sukuk(
+    request: Request,
+    session: SessionDep,
+    principal: KycVerifiedDep,
+    property_id: Annotated[uuid.UUID, Form()],
+    amount: Annotated[float, Form(gt=0)],
+    file: Annotated[UploadFile, File()],
+    certificate_no: Annotated[str | None, Form()] = None,
+    issuer: Annotated[str | None, Form()] = None,
+    certificate_value: Annotated[str | None, Form()] = None,
+    valid_until: Annotated[str | None, Form()] = None,
+):
+    """Buy units paying with a Nova Sukuk certificate (PDF): the units are held while staff
+    review it; approved, they are the buyer's (pledged to Nova Finance). Idempotency-Key."""
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if not idempotency_key:
+        raise AppError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "An Idempotency-Key header is required for investments.",
+            status_code=400,
+        )
+    cert = await certificate_upload(file, certificate_no, issuer, certificate_value, valid_until)
+    result = await sukuk_service.submit_purchase(
+        session,
+        user_id=principal.user_id,
+        property_id=property_id,
+        amount=amount,
+        idempotency_key=idempotency_key,
+        cert=cert,
+    )
+    return SukukCertificateOut(**result)
+
+
+@router.get("/sukuk", response_model=list[SukukCertificateOut])
+async def my_sukuk_certificates(principal: PrincipalDep, session: SessionDep):
+    """The caller's Nova Sukuk certificates (purchases and plan down payments) and their
+    review: waiting, approved (pledged), not accepted (with staff's reason) or released."""
+    rows = await sukuk_service.list_mine(session, principal.user_id)
+    return [SukukCertificateOut(**r) for r in rows]
 
 
 @router.get("/{investment_id}", response_model=InvestmentOut)

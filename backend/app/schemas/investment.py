@@ -84,3 +84,37 @@ class PronovaSettingsOut(BaseModel):
     # Live, admin-configurable Pronova pay discount (% off the total payable). The UI shows
     # this real rate; the server applies it to the charged amount at purchase.
     discount_pct: str
+
+
+class PaymentOptionsOut(BaseModel):
+    """The ways to pay for a property (the same on every property) and which are live now."""
+
+    wallet: bool
+    card: bool
+    apple_pay: bool
+    google_pay: bool
+    crypto: bool
+    pronova: bool
+    sukuk: bool
+    pronova_discount_pct: str
+
+
+class SukukCertificateOut(BaseModel):
+    """A Nova Sukuk certificate the investor submitted, and where its review stands."""
+
+    certificate_id: uuid.UUID
+    kind: str  # purchase | installment (a plan's down payment)
+    status: str  # pending | approved (pledged to Nova Finance) | rejected | released
+    investment_id: uuid.UUID | None = None
+    plan_id: uuid.UUID | None = None
+    property_id: uuid.UUID
+    property_title: str
+    property_slug: str | None = None
+    units: int
+    amount_due: str
+    certificate_no: str | None = None
+    issuer: str | None = None
+    review_note: str | None = None
+    created_at: dt.datetime | None = None
+    reviewed_at: dt.datetime | None = None
+    released_at: dt.datetime | None = None

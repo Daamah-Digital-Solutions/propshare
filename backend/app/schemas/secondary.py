@@ -58,6 +58,8 @@ class HoldingOut(BaseModel):
     location: str | None
     units: int
     listed_units: int
+    # held for Nova Finance until staff release the pledge (0032)
+    pledged_units: int = 0
     sellable_units: int
     unit_price: str
 

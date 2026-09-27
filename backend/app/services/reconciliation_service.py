@@ -50,7 +50,9 @@ _CHECKS: dict[str, str] = {
                COALESCE((SELECT SUM(i.units) FROM investments i
                          WHERE i.property_id = p.id AND i.status = 'pending'), 0) AS reserved,
                COALESCE((SELECT SUM(ip.units_total - ip.vested_units) FROM installment_plans ip
-                         WHERE ip.property_id = p.id AND ip.status = 'active'), 0) AS unvested
+                         WHERE ip.property_id = p.id
+                           AND ip.status IN ('active', 'pending_payment', 'pending_review')), 0)
+                   AS unvested
         FROM properties p
         WHERE p.total_units <> p.available_units
               + COALESCE((SELECT SUM(o.units) FROM ownership_ledger o
@@ -58,7 +60,8 @@ _CHECKS: dict[str, str] = {
               + COALESCE((SELECT SUM(i.units) FROM investments i
                           WHERE i.property_id = p.id AND i.status = 'pending'), 0)
               + COALESCE((SELECT SUM(ip.units_total - ip.vested_units) FROM installment_plans ip
-                          WHERE ip.property_id = p.id AND ip.status = 'active'), 0)
+                          WHERE ip.property_id = p.id
+                            AND ip.status IN ('active', 'pending_payment', 'pending_review')), 0)
     """,
     "ownership_nonneg": """
         SELECT user_id::text AS user_id, property_id::text AS property_id,

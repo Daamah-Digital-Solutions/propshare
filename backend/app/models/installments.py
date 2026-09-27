@@ -58,8 +58,24 @@ class InstallmentPlan(Base):
     fee_rate: Mapped[decimal.Decimal] = mapped_column(Numeric(6, 3), nullable=False)
     management_fee_rate: Mapped[decimal.Decimal] = mapped_column(Numeric(6, 3), nullable=False)
     vested_units: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # active | completed; before it starts (0032): pending_payment (down-payment checkout
+    # open) | pending_review (Nova Sukuk certificate with staff); never started: cancelled |
+    # expired (its units are back on sale)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     idempotency_key: Mapped[str | None] = mapped_column(Text)
+    # how the down payment is paid (0032): wallet | card | crypto | pronova | sukuk;
+    # NULL on plans created before (all from the wallet)
+    payment_method: Mapped[str | None] = mapped_column(Text)
+    payment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    reservation_expires_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    # Pronova discount on the down payment (platform-funded; the schedule keeps full amounts)
+    discount_amount: Mapped[decimal.Decimal] = mapped_column(
+        Numeric(15, 2), nullable=False, server_default="0"
+    )
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+    cancelled_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )

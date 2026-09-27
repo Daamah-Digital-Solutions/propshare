@@ -7,9 +7,6 @@ import {
   Users, 
   Clock, 
   TrendingUp, 
-  CreditCard, 
-  Wallet,
-  Coins,
   ArrowRight,
   Info,
   CheckCircle,
@@ -24,6 +21,14 @@ import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { investApi, ApiError, type InvestMethod } from "@/lib/api";
 import { rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
+import { PaymentMethodList } from "@/components/payments/PaymentMethodList";
+import {
+  EMPTY_SUKUK_DRAFT,
+  SukukCertificateFields,
+  sukukReady,
+  type SukukDraft,
+} from "@/components/payments/SukukCertificateFields";
+import { payMethod, type PayMethodId } from "@/lib/paymentMethods";
 
 interface PropertyData {
   propertyValue: number;
@@ -50,23 +55,10 @@ interface InvestmentCalculatorProps {
   openReview?: boolean;
 }
 
-// Funding rails the invest UI offers: pay-from-wallet (Phase 4 balance), card, and Pronova
-// (a branded rail that settles via card with a server-applied discount off the total — D5,
-// owner-enabled). The server computes the real charge; the client only displays the rate.
-const paymentMethods: {
-  id: string;
-  icon: typeof CreditCard;
-  label: string;
-  apiMethod?: InvestMethod;
-  disabled?: boolean;
-  badge?: string;
-}[] = [
-  { id: "wallet", icon: Wallet, label: "Wallet Balance", apiMethod: "wallet" },
-  { id: "card", icon: CreditCard, label: "Card", apiMethod: "card" },
-  // Pronova is a branded rail that settles via card behind the scenes; the server applies a
-  // real discount off the total. Distinct from plain "Card" (D5, owner-enabled).
-  { id: "pronova", icon: Coins, label: "Pronova Token", apiMethod: "pronova", badge: "5% OFF" },
-];
+// Funding rails: the ONE list every property offers (src/lib/paymentMethods.ts) — wallet,
+// card / Apple Pay / Google Pay, crypto, Pronova (a discount off the total, settled on
+// Stripe — D5) and Nova Sukuk (a certificate our team reviews). The server computes the real
+// charge; the client only displays the rates.
 
 const InvestmentCalculator = ({
   propertyId,
@@ -75,7 +67,8 @@ const InvestmentCalculator = ({
   setInvestmentAmount,
   openReview = false,
 }: InvestmentCalculatorProps) => {
-  const [selectedPayment, setSelectedPayment] = useState("wallet");
+  const [selectedPayment, setSelectedPayment] = useState<PayMethodId>("wallet");
+  const [sukuk, setSukuk] = useState<SukukDraft>(EMPTY_SUKUK_DRAFT);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const reviewOpened = useRef(false);
@@ -88,8 +81,9 @@ const InvestmentCalculator = ({
   const { reinvestState, clearReinvestment } = useReinvest();
   const queryClient = useQueryClient();
 
-  const selectedMethod = paymentMethods.find(m => m.id === selectedPayment);
+  const selectedMethod = payMethod(selectedPayment);
   const pronovaSelected = selectedPayment === "pronova";
+  const sukukSelected = selectedPayment === "sukuk";
 
   // Fee rates come from the backend (admin-configurable platform_settings), not
   // hardcoded constants. Platform fee is charged once AT PURCHASE; the management
@@ -99,6 +93,10 @@ const InvestmentCalculator = ({
   const PURCHASE_FEE_RATE = platformPct / 100;
   const ANNUAL_MANAGEMENT_FEE_RATE = mgmtPct / 100;
   const reinvesting = reinvestState.isReinvesting;
+  // a reinvestment is paid from the wallet: the other methods are locked meanwhile
+  useEffect(() => {
+    if (reinvesting && selectedPayment !== "wallet") setSelectedPayment("wallet");
+  }, [reinvesting, selectedPayment]);
   // Whole units only (the server rounds the amount down at purchase): say how many it buys.
   const unitPrice = Number(propertyData.unitPrice ?? 0);
   const wholeUnits = unitPrice > 0 ? Math.floor((investmentAmount + 1e-9) / unitPrice) : 0;
@@ -143,9 +141,32 @@ const InvestmentCalculator = ({
   const quickAmounts = [100, 500, 1000, 2500, 5000];
 
   const handleConfirmPayment = async () => {
-    const apiMethod = selectedMethod?.apiMethod ?? "wallet";
+    const apiMethod = selectedMethod.apiMethod;
     setIsSubmitting(true);
     try {
+      if (!reinvesting && apiMethod === "sukuk") {
+        // Nova Sukuk: the certificate goes to our team; the units are held meanwhile.
+        const r = await investApi.buyWithSukuk(
+          { property_id: propertyId, amount: investmentAmount },
+          {
+            file: sukuk.file as File,
+            certificate_no: sukuk.certificate_no,
+            issuer: sukuk.issuer,
+            certificate_value: sukuk.certificate_value,
+            valid_until: sukuk.valid_until,
+          },
+          crypto.randomUUID(),
+        );
+        toast.success("Certificate sent for review", {
+          description: `Your ${r.units} unit(s) are held for you while our team reviews it (it must cover $${r.amount_due}). Follow it in your dashboard.`,
+        });
+        setShowConfirmation(false);
+        setSukuk(EMPTY_SUKUK_DRAFT);
+        queryClient.invalidateQueries({ queryKey: ["property"] });
+        queryClient.invalidateQueries({ queryKey: ["investments"] });
+        queryClient.invalidateQueries({ queryKey: ["sukuk"] });
+        return;
+      }
       if (reinvesting) {
         // Reinvest path: the SERVER applies the discount + computes the units/price.
         const r = await investApi.reinvest(
@@ -165,7 +186,7 @@ const InvestmentCalculator = ({
         return;
       }
       const res = await investApi.create(
-        { property_id: propertyId, amount: investmentAmount, method: apiMethod },
+        { property_id: propertyId, amount: investmentAmount, method: apiMethod as InvestMethod },
         crypto.randomUUID(),
       );
       if (res.checkout_url) {
@@ -195,10 +216,14 @@ const InvestmentCalculator = ({
             ? "Your wallet balance is too low. Add funds and try again."
             : code === "INSUFFICIENT_UNITS" || code === "PROPERTY_NOT_OPEN"
               ? "Those units are no longer available."
-              : err instanceof Error
-                ? err.message
-                : "Something went wrong. Please try again.";
-      toast.error("Investment failed", { description: message });
+              : code === "PAYMENTS_NOT_CONFIGURED"
+                ? "This payment method is not available right now. Please choose another."
+                : err instanceof Error
+                  ? err.message
+                  : "Something went wrong. Please try again.";
+      toast.error(sukukSelected ? "Certificate not sent" : "Investment failed", {
+        description: message,
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -341,32 +366,17 @@ const InvestmentCalculator = ({
           <label className="block text-sm font-medium text-foreground mb-3">
             Payment Method
           </label>
-          <div className="space-y-2">
-            {paymentMethods.map((method) => (
-              <button
-                key={method.id}
-                disabled={method.disabled}
-                onClick={() => !method.disabled && setSelectedPayment(method.id)}
-                className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${
-                  method.disabled
-                    ? "border-border opacity-50 cursor-not-allowed"
-                    : selectedPayment === method.id
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/50"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <method.icon size={20} className="text-primary" />
-                  <span className="font-medium text-foreground">{method.label}</span>
-                </div>
-                {method.badge && (
-                  <span className="text-xs font-semibold text-muted-foreground bg-secondary px-2 py-1 rounded-full">
-                    {method.badge}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+          <PaymentMethodList
+            value={selectedPayment}
+            onChange={setSelectedPayment}
+            only={reinvesting ? ["wallet"] : undefined}
+            onlyNote="A reinvestment is paid from your wallet."
+          />
+          {sukukSelected && !reinvesting && (
+            <div className="mt-3">
+              <SukukCertificateFields amountDue={totalPayable} value={sukuk} onChange={setSukuk} />
+            </div>
+          )}
         </div>
 
         {/* Reinvest discount note (real, server-applied) */}
@@ -466,7 +476,15 @@ const InvestmentCalculator = ({
           variant="hero" 
           size="xl" 
           className="w-full"
-          onClick={() => setShowConfirmation(true)}
+          onClick={() => {
+            if (sukukSelected && !reinvesting && !sukukReady(sukuk)) {
+              toast.error("Attach your Nova certificate", {
+                description: "Add the certificate (PDF) and accept the Nova Finance pledge first.",
+              });
+              return;
+            }
+            setShowConfirmation(true);
+          }}
         >
           {reinvestState.isReinvesting ? (
             <>
@@ -556,6 +574,24 @@ const InvestmentCalculator = ({
                   + {mgmtPct}% annual management fee (${annualManagementFee.toFixed(2)}/yr) deducted from distributions
                 </p>
               </div>
+              {!reinvesting && (
+                <div className="pt-2 border-t border-border flex justify-between">
+                  <span className="text-muted-foreground">Paying with</span>
+                  <span className="font-medium text-foreground">{selectedMethod.label}</span>
+                </div>
+              )}
+              {!reinvesting && selectedPayment === "crypto" && (
+                <p className="text-xs text-muted-foreground">
+                  You pick the coin on NOWPayments' page; your units are confirmed as soon as the
+                  payment clears.
+                </p>
+              )}
+              {!reinvesting && sukukSelected && (
+                <p className="text-xs text-muted-foreground">
+                  Your certificate goes to our team for review. The units are held for you
+                  meanwhile and stay pledged to Nova Finance once approved.
+                </p>
+              )}
             </div>
 
             <div className="flex gap-3">
@@ -573,7 +609,13 @@ const InvestmentCalculator = ({
                 onClick={handleConfirmPayment}
                 disabled={isSubmitting}
               >
-                {isSubmitting ? "Processing…" : "Confirm & Pay"}
+                {isSubmitting
+                  ? "Processing…"
+                  : reinvesting || selectedPayment === "wallet"
+                    ? "Confirm & Pay"
+                    : sukukSelected
+                      ? "Submit certificate"
+                      : "Continue to secure payment"}
               </Button>
             </div>
           </div>

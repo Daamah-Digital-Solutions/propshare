@@ -32,9 +32,6 @@ import {
   Users, 
   Clock, 
   TrendingUp, 
-  CreditCard, 
-  Wallet,
-  Coins,
   ArrowRight,
   CheckCircle,
   Calendar,
@@ -48,6 +45,15 @@ import { format, addMonths } from "date-fns";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { installmentsApi, ApiError } from "@/lib/api";
+import { rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
+import { PaymentMethodList, usePaymentOptions } from "@/components/payments/PaymentMethodList";
+import {
+  EMPTY_SUKUK_DRAFT,
+  SukukCertificateFields,
+  sukukReady,
+  type SukukDraft,
+} from "@/components/payments/SukukCertificateFields";
+import { payMethod, type PayMethodId } from "@/lib/paymentMethods";
 
 interface PropertyData {
   propertyValue: number;
@@ -87,20 +93,10 @@ interface InstallmentCalculatorProps {
   initialDuration?: string;
 }
 
-// The plan is funded from the WALLET balance (down payment now; installments auto-charge on
-// their due dates). Pronova is disclosed but NOT_YET_ENABLED (no discount logic — D5), so it
-// carries no fabricated fee discount.
-const paymentMethods: {
-  id: string;
-  icon: typeof CreditCard;
-  label: string;
-  discount: number;
-  disabled?: boolean;
-  badge?: string;
-}[] = [
-  { id: "wallet", icon: Wallet, label: "Wallet Balance", discount: 0 },
-  { id: "pronova", icon: Coins, label: "Pronova Token", discount: 0, disabled: true, badge: "Coming soon" },
-];
+// The down payment is paid with any method of the ONE list every property offers
+// (src/lib/paymentMethods.ts): from the wallet at once, on a secure checkout (card, Apple /
+// Google Pay, crypto, or Pronova with its discount off the down payment), or with a Nova Sukuk
+// certificate our team reviews. The installments then come from the wallet on their dates.
 
 // One table for the calculator and the property page (mirrors the backend).
 const installmentDurations = INSTALLMENT_DURATIONS;
@@ -113,7 +109,8 @@ const InstallmentCalculator = ({
   propertyTitle,
   initialDuration,
 }: InstallmentCalculatorProps) => {
-  const [selectedPayment, setSelectedPayment] = useState("wallet");
+  const [selectedPayment, setSelectedPayment] = useState<PayMethodId>("wallet");
+  const [sukuk, setSukuk] = useState<SukukDraft>(EMPTY_SUKUK_DRAFT);
   const [duration, setDuration] = useState(() =>
     INSTALLMENT_DURATIONS.some((d) => d.value === initialDuration) ? initialDuration! : "12",
   );
@@ -123,8 +120,11 @@ const InstallmentCalculator = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const queryClient = useQueryClient();
 
-  const selectedMethod = paymentMethods.find(m => m.id === selectedPayment);
-  const discount = selectedMethod?.discount || 0;
+  const selectedMethod = payMethod(selectedPayment);
+  const sukukSelected = selectedPayment === "sukuk";
+  const pronovaSelected = selectedPayment === "pronova";
+  const { data: payOptions } = usePaymentOptions();
+  const pronovaPct = Number(payOptions?.pronova_discount_pct ?? 0);
   const selectedDuration = installmentDurations.find(d => d.value === duration);
   const months = parseInt(duration);
 
@@ -147,9 +147,11 @@ const InstallmentCalculator = ({
   
   // Total calculations
   const totalFees = downPaymentFee + (installmentFee * numberOfInstallments);
-  const discountAmount = (totalFees * discount) / 100;
-  const finalFees = totalFees - discountAmount;
-  const totalInvestment = investmentAmount + finalFees;
+  // Pronova: its discount comes off what is paid now — the down payment and its fee
+  // (platform-funded; the server applies the real rate).
+  const downPaymentDiscount = pronovaSelected ? Math.round(downPayment * pronovaPct) / 100 : 0;
+  const dueNow = downPayment - downPaymentDiscount;
+  const totalInvestment = investmentAmount + totalFees - downPaymentDiscount;
 
   // Generate installment schedule with fee breakdown
   const installmentSchedule = useMemo((): InstallmentScheduleItem[] => {
@@ -190,15 +192,52 @@ const InstallmentCalculator = ({
   const quickAmounts = [1000, 2500, 5000, 10000, 25000];
 
   const handleConfirmPayment = async () => {
+    if (sukukSelected && !sukukReady(sukuk)) {
+      toast.error("Attach your Nova certificate", {
+        description: "Add the certificate (PDF) and accept the Nova Finance pledge first.",
+      });
+      return;
+    }
     setIsSubmitting(true);
     try {
-      // Server-authoritative: it reserves the allocation, snapshots the fee, builds the
-      // schedule and charges the down payment atomically from the wallet.
+      if (sukukSelected) {
+        // Nova Sukuk: the certificate covers the down payment; our team reviews it while the
+        // plan's units are held, and the plan starts once it is approved.
+        const r = await installmentsApi.createPlanWithSukuk(
+          { property_id: propertyId, amount: investmentAmount, duration_months: months },
+          {
+            file: sukuk.file as File,
+            certificate_no: sukuk.certificate_no,
+            issuer: sukuk.issuer,
+            certificate_value: sukuk.certificate_value,
+            valid_until: sukuk.valid_until,
+          },
+        );
+        toast.success("Certificate sent for review", {
+          description: `The plan's units are held for you while our team reviews your certificate (it must cover $${r.amount_due}). The plan starts once it is approved.`,
+        });
+        setShowConfirmation(false);
+        setShowSchedule(false);
+        setSukuk(EMPTY_SUKUK_DRAFT);
+        queryClient.invalidateQueries({ queryKey: ["property"] });
+        queryClient.invalidateQueries({ queryKey: ["installments"] });
+        queryClient.invalidateQueries({ queryKey: ["sukuk"] });
+        return;
+      }
+      // Server-authoritative: it reserves the allocation, snapshots the fee and builds the
+      // schedule; the wallet pays the down payment at once, any other method on a secure
+      // checkout whose confirmation starts the plan.
       const plan = await installmentsApi.createPlan({
         property_id: propertyId,
         amount: investmentAmount,
         duration_months: months,
+        method: selectedMethod.apiMethod as "wallet" | "card" | "crypto" | "pronova",
       });
+      if (plan.checkout_url) {
+        if (plan.payment_id) rememberPendingPayment(plan.payment_id);
+        window.location.href = plan.checkout_url;
+        return;
+      }
       const down = plan.payments.find((p) => p.seq === 0);
       toast.success("Installment plan created!", {
         description: `Down payment of $${down?.total_amount ?? ""} charged from your wallet. ${plan.payments.length} payments scheduled — track them in your dashboard.`,
@@ -220,10 +259,14 @@ const InstallmentCalculator = ({
               ? "Those units are no longer available."
               : code === "AMOUNT_TOO_LOW"
                 ? "Increase the amount — it must cover at least one unit."
-                : err instanceof Error
-                  ? err.message
-                  : "Something went wrong. Please try again.";
-      toast.error("Could not create installment plan", { description: message });
+                : code === "PAYMENTS_NOT_CONFIGURED"
+                  ? "This payment method is not available right now. Please choose another."
+                  : err instanceof Error
+                    ? err.message
+                    : "Something went wrong. Please try again.";
+      toast.error(sukukSelected ? "Certificate not sent" : "Could not create installment plan", {
+        description: message,
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -416,32 +459,16 @@ const InstallmentCalculator = ({
           <label className="block text-sm font-medium text-foreground mb-3">
             Payment Method
           </label>
-          <div className="space-y-2">
-            {paymentMethods.map((method) => (
-              <button
-                key={method.id}
-                disabled={method.disabled}
-                onClick={() => !method.disabled && setSelectedPayment(method.id)}
-                className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${
-                  method.disabled
-                    ? "border-border opacity-50 cursor-not-allowed"
-                    : selectedPayment === method.id
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/50"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <method.icon size={20} className="text-primary" />
-                  <span className="font-medium text-foreground">{method.label}</span>
-                </div>
-                {method.badge && (
-                  <span className="text-xs font-semibold text-muted-foreground bg-secondary px-2 py-1 rounded-full">
-                    {method.badge}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+          <PaymentMethodList value={selectedPayment} onChange={setSelectedPayment} />
+          <p className="mt-2 text-xs text-muted-foreground">
+            This pays the down payment; the monthly installments come from your wallet on their
+            dates.
+          </p>
+          {sukukSelected && (
+            <div className="mt-3">
+              <SukukCertificateFields amountDue={downPayment} value={sukuk} onChange={setSukuk} />
+            </div>
+          )}
         </div>
 
         {/* Installment Summary */}
@@ -494,10 +521,10 @@ const InstallmentCalculator = ({
               <span className="text-muted-foreground">Installment Fee (4% × {numberOfInstallments})</span>
               <span className="text-foreground">+${(installmentFee * numberOfInstallments).toFixed(2)}</span>
             </div>
-            {discount > 0 && (
+            {downPaymentDiscount > 0 && (
               <div className="flex justify-between text-success">
-                <span>Pronova Discount (-{discount}%)</span>
-                <span>-${discountAmount.toFixed(2)}</span>
+                <span>Pronova discount (-{pronovaPct}% of the down payment)</span>
+                <span>-${downPaymentDiscount.toFixed(2)}</span>
               </div>
             )}
             <div className="border-t border-border pt-2 flex justify-between font-semibold">
@@ -553,6 +580,12 @@ const InstallmentCalculator = ({
           size="xl"
           className="w-full"
           onClick={() => {
+            if (sukukSelected && !sukukReady(sukuk)) {
+              toast.error("Attach your Nova certificate", {
+                description: "Add the certificate (PDF) and accept the Nova Finance pledge first.",
+              });
+              return;
+            }
             if (!scheduleReviewed) {
               setShowSchedule(true);
             } else {
@@ -632,8 +665,8 @@ const InstallmentCalculator = ({
                   <p className="font-medium text-muted-foreground">10% on profits*</p>
                 </div>
               </div>
-              {discount > 0 && (
-                <p className="text-success text-sm mt-2">Pronova discount applied: -${discountAmount.toFixed(2)}</p>
+              {downPaymentDiscount > 0 && (
+                <p className="text-success text-sm mt-2">Pronova discount on the down payment: -${downPaymentDiscount.toFixed(2)}</p>
               )}
               <p className="text-xs text-muted-foreground mt-3">*Performance fee calculated annually on realized profit</p>
             </div>
@@ -749,6 +782,16 @@ const InstallmentCalculator = ({
                 <span className="text-muted-foreground">Down Payment</span>
                 <span className="font-medium text-foreground">${downPayment.toFixed(2)}</span>
               </div>
+              {downPaymentDiscount > 0 && (
+                <div className="flex justify-between text-success">
+                  <span>Pronova discount</span>
+                  <span>-${downPaymentDiscount.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Paying with</span>
+                <span className="font-medium text-foreground">{selectedMethod.label}</span>
+              </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Remaining ({numberOfInstallments} installments)</span>
                 <span className="font-medium text-foreground">${(installmentAmount * numberOfInstallments).toFixed(2)}</span>
@@ -783,7 +826,13 @@ const InstallmentCalculator = ({
                 onClick={handleConfirmPayment}
                 disabled={isSubmitting}
               >
-                {isSubmitting ? "Processing…" : `Pay $${downPayment.toFixed(2)}`}
+                {isSubmitting
+                  ? "Processing…"
+                  : selectedPayment === "wallet"
+                    ? `Pay $${dueNow.toFixed(2)}`
+                    : sukukSelected
+                      ? "Submit certificate"
+                      : `Continue to pay $${dueNow.toFixed(2)}`}
               </Button>
             </div>
           </div>

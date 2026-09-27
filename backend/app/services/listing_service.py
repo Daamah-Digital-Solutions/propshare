@@ -782,7 +782,11 @@ async def count_positions(session: AsyncSession, prop_id: uuid.UUID) -> int:
     plans = await session.scalar(
         select(func.count())
         .select_from(InstallmentPlan)
-        .where(InstallmentPlan.property_id == prop_id)
+        .where(
+            InstallmentPlan.property_id == prop_id,
+            # a plan that never started (checkout unpaid, Nova certificate rejected) holds nothing
+            InstallmentPlan.status.notin_(("cancelled", "expired")),
+        )
     )
     return int(inv or 0) + int(led or 0) + int(plans or 0)
 

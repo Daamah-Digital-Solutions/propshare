@@ -12,9 +12,23 @@ import { ReinvestProvider } from "@/contexts/ReinvestContext";
 
 // Mock the API client — keep ApiError a real class so `instanceof` checks work.
 const createMock = vi.fn();
+const sukukMock = vi.fn();
+const LIVE = {
+  wallet: true,
+  card: true,
+  apple_pay: true,
+  google_pay: true,
+  crypto: true,
+  pronova: true,
+  sukuk: true,
+  pronova_discount_pct: "5.0",
+};
+let options: Record<string, unknown> = LIVE;
 vi.mock("@/lib/api", () => ({
   investApi: {
     create: (...args: unknown[]) => createMock(...args),
+    buyWithSukuk: (...args: unknown[]) => sukukMock(...args),
+    paymentOptions: () => Promise.resolve(options),
     pronovaSettings: () => Promise.resolve({ discount_pct: "5.0" }),
     reinvestSettings: () => Promise.resolve({ discount_pct: "5.0" }),
   },
@@ -127,11 +141,104 @@ describe("InvestmentCalculator invest click path", () => {
     expect(pronova).not.toBeDisabled(); // now enabled (owner-launched)
     fireEvent.click(pronova);
     fireEvent.click(screen.getByRole("button", { name: /Invest \$1,000/i }));
-    fireEvent.click(screen.getByRole("button", { name: /Confirm & Pay/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Continue to secure payment/i }));
 
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
     const [payload] = createMock.mock.calls[0];
     expect(payload).toEqual({ property_id: "prop-123", amount: 1000, method: "pronova" });
+  });
+});
+
+const checkout = (method: string) => ({
+  investment_id: "inv-3",
+  property_id: "prop-123",
+  status: "pending",
+  units: 10,
+  amount: "1000.00",
+  platform_fee: "25.00",
+  total_charged: "1025.00",
+  management_fee_rate: "1.0",
+  // null keeps jsdom from navigating; the point is which method reaches the server
+  checkout_url: null,
+  method,
+});
+
+describe("InvestmentCalculator — every payment method (the same list on every property)", () => {
+  beforeEach(() => {
+    createMock.mockReset();
+    sukukMock.mockReset();
+    options = LIVE;
+  });
+
+  it("lists wallet, card, Apple Pay, Google Pay, crypto, Pronova and Nova Sukuk in that order", () => {
+    renderCalc();
+    const ids = Array.from(document.querySelectorAll("[data-method]")).map((b) =>
+      b.getAttribute("data-method"),
+    );
+    expect(ids).toEqual(["wallet", "card", "apple_pay", "google_pay", "crypto", "pronova", "sukuk"]);
+  });
+
+  it("pays in crypto through the crypto checkout", async () => {
+    createMock.mockResolvedValue(checkout("crypto"));
+    renderCalc();
+    fireEvent.click(await screen.findByRole("button", { name: /Cryptocurrency/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Invest \$1,000/i }));
+    expect(screen.getByText(/pick the coin on NOWPayments' page/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Continue to secure payment/i }));
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
+    expect(createMock.mock.calls[0][0]).toEqual({
+      property_id: "prop-123",
+      amount: 1000,
+      method: "crypto",
+    });
+  });
+
+  it("sends Google Pay as a card payment (it shows on Stripe's checkout)", async () => {
+    createMock.mockResolvedValue(checkout("card"));
+    renderCalc();
+    fireEvent.click(await screen.findByRole("button", { name: /Google Pay/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Invest \$1,000/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Continue to secure payment/i }));
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
+    expect(createMock.mock.calls[0][0].method).toBe("card");
+  });
+
+  it("shows a rail without its provider as unavailable instead of hiding it", async () => {
+    options = { ...LIVE, crypto: false };
+    renderCalc();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Cryptocurrency/i })).toBeDisabled(),
+    );
+    expect(screen.getByRole("button", { name: /Cryptocurrency/i })).toHaveTextContent(
+      /Not available right now/,
+    );
+  });
+
+  it("submits a Nova Sukuk certificate only with the PDF and the pledge accepted", async () => {
+    sukukMock.mockResolvedValue({ certificate_id: "c-1", units: 10, amount_due: "1025.00" });
+    renderCalc();
+    fireEvent.click(await screen.findByRole("button", { name: /Nova Sukuk/i }));
+    expect(screen.getByTestId("sukuk-fields")).toBeInTheDocument();
+    expect(screen.getByTestId("nova-pledge-notice")).toHaveTextContent(/pledged to Nova Finance/);
+
+    // nothing attached yet: the review step does not open
+    fireEvent.click(screen.getByRole("button", { name: /Invest \$1,000/i }));
+    expect(screen.queryByRole("button", { name: /Submit certificate/i })).toBeNull();
+
+    const pdf = new File(["%PDF-1.4"], "nova.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText(/Certificate \(PDF\)/i), { target: { files: [pdf] } });
+    fireEvent.change(screen.getByLabelText(/Certificate no\./i), { target: { value: "NOVA-9" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /stay pledged to Nova Finance/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Invest \$1,000/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Submit certificate/i }));
+
+    await waitFor(() => expect(sukukMock).toHaveBeenCalledTimes(1));
+    const [input, cert, key] = sukukMock.mock.calls[0];
+    expect(input).toEqual({ property_id: "prop-123", amount: 1000 });
+    expect(cert.file).toBe(pdf);
+    expect(cert.certificate_no).toBe("NOVA-9");
+    expect(typeof key).toBe("string");
+    expect(createMock).not.toHaveBeenCalled();
   });
 });
 

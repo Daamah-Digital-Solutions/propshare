@@ -102,6 +102,71 @@ describe("InstallmentSchedule (real API)", () => {
   });
 });
 
+describe("InstallmentSchedule — a plan that has not started yet", () => {
+  beforeEach(() => listMock.mockReset());
+
+  it("waits for its down payment and links back to the open checkout", async () => {
+    listMock.mockResolvedValue([
+      {
+        ...PLAN,
+        status: "pending_payment",
+        payment_method: "card",
+        vested_units: 0,
+        checkout_url: "https://checkout.stripe.test/pay",
+      },
+    ]);
+    wrap(<InstallmentSchedule />);
+    expect(await screen.findByText("Waiting for the down payment")).toBeInTheDocument();
+    expect(screen.getByTestId("plan-state")).toHaveTextContent(/units are held for you/i);
+    expect(screen.getByRole("link", { name: /Complete the payment/i })).toHaveAttribute(
+      "href",
+      "https://checkout.stripe.test/pay",
+    );
+  });
+
+  it("says a Nova certificate is under review, and why a rejected one did not start", async () => {
+    listMock.mockResolvedValue([
+      { ...PLAN, id: "a", status: "pending_review", payment_method: "sukuk", vested_units: 0 },
+      {
+        ...PLAN,
+        id: "b",
+        status: "cancelled",
+        payment_method: "sukuk",
+        vested_units: 0,
+        failure_reason: "sukuk_rejected",
+      },
+    ]);
+    wrap(<InstallmentSchedule />);
+    expect(await screen.findByText("Nova certificate under review")).toBeInTheDocument();
+    expect(screen.getByText("Not started")).toBeInTheDocument();
+    expect(screen.getByText(/certificate was not accepted/i)).toBeInTheDocument();
+  });
+
+  it("offers no Pay now on a plan that has not started", async () => {
+    listMock.mockResolvedValue([
+      { ...PLAN, status: "pending_review", payment_method: "sukuk", vested_units: 0 },
+    ]);
+    wrap(<InstallmentSchedule />);
+    fireEvent.click(await screen.findByRole("button", { name: /View schedule/i }));
+    expect(await screen.findByText("Down payment")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Pay now/i })).toBeNull();
+  });
+
+  it("says a late payment was refunded when the units were taken meanwhile", async () => {
+    listMock.mockResolvedValue([
+      {
+        ...PLAN,
+        status: "expired",
+        payment_method: "card",
+        vested_units: 0,
+        failure_reason: "units_unavailable_refunded",
+      },
+    ]);
+    wrap(<InstallmentSchedule />);
+    expect(await screen.findByText(/payment was refunded to your wallet/i)).toBeInTheDocument();
+  });
+});
+
 const PLAN = {
   id: "pl1",
   property_id: "p1",

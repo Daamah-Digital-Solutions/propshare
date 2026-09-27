@@ -1,8 +1,9 @@
 /**
  * The page a member lands on when the hosted checkout sends them back.
  *
- * The provider redirects to `?deposit=success&payment=<id>` (wallet tab) or
- * `?invest=success&payment=<id>` (investments tab). Nothing is credited from that redirect —
+ * The provider redirects to `?deposit=success&payment=<id>` (wallet tab),
+ * `?invest=success&payment=<id>` (investments tab) or `?plan=success&payment=<id>` (an
+ * installment plan's down payment, installments tab). Nothing is credited from that redirect —
  * the server settles the payment from the provider's webhook or its own lookup — so this
  * follows the payment by polling `GET /payments/{id}` (each poll also lets the server ask the
  * provider directly) until it is settled, then refreshes the balance / holdings on screen.
@@ -16,11 +17,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { paymentApi } from "@/lib/api";
 import { toast } from "sonner";
 
-export type PaymentReturnKind = "deposit" | "invest";
+export type PaymentReturnKind = "deposit" | "invest" | "plan";
 
 // sessionStorage fallback for a provider that drops the query string on the way back
 const PENDING_PAYMENT_KEY = "capimax.pending_payment";
-const RETURN_KEYS = ["deposit", "invest", "payment"];
+const RETURN_KEYS = ["deposit", "invest", "plan", "payment"];
 
 export function rememberPendingPayment(paymentId: string) {
   try {
@@ -46,6 +47,7 @@ const AFFECTED_QUERIES = [
   ["wallet-transactions"],
   ["holdings"],
   ["investments"],
+  ["installments"],
   ["portfolio"],
   ["property"],
   ["notifications"],
@@ -75,6 +77,20 @@ const COPY = {
     slowHint:
       "The payment provider has not confirmed it yet. You will get a notification and an email the moment your units are confirmed — no need to pay again.",
     cancelled: "Purchase cancelled — the units held for you are released within a few minutes.",
+  },
+  plan: {
+    pending: "Payment received — starting your installment plan…",
+    pendingHint: "The plan's units are held for you. This usually takes a few seconds.",
+    done: "Down payment received",
+    doneHint:
+      "Your plan and its schedule are below. If its units were taken in the meantime, the payment went back to your wallet — you get a notification either way.",
+    failed: "The down payment was not completed",
+    failedHint: "Nothing was charged and the units held for the plan are released.",
+    slow: "Still confirming your down payment",
+    slowHint:
+      "The payment provider has not confirmed it yet. You will get a notification and an email the moment your plan starts — no need to pay again.",
+    cancelled:
+      "Down payment cancelled — the units held for the plan are released within a few minutes.",
   },
 } as const;
 

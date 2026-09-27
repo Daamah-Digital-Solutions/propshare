@@ -898,7 +898,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                 <div className="grid sm:grid-cols-2 gap-3 text-xs text-muted-foreground">
                   <div className="p-3 rounded-lg bg-secondary/30 border border-border">
                     <div className="font-medium text-foreground mb-1">Payment</div>
-                    Paid from your Capimax wallet balance.
+                    Wallet, card, Apple Pay, Google Pay, crypto, Pronova or Nova Sukuk.
                   </div>
                   <div className="p-3 rounded-lg bg-secondary/30 border border-border">
                     <div className="font-medium text-foreground mb-1">Payment Plans</div>

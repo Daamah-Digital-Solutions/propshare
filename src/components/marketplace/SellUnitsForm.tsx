@@ -157,6 +157,8 @@ const SellUnitsForm = ({ prefill = null }: { prefill?: SellPrefill | null }) => 
               <p className="text-xs text-muted-foreground">
                 Sellable: {selected.sellable_units} units
                 {selected.listed_units > 0 && ` (${selected.listed_units} already listed)`}
+                {(selected.pledged_units ?? 0) > 0 &&
+                  ` (${selected.pledged_units} pledged to Nova Finance)`}
               </p>
             )}
           </div>

@@ -33,6 +33,7 @@ from app.admin_leads import BROKER_LEAD_VIEWS
 from app.admin_listing import ListingEditorView, is_full_admin
 from app.admin_owner import OWNER_VIEWS, platform_listing_filter
 from app.admin_pages import PW_PAGE, TWO_FACTOR_PAGE
+from app.admin_sukuk import SUKUK_VIEWS
 from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.db import get_engine, get_sessionmaker, session_scope
@@ -2011,6 +2012,7 @@ def setup_admin(app) -> Admin:
         ListingEditorView,
         *OWNER_VIEWS,
         *BROKER_LEAD_VIEWS,
+        *SUKUK_VIEWS,
         PasswordChangeView,
         TwoFactorView,
         RoleDocView,
