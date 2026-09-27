@@ -352,3 +352,48 @@ async def test_late_failure_event_never_undoes_a_settled_payment(client, db, mon
     assert r.json()["status"] == "already_processed"
     assert db("SELECT status FROM payments WHERE id=:p", p=pid)[0][0] == "succeeded"
     assert db("SELECT balance FROM wallets WHERE user_id=:i", i=uid)[0][0] == 15
+
+
+@pytest.mark.asyncio
+async def test_a_session_holding_a_stale_copy_never_credits_twice(client, db, asession):
+    """Review finding: the webhook and the Stripe lookup use different event keys, so the row
+    lock + status re-check is what stops a second credit — and it must read the LOCKED row,
+    not the copy a session loaded before (SQLAlchemy keeps identity-mapped values on a
+    re-select). Here one session holds 'pending' while another transaction settles it."""
+    from app.core.db import session_scope
+    from app.models import Payment
+    from app.services import payment_service
+
+    await _register(client, "stale@rec.com")
+    uid = _uid(db, "stale@rec.com")
+    pid = _pending_card_deposit(db, uid=uid, cs="cs_stale", amount=40, minutes_old=5)
+    paid = ParsedWebhook(
+        event_id="evt_stale",
+        provider_payment_id="cs_stale",
+        order_id=pid,
+        status="succeeded",
+        captured_amount=40,
+        type="checkout.session.completed",
+        raw={},
+    )
+
+    stale = await asession.get(Payment, uuid.UUID(pid))  # this session now holds "pending"
+    assert stale.status == "pending"
+    async with session_scope() as other:  # e.g. the webhook, committed meanwhile
+        fresh = await other.get(Payment, uuid.UUID(pid))
+        first = await payment_service._apply(
+            other, provider="stripe", parsed=paid, payment=fresh, source="webhook"
+        )
+    assert first["result"] == "credited"
+
+    again = await payment_service._apply(
+        asession,
+        provider="stripe",
+        parsed=ParsedWebhook(**{**paid.__dict__, "event_id": "sync:cs_stale:succeeded"}),
+        payment=stale,
+        source="sync",
+    )
+    await asession.commit()
+    assert again == {"status": "already_processed"}
+    assert db("SELECT balance FROM wallets WHERE user_id=:i", i=uid)[0][0] == 40
+    assert db("SELECT count(*) FROM transactions WHERE reference_id=:p", p=pid)[0][0] == 1

@@ -82,10 +82,26 @@ async def stale_hours(session: AsyncSession) -> int:
     return int(await settings_service.get_setting(session, "ops_stale_hours") or 48)
 
 
-async def payment_stale_minutes(session: AsyncSession) -> int:
-    """Minutes a card/crypto payment may stay pending (after the provider lookup) before a
-    case is opened. A hosted checkout is normally settled within seconds of the payment."""
-    return int(await settings_service.get_setting(session, "ops_payment_stale_minutes") or 30)
+async def card_payment_stale_hours(session: AsyncSession) -> int:
+    """Hours a CARD payment may stay pending before a case is opened. Stripe expires an unpaid
+    checkout after 24 hours and the lookup then marks the payment failed, so one still pending
+    past that means the lookup itself cannot reach Stripe (key permissions, outage) — never
+    merely a member who closed the checkout page."""
+    return int(await settings_service.get_setting(session, "ops_payment_stale_hours") or 25)
+
+
+async def _payment_case_keys(session: AsyncSession) -> set[str]:
+    """Every stuck-payment case ever opened, open or closed: a payment gets ONE case. Once staff
+    close it (checked, or an abandoned checkout) the hourly sweep does not open it again."""
+    rows = (
+        await session.execute(
+            select(SupportTicket.context).where(
+                SupportTicket.kind == "ops_case",
+                SupportTicket.context["case_key"].astext.like("provider_payment:%"),
+            )
+        )
+    ).all()
+    return {str((r[0] or {}).get("case_key")) for r in rows}
 
 
 async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dict[str, Any]:
@@ -174,12 +190,15 @@ async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dic
         )
         open_keys.add(key)
 
-    # 4) card/crypto payments the provider's webhook never settled. First let the Stripe
-    #    lookup settle whatever it can; a case is only for what stays pending after that —
-    #    the sign of a dead endpoint, a wrong signing secret, or a provider-side problem
-    #    (crypto is not looked up: its case is the signal to check the NOWPayments IPN).
+    # 4) card / crypto payments no webhook settled. The Stripe lookup settles or fails every
+    #    card payment it can (an unpaid checkout expires after 24 h and is then marked failed),
+    #    so a card payment still pending past ``card_payment_stale_hours`` means the lookup
+    #    cannot reach Stripe — a real problem. Crypto is not looked up: an invoice still
+    #    pending after ``ops_stale_hours`` is usually abandoned, so its case is low-key. One
+    #    case per payment, ever: a closed case is not reopened.
     await payment_service.reconcile_pending(session, now=now)
-    payment_cutoff = now - dt.timedelta(minutes=await payment_stale_minutes(session))
+    card_cutoff = now - dt.timedelta(hours=await card_payment_stale_hours(session))
+    seen_keys = await _payment_case_keys(session)
     stuck = (
         (
             await session.execute(
@@ -187,7 +206,8 @@ async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dic
                 .where(
                     Payment.status == "pending",
                     Payment.provider.in_(payment_service.WEBHOOK_PROVIDERS),
-                    Payment.created_at <= payment_cutoff,
+                    # the younger of the two thresholds; each provider's own one is applied below
+                    Payment.created_at <= max(card_cutoff, cutoff),
                     Payment.created_at >= now - payment_service.SYNC_MAX_AGE,
                 )
                 .order_by(Payment.created_at)
@@ -199,35 +219,50 @@ async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dic
     )
     for payment in stuck:
         key = f"provider_payment:{payment.id}"
-        if key in open_keys:
+        if key in seen_keys:
             continue
-        age_min = round((now - payment.created_at).total_seconds() / 60)
+        card = payment.provider == "stripe"
+        if card and payment.created_at > card_cutoff:
+            continue
+        if not card and payment.created_at > cutoff:
+            continue
+        age = round((now - payment.created_at).total_seconds() / 3600)
         what = "purchase" if payment.purpose == "investment" else "deposit"
+        ref = payment.provider_payment_id or "none"
+        if card:
+            subject = f"Card {what} still pending {age}h after checkout"
+            summary = (
+                f"A card {what} of {payment.amount} {payment.currency} (Stripe checkout {ref}) "
+                f"is still pending {age} hours after it started, although Stripe expires an "
+                "unpaid checkout after 24 hours: the platform could not get its outcome from "
+                "Stripe. Check that the Stripe key can read Checkout Sessions and that the "
+                "deposits webhook delivers, then press 'Check with Stripe' on it under Payments."
+            )
+        else:
+            subject = f"Crypto {what} invoice pending for {age}h"
+            summary = (
+                f"A crypto {what} of {payment.amount} {payment.currency} (NOWPayments invoice "
+                f"{ref}) has been pending for {age} hours. Most are simply abandoned invoices: "
+                "if the member did not pay, close this case. If they say they paid, find the "
+                "payment in the NOWPayments dashboard and check its IPN deliveries."
+            )
         new.append(
             await _open_case(
                 session,
                 case_key=key,
                 category="payments",
-                priority="high",
-                subject=f"{payment.provider} {what} still pending after {age_min} min",
-                summary=(
-                    f"A {payment.payment_method or payment.provider} {what} of {payment.amount} "
-                    f"{payment.currency} (provider reference "
-                    f"{payment.provider_payment_id or 'none'}) has been pending for {age_min} "
-                    "minutes and the provider does not report it "
-                    "as paid or expired. If the member was charged, check the webhook endpoint and "
-                    "its signing secret in the provider dashboard, then use 'Check with provider' "
-                    "under Payments."
-                ),
+                priority="high" if card else "normal",
+                subject=subject,
+                summary=summary,
                 context={
                     "payment_id": str(payment.id),
                     "provider": payment.provider,
                     "provider_payment_id": payment.provider_payment_id,
-                    "age_minutes": age_min,
+                    "age_hours": age,
                 },
             )
         )
-        open_keys.add(key)
+        seen_keys.add(key)
 
     if new:
         admins = [

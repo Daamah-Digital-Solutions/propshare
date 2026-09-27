@@ -340,3 +340,21 @@ async def test_staff_review_a_lead_and_list_it_from_the_listing_editor(client, d
     # a closed lead offers no more decisions
     closed = await client.get(f"/admin/broker-leads/{lid}")
     assert "Mark as contacted" not in closed.text and "Open the listing" in closed.text
+
+
+@pytest.mark.asyncio
+async def test_invitation_email_never_carries_a_link_the_broker_typed(client, db):
+    """The invitation goes out from the platform's sender: text the broker typed must not
+    become a clickable link in it."""
+    await _account(client, db, "nour7@brk.io", role="broker", name="Nour www.promo.example")
+    _, bh = await _account(client, db, "nour8@brk.io", role="broker")
+    r = await client.post(
+        "/api/v1/broker/leads/client",
+        json={"name": "Win big https://evil.example/x now", "email": "target@c.io"},
+        headers=bh,
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "Win big now"
+    mail = db("SELECT subject, body FROM email_outbox WHERE to_email='target@c.io'")[0]
+    assert "evil.example" not in mail[0] + mail[1]
+    assert "/auth?ref=" in mail[1]  # the platform's own link is still there

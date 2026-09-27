@@ -523,7 +523,8 @@ async def _notify_submitted(session: AsyncSession, prop: Property, *, resubmissi
                         f"Owner: {who}"
                         + (f" <{owner.email}>" if owner else "")
                         + (f", phone {owner.phone}" if owner and owner.phone else "")
-                        + f"\n\nReview it in the admin panel: /admin/owner-submissions/{prop.id}"
+                        + "\n\nReview it in the admin panel: "
+                        + get_settings().admin_url(f"/admin/owner-submissions/{prop.id}")
                     ),
                     category="listing_review",
                     status="pending",
@@ -605,6 +606,16 @@ async def admin_moderate(
     if prop is None:
         raise AppError("NOT_FOUND", "Property not found", status_code=404)
     note = (reason or "").strip()[:2000] or None
+    if action in ("reject", "request_changes", "decline") and prop.status not in EDITABLE_STATUSES:
+        # Sending back or declining is for a submission that is not on the market. A live
+        # listing going back to an editable draft would let its units be reset under the
+        # investors who hold them; take a live listing down with "close" instead.
+        raise AppError(
+            "INVALID_TRANSITION",
+            "Only a listing that is not live can be sent back or declined. "
+            "Use Close (unpublish) for a live listing.",
+            status_code=409,
+        )
     before = {"status": str(prop.status)}
     if action == "approve":
         # Publish checklist — the ONE gate every publish path goes through (Listing Editor,

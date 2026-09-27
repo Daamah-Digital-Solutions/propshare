@@ -12,7 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.milestone import MilestoneOut
 
@@ -26,6 +26,21 @@ OWNERSHIP_MODELS = (
     "ready-portfolio",
     "construction-portfolio",
 )
+
+
+# Image URLs an owner may send: files uploaded through the platform (storage seam) or plain
+# http(s) links. Anything else (javascript:, data:, relative tricks) is refused: these URLs are
+# rendered on the public page and in the admin review pages.
+_IMAGE_PREFIXES = ("/api/v1/files/", "https://", "http://")
+
+
+def _check_image_urls(urls: list[str] | None) -> list[str] | None:
+    if urls is None:
+        return urls
+    for url in urls:
+        if not isinstance(url, str) or not url.startswith(_IMAGE_PREFIXES) or len(url) > 2000:
+            raise ValueError("each image must be an uploaded file or an http(s) link")
+    return urls
 
 
 class PropertyCreateIn(BaseModel):
@@ -55,6 +70,8 @@ class PropertyCreateIn(BaseModel):
     # scenarios, risks, exit mechanisms, model terms, spv detail, amenities...).
     content: dict = Field(default_factory=dict)
 
+    _images = field_validator("images")(_check_image_urls)
+
 
 class PropertyUpdateIn(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=200)
@@ -79,6 +96,8 @@ class PropertyUpdateIn(BaseModel):
     total_return: float | None = Field(default=None, ge=-100, le=1000)
     images: list[str] | None = None
     content: dict | None = None
+
+    _images = field_validator("images")(_check_image_urls)
 
 
 class PropertyModerateIn(BaseModel):

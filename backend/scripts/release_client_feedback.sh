@@ -142,14 +142,14 @@ STUCK=$(psql_db -c "SELECT count(*) FROM payments WHERE status='pending' AND pro
 if [ "$STUCK" != "0" ]; then
   warn "$STUCK card/crypto payment(s) still pending (never paid, card ones older than 7 days, or"
   warn "crypto): open /admin -> Payments, sort by Status; for a card payment the member paid use"
-  warn "'Check with provider'; for crypto check the payment in the NOWPayments dashboard."
+  warn "'Check with Stripe'; for crypto check the payment in the NOWPayments dashboard."
 else
   ok "no card/crypto payment left pending"
 fi
 
 say "Done"
 echo "   New in the admin panel: Owner Submissions, Property Owners, Broker Leads, and Payments"
-echo "   (every deposit and purchase, with 'Check with provider')."
+echo "   (every deposit and purchase; 'Check with Stripe' settles a card payment the webhook missed)."
 echo "   In Stripe -> Developers -> Webhooks -> your deposits endpoint, also tick the event"
 echo "   checkout.session.async_payment_succeeded (needed only for delayed payment methods)."
 echo "   Pre-release backup: $DUMP"

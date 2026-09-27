@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import datetime
 import logging
+import re
 import uuid
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
@@ -50,9 +52,34 @@ def _clean(value: Any, limit: int = 300) -> str | None:
     return text[:limit] or None
 
 
+# anything a mail client would turn into a link
+_LINKISH = re.compile(r"(https?://|www\.|\S+\.\S+/)\S*", re.IGNORECASE)
+
+
+def _plain_name(value: Any, limit: int = 120) -> str | None:
+    """A person's name as it may appear in an email the PLATFORM sends: no links, no angle
+    brackets. The invitation goes out from our sender to any address, so text the broker
+    typed must never become a clickable link in it."""
+    text = _LINKISH.sub("", str(value or ""))
+    text = re.sub(r"[<>\[\]]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit] or None
+
+
 async def _broker_name(session: AsyncSession, broker_id: uuid.UUID) -> str:
+    """The broker as named in an email to someone outside the platform (plain text only)."""
     broker = await session.get(User, broker_id)
-    return (broker.full_name or broker.email) if broker else "Your broker"
+    if broker is None:
+        return "Your broker"
+    return _plain_name(broker.full_name) or "Your broker"
+
+
+async def _broker_label(session: AsyncSession, broker_id: uuid.UUID) -> str:
+    """The broker as staff see them: name and account email."""
+    broker = await session.get(User, broker_id)
+    if broker is None:
+        return "a broker"
+    return f"{broker.full_name} <{broker.email}>" if broker.full_name else broker.email
 
 
 # --- clients ---------------------------------------------------------------- #
@@ -102,13 +129,21 @@ async def invite_client(
         broker_id=broker_id,
         kind="client",
         status="invited",
-        name=_clean(name, 120) or "Client",
+        name=_plain_name(name) or "Client",
         email=email,
         phone=_clean(phone, 40),
         details={"notes": _clean(notes, 1000)} if _clean(notes, 1000) else {},
     )
-    session.add(lead)
-    await session.flush()
+    try:
+        async with session.begin_nested():  # a double click: the unique index answers
+            session.add(lead)
+            await session.flush()
+    except IntegrityError:
+        raise AppError(
+            "ALREADY_INVITED",
+            "You already invited this person; the invitation is pending.",
+            status_code=409,
+        ) from None
     code = await broker_service.get_or_create_code(session, broker_id)
     link = f"{get_settings().app_base_url.rstrip('/')}/auth?ref={code.code}"
     who = await _broker_name(session, broker_id)
@@ -119,8 +154,7 @@ async def invite_client(
         type="broker",
         title="Client invited",
         message=(
-            f"{lead.name} was invited. They join your clients when they sign up through "
-            "your link."
+            f"{lead.name} was invited. They join your clients when they sign up through your link."
         ),
         email_category="invite",
         email_to=email,
@@ -232,7 +266,7 @@ async def submit_listing_lead(
         docs.append({"label": safe, "key": key, "filename": safe, "content_type": ct})
     lead.documents = docs
     what = "project" if kind == "project" else "property"
-    who = await _broker_name(session, broker_id)
+    who = await _broker_label(session, broker_id)
     await notification_service.notify(
         session,
         user_id=broker_id,
@@ -266,7 +300,8 @@ async def submit_listing_lead(
                     + (f" <{lead.email}>" if lead.email else "")
                     + (f", phone {lead.phone}" if lead.phone else "")
                     + f"\nDocuments: {len(docs)}\n\n"
-                    f"Review it in the admin panel: /admin/broker-leads/{lead.id}"
+                    "Review it in the admin panel: "
+                    + get_settings().admin_url(f"/admin/broker-leads/{lead.id}")
                 ),
                 category="broker_lead",
                 status="pending",

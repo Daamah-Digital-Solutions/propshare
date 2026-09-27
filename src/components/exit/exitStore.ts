@@ -83,29 +83,39 @@ const LP_STATUS: Record<string, ExitStatus> = {
 
 function toLpExitRequest(r: LpExitRequest): ExitRequest {
   const net = Number(r.seller_net);
+  const perUnit = r.units ? net / r.units : 0;
+  // providers may fund part of a request; the rest keeps waiting until it expires
+  const funded = Math.max(0, r.units - r.units_remaining);
+  const partly = funded > 0 && r.status !== "filled";
   const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "";
+  const rest = r.status === "open" ? "the rest waits for a provider" : r.status === "expired" ? "the rest expired" : "the rest was cancelled";
   const eta =
     r.status === "filled"
       ? "Paid to your wallet"
-      : r.status === "open"
-        ? `Waiting for a liquidity provider${expires ? ` (until ${expires})` : ""}`
-        : r.status === "expired"
-          ? "Expired — no provider funded it"
-          : "Cancelled";
+      : partly
+        ? `Partly funded: ${funded} of ${r.units} units paid to your wallet; ${rest}`
+        : r.status === "open"
+          ? `Waiting for a liquidity provider${expires ? ` (until ${expires})` : ""}`
+          : r.status === "expired"
+            ? "Expired — no provider funded it"
+            : "Cancelled";
+  // what was actually paid out once the request is over; the full request while it is open
+  const paidNet = r.status === "open" || r.status === "filled" ? net : perUnit * funded;
   return {
     id: r.request_id,
     propertyId: r.property_id,
     propertyName: r.property_title ?? "Property",
     method: "liquidity",
     units: r.units,
-    pricePerUnit: r.units ? net / r.units : 0,
+    pricePerUnit: perUnit,
     estimatedProceeds: Number(r.gross),
     fee: Number(r.liquidity_fee),
-    netProceeds: net,
+    netProceeds: Math.round(paidNet * 100) / 100,
     remainingUnits: r.units_remaining,
     settlementEta: eta,
     createdAt: r.created_at ?? new Date(0).toISOString(),
-    status: LP_STATUS[r.status] ?? "matching",
+    // a partly paid request that is over counts as completed (money reached the seller)
+    status: partly && r.status !== "open" ? "completed" : (LP_STATUS[r.status] ?? "matching"),
   };
 }
 

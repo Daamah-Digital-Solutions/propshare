@@ -73,6 +73,17 @@ describe("ExitRequestsPanel — instant exits to the liquidity providers", () =>
     expect(api.cancelListing).not.toHaveBeenCalled();
   });
 
+  it("shows a request that expired partly funded as partly paid, with the part paid", async () => {
+    api.myRequests.mockResolvedValue({
+      items: [{ ...lpRequest("expired"), units_remaining: 6 }],
+      total: 1,
+    });
+    mount();
+    fireEvent.mouseDown(await screen.findByRole("tab", { name: /Completed/i }));
+    expect(await screen.findByText(/Partly funded: 4 of 10 units paid to your wallet; the rest expired/)).toBeInTheDocument();
+    expect(screen.getByText("$380.24")).toBeInTheDocument(); // 950.60 / 10 x 4
+  });
+
   it("shows a funded request as paid, with what the seller received", async () => {
     api.myRequests.mockResolvedValue({ items: [lpRequest("filled")], total: 1 });
     mount();

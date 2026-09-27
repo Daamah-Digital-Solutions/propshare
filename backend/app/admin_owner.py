@@ -459,7 +459,14 @@ class OwnerSubmissionsView(BaseView):
                 label=label,
                 css=css,
                 model=listing_service.MODEL_LABELS.get(prop.model, prop.model),
-                photos=list(prop.images or []),
+                # only files we store or http(s) links (the schema refuses anything else;
+                # older rows are filtered here too)
+                photos=[
+                    u
+                    for u in (prop.images or [])
+                    if isinstance(u, str)
+                    and u.startswith(("/api/v1/files/", "https://", "http://"))
+                ],
                 docs=docs,
                 history=history,
                 can_decide=prop.status in WAITING_STATUSES,

@@ -1010,9 +1010,10 @@ class BankDepositClaimAdmin(AdminOnlyModelView, model=Payment):
     # Every money-in attempt: card/crypto deposits and purchases (provider stripe /
     # nowpayments, settled by webhook or by the provider lookup) and manual bank-transfer
     # CLAIMS (provider='manual_bank', confirmed by a person). Money moves only through the
-    # audited service layer, never by editing a row. A card/crypto payment still 'pending'
-    # long after it was made means the provider's webhook did not reach us: "Check with
-    # provider" asks the provider directly and settles it the same way the webhook would.
+    # audited service layer, never by editing a row. A card payment still 'pending' long
+    # after it was made means Stripe's webhook did not reach us: "Check with Stripe" asks
+    # Stripe directly and settles it the same way the webhook would (crypto: see the
+    # NOWPayments dashboard — its payment id only arrives with the IPN).
     column_list = [
         Payment.user_id,
         Payment.provider,
@@ -1047,11 +1048,12 @@ class BankDepositClaimAdmin(AdminOnlyModelView, model=Payment):
 
     @action(
         name="check_with_provider",
-        label="Check with provider (settle if paid)",
+        label="Check with Stripe (card: settle if paid)",
         confirmation_message=(
-            "Ask Stripe / NOWPayments how the selected pending card or crypto payment(s) "
-            "ended and settle them exactly as the webhook would (credit the wallet or confirm "
-            "the units). Bank-transfer claims and settled payments are left untouched."
+            "Ask Stripe how the selected pending CARD payment(s) ended and settle them exactly "
+            "as the webhook would (credit the wallet or confirm the units). Crypto payments, "
+            "bank-transfer claims and settled payments are left untouched: check a crypto "
+            "payment in the NOWPayments dashboard."
         ),
         add_in_detail=True,
         add_in_list=True,

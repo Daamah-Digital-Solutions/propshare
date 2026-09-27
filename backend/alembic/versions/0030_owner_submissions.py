@@ -12,6 +12,10 @@ note behind it, and staff have a dedicated queue:
                        ``closed``; this tells them apart for the owner).
   * ``reviewed_at`` / ``reviewed_by`` — when that decision was taken and by whom.
 
+Existing owner listings get their trail back from the audit log (``property.submit`` /
+``property.reject``), so a listing submitted — or sent back — before this release is not
+shown as "never submitted".
+
 Additive and idempotent, raw SQL like 0023/0026-0029.
 """
 
@@ -36,6 +40,41 @@ def upgrade() -> None:
             ADD COLUMN IF NOT EXISTS reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL;
         CREATE INDEX IF NOT EXISTS properties_owner_submissions_idx
             ON properties (status, submitted_at DESC) WHERE owner_id IS NOT NULL;
+        """
+    )
+    # backfill from the audit log: the last submission of every owner listing...
+    op.execute(
+        """
+        UPDATE properties p
+           SET submitted_at = s.at
+          FROM (SELECT entity_id, max(created_at) AS at
+                  FROM audit_log
+                 WHERE entity_type = 'property' AND action = 'property.submit'
+                 GROUP BY entity_id) s
+         WHERE p.owner_id IS NOT NULL
+           AND p.submitted_at IS NULL
+           AND s.entity_id = p.id::text;
+        """
+    )
+    # ...and, for a draft whose last decision sent it back, that decision and its reason
+    op.execute(
+        """
+        UPDATE properties p
+           SET review_outcome = 'changes_requested',
+               review_note = NULLIF(d.after ->> 'reason', ''),
+               reviewed_at = d.created_at,
+               reviewed_by = (SELECT u.id FROM users u WHERE u.id = d.actor_id)
+          FROM (SELECT DISTINCT ON (entity_id) entity_id, action, after, created_at, actor_id
+                  FROM audit_log
+                 WHERE entity_type = 'property'
+                   AND action IN ('property.submit', 'property.approve',
+                                  'property.reject', 'property.close')
+                 ORDER BY entity_id, created_at DESC) d
+         WHERE p.owner_id IS NOT NULL
+           AND p.status = 'draft'
+           AND p.review_outcome IS NULL
+           AND d.entity_id = p.id::text
+           AND d.action = 'property.reject';
         """
     )
 

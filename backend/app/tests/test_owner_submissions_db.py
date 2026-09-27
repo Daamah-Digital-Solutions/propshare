@@ -169,6 +169,15 @@ async def test_request_changes_then_resubmit_then_approve(client, db):
     assert "Your listing is live" in _notices(db, owner_id)
     assert (await client.get(f"/api/v1/properties/{pid}")).status_code == 200
 
+    # a LIVE listing cannot be sent back or declined (its units could be reset under the
+    # investors who hold them): take it down with close instead
+    for action in ("request-changes", "decline", "reject"):
+        r = await client.post(
+            f"/api/v1/admin/properties/{pid}/{action}", json={"reason": "late"}, headers=ah
+        )
+        assert r.status_code == 409 and r.json()["error"]["code"] == "INVALID_TRANSITION", action
+    assert db("SELECT status FROM properties WHERE id=:p", p=pid)[0][0] == "active"
+
 
 @pytest.mark.asyncio
 async def test_decline_is_final_needs_a_message_and_stays_private(client, db):

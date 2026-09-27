@@ -21,6 +21,7 @@ import uuid
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
@@ -45,6 +46,21 @@ _CHECKOUT_LABEL = {
 
 
 logger = logging.getLogger(__name__)
+
+
+def _locked(payment_id: uuid.UUID):
+    """SELECT … FOR UPDATE that refreshes the row even when the session already holds it.
+
+    Without ``populate_existing`` SQLAlchemy returns the object already in the session with
+    the values it read BEFORE the lock, so a payment another transaction just settled would
+    still look pending here — and the webhook and the provider lookup (different event keys)
+    could both credit it. The status guard below must see the locked row."""
+    return (
+        select(Payment)
+        .where(Payment.id == payment_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
 
 
 def _gateway(provider: str):
@@ -296,9 +312,7 @@ async def _apply(
     the same payment paid credit it once."""
     if parsed.status == "succeeded":
         # Layer 2: lock the row + guard the state transition (exactly-once credit).
-        locked = (
-            await session.execute(select(Payment).where(Payment.id == payment.id).with_for_update())
-        ).scalar_one()
+        locked = (await session.execute(_locked(payment.id))).scalar_one()
         if locked.status == "succeeded":
             return {"status": "already_processed"}
         locked.status = "succeeded"
@@ -340,9 +354,7 @@ async def _apply(
         return {"status": "processed", "result": "credited"}
 
     if parsed.status == "failed":
-        locked = (
-            await session.execute(select(Payment).where(Payment.id == payment.id).with_for_update())
-        ).scalar_one()
+        locked = (await session.execute(_locked(payment.id))).scalar_one()
         if locked.status != "pending":
             # Already settled (or already failed): a late failure event changes nothing.
             return {"status": "already_processed"}
@@ -409,8 +421,11 @@ async def sync_payment(session: AsyncSession, payment: Payment) -> dict:
     parsed = await _lookup(payment.provider, payment.provider_payment_id)
     if parsed.status not in ("succeeded", "failed"):
         return {"status": "still_pending", "result": parsed.status}
-    # Layer 1 (same key space as the webhook): NOWPayments keys both by <id>:<status>, so an
-    # IPN that already applied this outcome makes the lookup a duplicate.
+    # The webhook (or another lookup) may have settled it while we asked: lock the row, read
+    # it fresh, and stop if it is no longer pending. Concurrent lookups wait here in turn.
+    current = (await session.execute(_locked(payment.id))).scalar_one()
+    if current.status != "pending":
+        return {"status": "already_processed"}
     seen = await session.execute(
         select(PaymentEvent.id).where(
             PaymentEvent.provider == payment.provider, PaymentEvent.event_id == parsed.event_id
@@ -464,8 +479,11 @@ async def reconcile_pending(
     limit: int = 200,
 ) -> dict:
     """Cron sweep: settle every pending card payment Stripe says has ended.
-    Idempotent (a settled row is skipped by the status guard); one provider error never
-    aborts the batch. Honest no-op per provider that is not configured."""
+
+    Each payment is settled in its OWN transaction, committed before the next Stripe call:
+    no lock is held across the batch, and one payment's failure (provider error, a row
+    another worker is settling) never rolls back the others. Idempotent — a settled row is
+    skipped by the locked status guard. Honest no-op when Stripe is not configured."""
     now = now or datetime.datetime.now(datetime.UTC)
     providers = [p for p in SYNC_PROVIDERS if _lookup_configured(p)]
     out = {
@@ -478,10 +496,10 @@ async def reconcile_pending(
     }
     if not providers:
         return out
-    rows = (
+    ids = (
         (
             await session.execute(
-                select(Payment)
+                select(Payment.id)
                 .where(
                     Payment.status == "pending",
                     Payment.provider.in_(providers),
@@ -496,13 +514,24 @@ async def reconcile_pending(
         .scalars()
         .all()
     )
-    for payment in rows:
+    from app.core.db import session_scope  # local: the per-payment transactions
+
+    for payment_id in ids:
         out["checked"] += 1
         try:
-            result = await sync_payment(session, payment)
+            async with session_scope() as own:
+                payment = await own.get(Payment, payment_id)
+                if payment is None or payment.status != "pending":
+                    out["settled"] += 1  # settled meanwhile (webhook / another sweep)
+                    continue
+                result = await sync_payment(own, payment)
         except (AppError, httpx.HTTPError) as exc:
-            logger.warning("Payment %s: provider lookup failed in reconcile: %s", payment.id, exc)
+            logger.warning("Payment %s: provider lookup failed in reconcile: %s", payment_id, exc)
             out["errors"] += 1
+            continue
+        except IntegrityError:
+            # another worker recorded the same outcome first: it settled this payment
+            out["settled"] += 1
             continue
         if result.get("status") == "still_pending":
             out["pending"] += 1

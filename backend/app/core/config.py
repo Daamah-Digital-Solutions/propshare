@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     cron_secret: str = ""
     # Public URL of the SPA (used to build email verify/reset links).
     app_base_url: str = "http://localhost:5173"
+    # Public URL of THIS API (where /admin lives), for links in staff emails. Empty: derived
+    # from app_base_url as https://api.<site host> (the production layout).
+    admin_base_url: str = ""
 
     # Datastores. Defaults point at the local docker-compose services so the app
     # boots without a .env; /healthz will report "down" if they are unreachable.
@@ -112,6 +115,19 @@ class Settings(BaseSettings):
     # Stripe Connect (Phase 7, bank withdrawals): payouts to investors' connected
     # accounts. Reuses stripe_secret_key; its webhook is verified with
     # stripe_connect_webhook_secret (see above).
+
+    def admin_url(self, path: str) -> str:
+        """Absolute link to an admin page for an email; the bare path when no host is known
+        (local development)."""
+        base = self.admin_base_url.rstrip("/")
+        if not base:
+            from urllib.parse import urlparse
+
+            site = urlparse(self.app_base_url)
+            host = site.hostname or ""
+            if "." in host and not host.startswith("api.") and host != "localhost":
+                base = f"{site.scheme or 'https'}://api.{host}"
+        return f"{base}{path}" if base else path
 
     @property
     def stripe_configured(self) -> bool:

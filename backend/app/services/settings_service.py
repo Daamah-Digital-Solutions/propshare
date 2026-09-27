@@ -72,7 +72,7 @@ _SETTING_SPECS: dict[str, str] = {
     "support_sla_hours_normal": "int",
     "support_sla_hours_high": "int",
     "ops_stale_hours": "int",
-    "ops_payment_stale_minutes": "int",
+    "ops_payment_stale_hours": "int",
 }
 
 
@@ -217,8 +217,9 @@ DEFAULTS: dict[str, str] = {
     "support_sla_hours_high": "8",
     # Ops cases (Batch F): hours a bank claim / withdrawal may wait before a case is opened
     "ops_stale_hours": "48",
-    # minutes a card/crypto payment may stay pending after the provider lookup before a case
-    "ops_payment_stale_minutes": "30",
+    # hours a CARD payment may stay pending before a case (Stripe expires unpaid checkouts at
+    # 24 h, and the lookup then fails them — still pending after this = lookup cannot reach it)
+    "ops_payment_stale_hours": "25",
 }
 
 

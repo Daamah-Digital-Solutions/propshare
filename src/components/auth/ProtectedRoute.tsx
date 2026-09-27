@@ -31,7 +31,9 @@ export function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
   if (isLoading) return <Spinner />;
 
   if (!isAuthenticated) {
-    return <Navigate to="/auth" replace state={{ from: location.pathname }} />;
+    // keep the query too: a checkout return (?tab=wallet&deposit=success&payment=…) must
+    // still be followed after signing in
+    return <Navigate to="/auth" replace state={{ from: location.pathname + location.search }} />;
   }
 
   // The wallet is one per member, shared by every role, and each role's dashboard has it. A
