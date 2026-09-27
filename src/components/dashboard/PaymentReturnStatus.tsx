@@ -105,21 +105,21 @@ export function PaymentReturnStatus({ kind, pollMs = 3000, timeoutMs = 120_000 }
     if (ret.outcome === "cancelled") toast.info(COPY[kind].cancelled);
   }, [ret, kind, searchParams, setSearchParams]);
 
-  const [timedOut, setTimedOut] = useState(false);
-  const startedAt = useRef(Date.now());
   const following = ret.outcome === "success" && Boolean(ret.paymentId);
-  const { data } = useQuery({
+  // stop asking after timeoutMs and tell the member we will notify them instead
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    if (!following) return;
+    const timer = setTimeout(() => setTimedOut(true), timeoutMs);
+    return () => clearTimeout(timer);
+  }, [following, timeoutMs]);
+  const { data, isError } = useQuery({
     queryKey: ["payment", ret.paymentId],
     queryFn: () => paymentApi.get(ret.paymentId as string),
     enabled: following,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      if (status && status !== "pending") return false;
-      if (Date.now() - startedAt.current > timeoutMs) {
-        setTimedOut(true);
-        return false;
-      }
-      return pollMs;
+      return (status && status !== "pending") || timedOut ? false : pollMs;
     },
     retry: false,
   });
@@ -136,7 +136,8 @@ export function PaymentReturnStatus({ kind, pollMs = 3000, timeoutMs = 120_000 }
     }
   }, [data, kind, queryClient]);
 
-  if (!following) return null;
+  // not a payment of this member (edited link) or unreachable: nothing to follow here
+  if (!following || isError) return null;
   const copy = COPY[kind];
   const status = data?.status ?? "pending";
 

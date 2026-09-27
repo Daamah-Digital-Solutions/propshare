@@ -56,9 +56,6 @@ import {
 } from "@/lib/api";
 import { toast } from "sonner";
 
-// Ledger types that represent money LEAVING the wallet (shown negative).
-const NEGATIVE_TYPES = new Set(["withdrawal", "investment", "fee"]);
-
 const tail = (s: string | null | undefined) => (s ? s.slice(-4) : "");
 
 // Query parameters of a deposit / withdrawal the assistant prepared (see WalletPrefill below).
@@ -222,7 +219,8 @@ export const InvestorWallet = () => {
   const transactions = (txnData?.items ?? []).map((t: TransactionItem) => ({
     id: t.id,
     type: t.type,
-    amount: (NEGATIVE_TYPES.has(t.type) ? -1 : 1) * Number(t.amount),
+    // the ledger is signed (money in > 0, money out < 0) and the API sends it as is
+    amount: Number(t.amount),
     method: t.payment_method ?? undefined,
     date: new Date(t.created_at).toLocaleDateString(),
     reference: t.reference_id ? t.reference_id.slice(0, 8) : "",
@@ -837,7 +835,8 @@ export const InvestorWallet = () => {
                         transaction.amount > 0 ? "text-primary" : "text-foreground"
                       }`}
                     >
-                      {transaction.amount > 0 ? "+" : ""}${Math.abs(transaction.amount).toLocaleString()}
+                      {transaction.amount > 0 ? "+" : transaction.amount < 0 ? "-" : ""}$
+                      {Math.abs(transaction.amount).toLocaleString()}
                     </span>
                     {transaction.status === "completed" ? (
                       <CheckCircle2 className="h-4 w-4 text-primary" />

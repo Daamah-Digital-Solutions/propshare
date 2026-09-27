@@ -95,6 +95,13 @@ describe("PaymentReturnStatus", () => {
     expect(sessionStorage.getItem("capimax.pending_payment")).toBeNull();
   });
 
+  it("shows nothing for a payment that is not the member's", async () => {
+    api.get.mockRejectedValue(new Error("Not found"));
+    mount("/dashboard?tab=wallet&deposit=success&payment=someone-else");
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTestId("payment-return")).toBeNull());
+  });
+
   it("tells the member a cancelled checkout charged nothing", async () => {
     mount("/dashboard?tab=wallet&deposit=cancelled&payment=p1");
     await waitFor(() => expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/nothing was charged/i)));

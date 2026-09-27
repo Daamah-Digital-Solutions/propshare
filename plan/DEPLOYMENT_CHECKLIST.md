@@ -164,7 +164,7 @@ Example crontab (adjust cadence to taste):
 | Withdrawal executor | `POST …/admin/withdrawals/execute` | submit approved payouts to the provider |
 | Withdrawal reconcile | `POST …/admin/withdrawals/reconcile` | re-query stuck `processing` payouts |
 | Reservation-expiry sweep | `POST …/investments/maintenance/expire-reservations` | release lapsed unpaid direct-pay holds |
-| Payment reconcile | `POST …/payments/maintenance/reconcile` | settle pending card/crypto payments whose webhook never arrived (asks Stripe / NOWPayments directly) |
+| Payment reconcile | `POST …/payments/maintenance/reconcile` | settle pending card payments whose webhook never arrived (asks Stripe directly; crypto still relies on the NOWPayments IPN, and a crypto payment pending too long opens a staff case) |
 | Email outbox drainer | `POST …/admin/notifications/dispatch-emails` | send queued emails (Hostinger SMTP) |
 | LP exit-request expiry | `POST …/admin/liquidity/expire-requests` | free units reserved by lapsed LP exit requests |
 | Gift executor (Group 5) | `POST …/admin/gifts/run-due` | send 7-day gift reminders + execute due scheduled gifts (real transfer / wallet credit; recurring re-enqueue) |

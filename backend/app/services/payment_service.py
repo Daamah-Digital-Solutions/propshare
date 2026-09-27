@@ -367,11 +367,17 @@ async def _apply(
 
 
 # --- Provider lookup: the safety net when the webhook never arrives ---------- #
-# A card/crypto payment used to be credited ONLY by the webhook. If the endpoint was created
-# after the payment, its signing secret was wrong, or the delivery failed, the money left the
-# customer and nothing moved here. These paths ask the provider directly and settle through
-# ``_apply`` — the same guarded code the webhook uses, so nothing can be credited twice.
-SYNC_PROVIDERS = ("stripe", "nowpayments")
+# A card payment used to be credited ONLY by the webhook. If the endpoint was created after
+# the payment, its signing secret was wrong, or the delivery failed, the money left the
+# customer and nothing moved here. These paths ask Stripe directly (by the Checkout Session
+# id we store) and settle through ``_apply`` — the same guarded code the webhook uses, so
+# nothing can be credited twice.
+# Crypto is not looked up: for a NOWPayments invoice we store the INVOICE id, and its payment
+# id only arrives with the IPN, so there is nothing reliable to ask by. A crypto payment still
+# pending too long opens a staff case (ops_case_service) instead.
+SYNC_PROVIDERS = ("stripe",)
+# providers whose payments may be stuck waiting for a webhook (a staff case after a while)
+WEBHOOK_PROVIDERS = ("stripe", "nowpayments")
 # A fresh payment is still on the hosted checkout page: do not ask about it yet.
 SYNC_MIN_AGE = datetime.timedelta(minutes=2)
 # Older than this and the provider has long expired the session; leave it to staff.
@@ -382,19 +388,15 @@ _last_sync_at: dict[uuid.UUID, float] = {}
 
 
 def _lookup_configured(provider: str) -> bool:
-    if provider == "stripe":
-        return stripe_gateway.lookup_configured()
-    return nowpayments_gateway.is_configured()
+    return provider == "stripe" and stripe_gateway.lookup_configured()
 
 
 async def _lookup(provider: str, provider_payment_id: str) -> ParsedWebhook:
-    if provider == "stripe":
-        return await stripe_gateway.get_checkout_status(provider_payment_id)
-    return await nowpayments_gateway.get_payment_status(provider_payment_id)
+    return await stripe_gateway.get_checkout_status(provider_payment_id)
 
 
 async def sync_payment(session: AsyncSession, payment: Payment) -> dict:
-    """Ask the provider about one pending card/crypto payment and settle it if it ended.
+    """Ask the provider about one pending card payment and settle it if it ended.
     Returns the same shape as ``process_webhook``; ``still_pending`` when the provider has no
     outcome yet. Raises the gateway's AppError / httpx error on a provider failure — the
     callers decide whether that is fatal (an admin click) or counted (the cron sweep)."""
@@ -461,7 +463,7 @@ async def reconcile_pending(
     max_age: datetime.timedelta = SYNC_MAX_AGE,
     limit: int = 200,
 ) -> dict:
-    """Cron sweep: settle every pending card/crypto payment the provider says has ended.
+    """Cron sweep: settle every pending card payment Stripe says has ended.
     Idempotent (a settled row is skipped by the status guard); one provider error never
     aborts the batch. Honest no-op per provider that is not configured."""
     now = now or datetime.datetime.now(datetime.UTC)

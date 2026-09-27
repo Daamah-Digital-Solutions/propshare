@@ -411,33 +411,3 @@ async def test_stripe_session_lookup_needs_a_key_of_either_mode(monkeypatch) -> 
     monkeypatch.setattr(s, "stripe_secret_key", "sk_test_x", raising=False)
     monkeypatch.setattr(s, "environment", "production", raising=False)
     assert stripe.lookup_configured() is True
-
-
-@pytest.mark.asyncio
-async def test_nowpayments_payment_lookup_is_keyed_like_the_ipn(monkeypatch) -> None:
-    s = get_settings()
-    monkeypatch.setattr(s, "nowpayments_api_key", "np_x", raising=False)
-    monkeypatch.setattr(s, "nowpayments_ipn_secret", "ipn_x", raising=False)
-    monkeypatch.setattr(nowp, "is_configured", lambda: True)
-    monkeypatch.setattr(nowp.httpx, "AsyncClient", _FakeClient)
-    _FakeClient.answer = _FakeResponse(
-        200,
-        {
-            "payment_id": 987,
-            "payment_status": "finished",
-            "price_amount": 40.5,
-            "order_id": "44444444-4444-4444-4444-444444444444",
-        },
-    )
-    out = await nowp.get_payment_status("987")
-    assert _FakeClient.calls[-1].endswith("/payment/987")
-    assert out.status == "succeeded"
-    assert out.captured_amount == decimal.Decimal("40.5")
-    assert out.event_id == "987:finished"  # the IPN for the same outcome dedupes against it
-
-    _FakeClient.answer = _FakeResponse(200, {"payment_id": 987, "payment_status": "waiting"})
-    assert (await nowp.get_payment_status("987")).status == "pending"
-    _FakeClient.answer = _FakeResponse(200, {"payment_id": 987, "payment_status": "partially_paid"})
-    assert (await nowp.get_payment_status("987")).status == "ignored"
-    _FakeClient.answer = _FakeResponse(200, {"payment_id": 987, "payment_status": "expired"})
-    assert (await nowp.get_payment_status("987")).status == "failed"
