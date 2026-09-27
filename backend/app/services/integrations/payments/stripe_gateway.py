@@ -553,6 +553,12 @@ def parse_payout_event(raw_body: bytes, signature: str | None) -> ParsedPayoutEv
     if not secrets:
         raise AppError("PAYOUTS_NOT_CONFIGURED", "Stripe webhook not configured.", status_code=503)
     if not any(_verify(secret, raw_body, signature or "") for secret in secrets):
+        logger.warning(
+            "Stripe webhook signature rejected on the Connect endpoint (sig_ts=%s, body=%d bytes):"
+            " check STRIPE_CONNECT_WEBHOOK_SECRET against the endpoint's signing secret",
+            _signature_timestamp(signature or ""),
+            len(raw_body),
+        )
         raise AppError("WEBHOOK_SIGNATURE_INVALID", "Invalid Stripe signature.", status_code=401)
     event = json.loads(raw_body.decode("utf-8"))
     etype = str(event.get("type", ""))

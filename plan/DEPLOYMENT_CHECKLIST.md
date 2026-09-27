@@ -28,6 +28,13 @@ Conventions used below:
      signing secret, delivery failure), the `payments/maintenance/reconcile` cron below and
      the return page's polling ask Stripe directly and settle the payment the same way.
    - Copy the endpoint's **Signing secret**.
+   - Check after setting it: the endpoint's **Event deliveries** must show `200`. Every
+     delivery `401 WEBHOOK_SIGNATURE_INVALID` = the server's `STRIPE_WEBHOOK_SECRET` is not
+     this endpoint's secret (each endpoint, and test vs live mode, has its own; a second
+     `STRIPE_WEBHOOK_SECRET=` line further down `.env` wins over an edited first one). Fix on
+     the VPS as root: `/opt/capimax/venv/bin/python /opt/capimax/app/backend/scripts/fix_stripe_webhook_secret.py`
+     (asks for the secret without showing it, leaves one line in `.env`, restarts the API and
+     proves the API accepts the signature; also covers the Connect endpoint of §1.2).
 3. Env (backend):
    - `STRIPE_SECRET_KEY=sk_live_...`
    - `STRIPE_WEBHOOK_SECRET=whsec_...`
