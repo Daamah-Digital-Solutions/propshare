@@ -31,6 +31,7 @@ class InvestmentCreateOut(BaseModel):
     total_charged: str  # subtotal + platform_fee
     management_fee_rate: str  # annual, disclosed only (charged in Phase 6)
     checkout_url: str | None  # set for direct-pay; null for wallet-funded
+    payment_id: uuid.UUID | None = None  # the payment behind a direct-pay checkout
 
 
 class InvestmentOut(BaseModel):

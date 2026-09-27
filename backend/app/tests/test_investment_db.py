@@ -158,9 +158,9 @@ def _assert_unit_invariant(db, pid: str):
         "SELECT COALESCE(SUM(units),0) FROM investments WHERE property_id=:i AND status='pending'",
         i=pid,
     )[0][0]
-    assert (
-        confirmed + reserved + avail == total
-    ), f"confirmed {confirmed} + reserved {reserved} + avail {avail} != total {total}"
+    assert confirmed + reserved + avail == total, (
+        f"confirmed {confirmed} + reserved {reserved} + avail {avail} != total {total}"
+    )
 
 
 # --- gating / validation ---------------------------------------------------- #
@@ -548,3 +548,53 @@ async def test_list_and_get_my_investments(client, db):
 async def test_investments_require_auth(client):
     assert (await client.get("/api/v1/investments")).status_code == 401
     assert (await client.post("/api/v1/investments", json={})).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_reconcile_confirms_a_paid_purchase_the_webhook_missed(client, db, monkeypatch):
+    """Card purchase from the property page: Stripe charged the buyer but the event never
+    reached us. The sweep asks Stripe and confirms the units exactly as the webhook would."""
+    from app.services.integrations.payments import ParsedWebhook
+
+    _configure_stripe(monkeypatch)
+    token = await _verified_user(client, db, "missedbuy@i.com")
+    uid = _uid(db, "missedbuy@i.com")
+    pid = _seed_property(db, unit_price=100, total_units=100, total_value=10000)
+    res = await _invest(client, token, pid, 1000, "card")
+    inv_id = res.json()["investment_id"]
+    pay_id = _payment_id_for(db, inv_id)
+    db("UPDATE payments SET created_at = now() - interval '5 minutes' WHERE id=:p", p=pay_id)
+
+    async def paid(session_id: str) -> ParsedWebhook:
+        return ParsedWebhook(
+            event_id=f"sync:{session_id}:succeeded",
+            provider_payment_id=session_id,
+            order_id=pay_id,
+            status="succeeded",
+            captured_amount=1025,
+            type="checkout.session.lookup",
+            raw={},
+        )
+
+    monkeypatch.setattr(stripe, "lookup_configured", lambda: True)
+    monkeypatch.setattr(stripe, "get_checkout_status", paid)
+    monkeypatch.setattr(get_settings(), "cron_secret", "cron-t", raising=False)
+    r = await client.post(
+        "/api/v1/payments/maintenance/reconcile", headers={"X-Cron-Secret": "cron-t"}
+    )
+    assert r.status_code == 200 and r.json()["settled"] == 1, r.text
+    assert db("SELECT status FROM investments WHERE id=:i", i=inv_id)[0][0] == "confirmed"
+    assert db("SELECT status FROM payments WHERE id=:p", p=pay_id)[0][0] == "succeeded"
+    assert db("SELECT units FROM ownership_ledger WHERE property_id=:i", i=pid)[0][0] == 10
+    assert (
+        db(
+            "SELECT count(*) FROM notifications WHERE user_id=:i AND title='Investment confirmed'",
+            i=uid,
+        )[0][0]
+        == 1
+    )
+    # the late webhook is a no-op
+    r2 = await _post_stripe(client, _stripe_event(pay_id, cents=102500, event_id="evt_missed"))
+    assert r2.json()["status"] == "already_processed"
+    assert db("SELECT count(*) FROM ownership_ledger WHERE property_id=:i", i=pid)[0][0] == 1
+    _assert_unit_invariant(db, pid)

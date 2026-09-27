@@ -20,7 +20,13 @@ Conventions used below:
 1. Create a Stripe account; get the **Secret key** and **Publishable key** (live mode).
 2. Add a **webhook endpoint** → `API/api/v1/payments/webhooks/stripe`, **Events from: Your account**
    - Events: `checkout.session.completed`, `checkout.session.expired`,
-     `checkout.session.async_payment_failed` (the only ones the code acts on).
+     `checkout.session.async_payment_failed`, `checkout.session.async_payment_succeeded`
+     (the only ones the code acts on; the last one only matters if a delayed payment method
+     such as a bank debit is enabled under Dashboard → Payment methods — cards and wallets
+     settle on `checkout.session.completed`).
+   - Safety net: even if an event never arrives (endpoint created after the payment, wrong
+     signing secret, delivery failure), the `payments/maintenance/reconcile` cron below and
+     the return page's polling ask Stripe directly and settle the payment the same way.
    - Copy the endpoint's **Signing secret**.
 3. Env (backend):
    - `STRIPE_SECRET_KEY=sk_live_...`
@@ -145,6 +151,7 @@ Example crontab (adjust cadence to taste):
 */2  * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/withdrawals/execute
 */15 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/withdrawals/reconcile
 */5  * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/investments/maintenance/expire-reservations
+*/5  * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/payments/maintenance/reconcile
 *    * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/notifications/dispatch-emails
 */10 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/liquidity/expire-requests
 */30 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" API/api/v1/admin/gifts/run-due
@@ -157,6 +164,7 @@ Example crontab (adjust cadence to taste):
 | Withdrawal executor | `POST …/admin/withdrawals/execute` | submit approved payouts to the provider |
 | Withdrawal reconcile | `POST …/admin/withdrawals/reconcile` | re-query stuck `processing` payouts |
 | Reservation-expiry sweep | `POST …/investments/maintenance/expire-reservations` | release lapsed unpaid direct-pay holds |
+| Payment reconcile | `POST …/payments/maintenance/reconcile` | settle pending card/crypto payments whose webhook never arrived (asks Stripe / NOWPayments directly) |
 | Email outbox drainer | `POST …/admin/notifications/dispatch-emails` | send queued emails (Hostinger SMTP) |
 | LP exit-request expiry | `POST …/admin/liquidity/expire-requests` | free units reserved by lapsed LP exit requests |
 | Gift executor (Group 5) | `POST …/admin/gifts/run-due` | send 7-day gift reminders + execute due scheduled gifts (real transfer / wallet credit; recurring re-enqueue) |

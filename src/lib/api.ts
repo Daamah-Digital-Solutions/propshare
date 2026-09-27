@@ -682,6 +682,8 @@ export interface InvestCreateResponse {
   total_charged: string;
   management_fee_rate: string;
   checkout_url: string | null;
+  /** the payment behind a hosted checkout (null when paid from the wallet) */
+  payment_id?: string | null;
 }
 
 export interface InvestmentItem {

@@ -32,6 +32,7 @@ from app.schemas.wallet import (
     WalletOut,
 )
 from app.services import (
+    dashboard_links,
     manual_deposit_service,
     payment_service,
     platform_accounts_service,
@@ -111,14 +112,16 @@ async def deposit(
         )
     app_base = get_settings().app_base_url.rstrip("/")
     api_base = str(request.base_url).rstrip("/")
+    # Back to the wallet tab of the dashboard the member was using (the service appends the
+    # payment id, so that page can follow the payment until it is credited).
     result = await payment_service.create_deposit(
         session,
         user_id=principal.user_id,
         amount=body.amount,
         method=body.method,
         idempotency_key=idempotency_key,
-        success_url=f"{app_base}/dashboard?deposit=success",
-        cancel_url=f"{app_base}/dashboard?deposit=cancelled",
+        success_url=dashboard_links.wallet_url(app_base, principal.active_role, deposit="success"),
+        cancel_url=dashboard_links.wallet_url(app_base, principal.active_role, deposit="cancelled"),
         ipn_url=f"{api_base}/api/v1/payments/webhooks/nowpayments",
     )
     return DepositOut(**result)

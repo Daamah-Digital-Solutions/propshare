@@ -14,7 +14,7 @@ import uuid
 
 from fastapi import APIRouter, Request
 
-from app.api.deps import PrincipalDep, SessionDep
+from app.api.deps import AdminOrCronDep, PrincipalDep, SessionDep
 from app.core.ratelimit import WEBHOOK_LIMIT, limiter
 from app.schemas.wallet import PaymentStatusOut
 from app.services import payment_service, withdrawal_service
@@ -25,6 +25,9 @@ router = APIRouter(prefix="/api/v1/payments", tags=["payments"])
 @router.get("/{payment_id}", response_model=PaymentStatusOut)
 async def get_payment(payment_id: uuid.UUID, principal: PrincipalDep, session: SessionDep):
     p = await payment_service.get_payment(session, user_id=principal.user_id, payment_id=payment_id)
+    # The return page polls this while the payment is pending: if the webhook has not landed
+    # yet (or never will), ask the provider directly so the payer sees the credit anyway.
+    await payment_service.sync_on_read(session, p)
     return PaymentStatusOut(
         id=p.id,
         provider=p.provider,
@@ -33,6 +36,15 @@ async def get_payment(payment_id: uuid.UUID, principal: PrincipalDep, session: S
         amount_captured=str(p.amount_captured) if p.amount_captured is not None else None,
         created_at=p.created_at,
     )
+
+
+@router.post("/maintenance/reconcile")
+async def reconcile_payments(caller: AdminOrCronDep, session: SessionDep) -> dict:
+    """Settle pending card/crypto payments by asking the provider directly — the safety net
+    for a webhook that never arrived (endpoint created after the payment, wrong signing
+    secret, delivery failure). Cron target (admin OR a valid ``X-Cron-Secret``); idempotent;
+    also runs on demand. Honest no-op when no provider key is configured."""
+    return await payment_service.reconcile_pending(session)
 
 
 @router.post("/webhooks/stripe")

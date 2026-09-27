@@ -23,6 +23,7 @@ import { useReinvest } from "@/contexts/ReinvestContext";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { investApi, ApiError, type InvestMethod } from "@/lib/api";
+import { rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
 
 interface PropertyData {
   propertyValue: number;
@@ -168,7 +169,9 @@ const InvestmentCalculator = ({
         crypto.randomUUID(),
       );
       if (res.checkout_url) {
-        // Direct pay: hand off to the hosted checkout; the webhook confirms the units.
+        // Direct pay: hand off to the hosted checkout; the server confirms the units and the
+        // Investments tab follows the payment when the provider sends the buyer back.
+        if (res.payment_id) rememberPendingPayment(res.payment_id);
         window.location.href = res.checkout_url;
         return;
       }

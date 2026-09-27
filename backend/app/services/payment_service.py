@@ -13,9 +13,13 @@ amount the client supplied.
 
 from __future__ import annotations
 
+import datetime
 import decimal
+import logging
+import time
 import uuid
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,8 +44,17 @@ _CHECKOUT_LABEL = {
 }
 
 
+logger = logging.getLogger(__name__)
+
+
 def _gateway(provider: str):
     return stripe_gateway if provider == "stripe" else nowpayments_gateway
+
+
+def _with_payment(url: str, payment_id: uuid.UUID) -> str:
+    """The return URL with our payment id, so the page the provider sends the payer back to
+    can follow that payment (poll its status, refresh the balance) instead of guessing."""
+    return f"{url}{'&' if '?' in url else '?'}payment={payment_id}"
 
 
 def provider_for(method: str) -> str:
@@ -105,6 +118,8 @@ async def create_deposit(
     )
     session.add(payment)
     await session.flush()  # assign payment.id
+    success_url = _with_payment(success_url, payment.id)
+    cancel_url = _with_payment(cancel_url, payment.id)
 
     if provider == "stripe":
         result = await stripe_gateway.create_checkout(
@@ -181,6 +196,8 @@ async def create_investment_checkout(
     )
     session.add(payment)
     await session.flush()
+    success_url = _with_payment(success_url, payment.id)
+    cancel_url = _with_payment(cancel_url, payment.id)
 
     if provider == "stripe":
         result = await stripe_gateway.create_checkout(
@@ -265,6 +282,18 @@ async def process_webhook(
         )
         return {"status": "ignored_unknown_payment"}
 
+    return await _apply(
+        session, provider=provider, parsed=parsed, payment=payment, source="webhook"
+    )
+
+
+async def _apply(
+    session: AsyncSession, *, provider: str, parsed: ParsedWebhook, payment: Payment, source: str
+) -> dict:
+    """Apply a provider outcome to a located payment. Shared by the webhook and the direct
+    provider lookup (``sync_payment``), so both settle through exactly the same guarded path:
+    the row lock + status guard below is what makes a webhook and a lookup that both report
+    the same payment paid credit it once."""
     if parsed.status == "succeeded":
         # Layer 2: lock the row + guard the state transition (exactly-once credit).
         locked = (
@@ -273,10 +302,12 @@ async def process_webhook(
         if locked.status == "succeeded":
             return {"status": "already_processed"}
         locked.status = "succeeded"
-        locked.amount_captured = parsed.captured_amount or locked.amount
+        locked.amount_captured = decimal.Decimal(
+            str(parsed.captured_amount or locked.amount)
+        ).quantize(decimal.Decimal("0.01"))
         await write_audit(
             session,
-            action="payment.webhook.succeeded",
+            action="payment.webhook.succeeded" if source == "webhook" else "payment.sync.succeeded",
             entity_type="payment",
             entity_id=str(locked.id),
             after={"captured": str(locked.amount_captured), "purpose": locked.purpose},
@@ -309,24 +340,175 @@ async def process_webhook(
         return {"status": "processed", "result": "credited"}
 
     if parsed.status == "failed":
-        payment.status = "failed"
+        locked = (
+            await session.execute(select(Payment).where(Payment.id == payment.id).with_for_update())
+        ).scalar_one()
+        if locked.status != "pending":
+            # Already settled (or already failed): a late failure event changes nothing.
+            return {"status": "already_processed"}
+        locked.status = "failed"
         await write_audit(
             session,
-            action="payment.webhook.failed",
+            action="payment.webhook.failed" if source == "webhook" else "payment.sync.failed",
             entity_type="payment",
-            entity_id=str(payment.id),
-            after={"type": parsed.type, "purpose": payment.purpose},
+            entity_id=str(locked.id),
+            after={"type": parsed.type, "purpose": locked.purpose},
         )
-        if payment.purpose == "investment":
+        if locked.purpose == "investment":
             # Release the units held for this abandoned/failed direct-pay reservation.
             from app.services import investment_service
 
             await investment_service.release_reservation_for_payment(
-                session, payment=payment, reason=f"payment_{parsed.status}"
+                session, payment=locked, reason=f"payment_{parsed.status}"
             )
         return {"status": "processed", "result": "failed"}
 
     return {"status": "ignored", "result": parsed.status}
+
+
+# --- Provider lookup: the safety net when the webhook never arrives ---------- #
+# A card/crypto payment used to be credited ONLY by the webhook. If the endpoint was created
+# after the payment, its signing secret was wrong, or the delivery failed, the money left the
+# customer and nothing moved here. These paths ask the provider directly and settle through
+# ``_apply`` — the same guarded code the webhook uses, so nothing can be credited twice.
+SYNC_PROVIDERS = ("stripe", "nowpayments")
+# A fresh payment is still on the hosted checkout page: do not ask about it yet.
+SYNC_MIN_AGE = datetime.timedelta(minutes=2)
+# Older than this and the provider has long expired the session; leave it to staff.
+SYNC_MAX_AGE = datetime.timedelta(days=7)
+# The SPA polls a returning payment every few seconds; ask the provider at most this often.
+ON_READ_SYNC_INTERVAL_SECONDS = 15.0
+_last_sync_at: dict[uuid.UUID, float] = {}
+
+
+def _lookup_configured(provider: str) -> bool:
+    if provider == "stripe":
+        return stripe_gateway.lookup_configured()
+    return nowpayments_gateway.is_configured()
+
+
+async def _lookup(provider: str, provider_payment_id: str) -> ParsedWebhook:
+    if provider == "stripe":
+        return await stripe_gateway.get_checkout_status(provider_payment_id)
+    return await nowpayments_gateway.get_payment_status(provider_payment_id)
+
+
+async def sync_payment(session: AsyncSession, payment: Payment) -> dict:
+    """Ask the provider about one pending card/crypto payment and settle it if it ended.
+    Returns the same shape as ``process_webhook``; ``still_pending`` when the provider has no
+    outcome yet. Raises the gateway's AppError / httpx error on a provider failure — the
+    callers decide whether that is fatal (an admin click) or counted (the cron sweep)."""
+    if payment.provider not in SYNC_PROVIDERS or not payment.provider_payment_id:
+        return {"status": "ignored", "result": "not_syncable"}
+    if payment.status != "pending":
+        return {"status": "already_processed"}
+    if not _lookup_configured(payment.provider):
+        return {"status": "ignored", "result": "provider_not_configured"}
+    parsed = await _lookup(payment.provider, payment.provider_payment_id)
+    if parsed.status not in ("succeeded", "failed"):
+        return {"status": "still_pending", "result": parsed.status}
+    # Layer 1 (same key space as the webhook): NOWPayments keys both by <id>:<status>, so an
+    # IPN that already applied this outcome makes the lookup a duplicate.
+    seen = await session.execute(
+        select(PaymentEvent.id).where(
+            PaymentEvent.provider == payment.provider, PaymentEvent.event_id == parsed.event_id
+        )
+    )
+    if seen.first() is not None:
+        return {"status": "duplicate"}
+    session.add(
+        PaymentEvent(
+            provider=payment.provider,
+            event_id=parsed.event_id,
+            payment_id=payment.id,
+            type=parsed.type,
+        )
+    )
+    return await _apply(
+        session, provider=payment.provider, parsed=parsed, payment=payment, source="sync"
+    )
+
+
+async def sync_on_read(session: AsyncSession, payment: Payment) -> None:
+    """Best-effort lookup when the payer is looking at a pending payment (the return page
+    polls ``GET /payments/{id}``): converge within seconds even if the webhook never comes.
+    Throttled per payment and never raises — a provider hiccup must not break the read."""
+    if payment.status != "pending" or payment.provider not in SYNC_PROVIDERS:
+        return
+    if not payment.provider_payment_id or not _lookup_configured(payment.provider):
+        return
+    age = datetime.datetime.now(datetime.UTC) - payment.created_at
+    if age < datetime.timedelta(seconds=10) or age > SYNC_MAX_AGE:
+        return
+    now = time.monotonic()
+    last = _last_sync_at.get(payment.id)
+    if last is not None and now - last < ON_READ_SYNC_INTERVAL_SECONDS:
+        return
+    if len(_last_sync_at) > 2000:
+        _last_sync_at.clear()
+    _last_sync_at[payment.id] = now
+    try:
+        await sync_payment(session, payment)
+    except (AppError, httpx.HTTPError) as exc:
+        logger.warning("Payment %s: provider lookup failed on read: %s", payment.id, exc)
+
+
+async def reconcile_pending(
+    session: AsyncSession,
+    *,
+    now: datetime.datetime | None = None,
+    min_age: datetime.timedelta = SYNC_MIN_AGE,
+    max_age: datetime.timedelta = SYNC_MAX_AGE,
+    limit: int = 200,
+) -> dict:
+    """Cron sweep: settle every pending card/crypto payment the provider says has ended.
+    Idempotent (a settled row is skipped by the status guard); one provider error never
+    aborts the batch. Honest no-op per provider that is not configured."""
+    now = now or datetime.datetime.now(datetime.UTC)
+    providers = [p for p in SYNC_PROVIDERS if _lookup_configured(p)]
+    out = {
+        "configured": bool(providers),
+        "checked": 0,
+        "settled": 0,
+        "failed": 0,
+        "pending": 0,
+        "errors": 0,
+    }
+    if not providers:
+        return out
+    rows = (
+        (
+            await session.execute(
+                select(Payment)
+                .where(
+                    Payment.status == "pending",
+                    Payment.provider.in_(providers),
+                    Payment.provider_payment_id.isnot(None),
+                    Payment.created_at <= now - min_age,
+                    Payment.created_at >= now - max_age,
+                )
+                .order_by(Payment.created_at)
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for payment in rows:
+        out["checked"] += 1
+        try:
+            result = await sync_payment(session, payment)
+        except (AppError, httpx.HTTPError) as exc:
+            logger.warning("Payment %s: provider lookup failed in reconcile: %s", payment.id, exc)
+            out["errors"] += 1
+            continue
+        if result.get("status") == "still_pending":
+            out["pending"] += 1
+        elif result.get("result") == "failed":
+            out["failed"] += 1
+        elif result.get("status") in ("processed", "duplicate", "already_processed"):
+            out["settled"] += 1
+    return out
 
 
 async def _locate(session: AsyncSession, provider: str, parsed: ParsedWebhook) -> Payment | None:

@@ -15,9 +15,11 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import html as _html
+import logging
 import uuid
 from pathlib import Path
 
+import httpx
 from markupsafe import Markup
 from sqladmin import Admin, BaseView, ModelView, action, expose
 from sqladmin.authentication import AuthenticationBackend
@@ -89,6 +91,8 @@ from app.services import (
     withdrawal_service,
 )
 from app.services.integrations import storage
+
+logger = logging.getLogger(__name__)
 
 PANEL_ROLES = frozenset({"admin", "content_editor"})
 ADMIN_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -977,27 +981,84 @@ class PlatformBankAccountAdmin(AdminOnlyModelView, model=PlatformBankAccount):
 
 
 class BankDepositClaimAdmin(AdminOnlyModelView, model=Payment):
-    name = "Bank Deposit Claim"
+    name = "Payment"
+    name_plural = "Payments (deposits & purchases)"
     icon = "fa-solid fa-money-check-dollar"
-    # Manual bank-transfer deposit CLAIMS (provider='manual_bank'). Confirm → the wallet is
-    # credited via the audited service layer (never by hand). Card/crypto deposits are
-    # auto-credited by webhook and are intentionally not shown here.
+    # Every money-in attempt: card/crypto deposits and purchases (provider stripe /
+    # nowpayments, settled by webhook or by the provider lookup) and manual bank-transfer
+    # CLAIMS (provider='manual_bank', confirmed by a person). Money moves only through the
+    # audited service layer, never by editing a row. A card/crypto payment still 'pending'
+    # long after it was made means the provider's webhook did not reach us: "Check with
+    # provider" asks the provider directly and settles it the same way the webhook would.
     column_list = [
         Payment.user_id,
+        Payment.provider,
+        Payment.purpose,
+        Payment.payment_method,
         Payment.amount,
+        Payment.amount_captured,
         Payment.status,
+        Payment.provider_payment_id,
         Payment.raw_payload,
         Payment.created_at,
     ]
-    column_labels = {Payment.raw_payload: "Reference / account", Payment.user_id: "User"}
-    column_sortable_list = [Payment.created_at, Payment.status, Payment.amount]
+    column_labels = {
+        Payment.raw_payload: "Reference / account",
+        Payment.user_id: "User",
+        Payment.provider_payment_id: "Provider reference",
+        Payment.payment_method: "Method",
+        Payment.amount_captured: "Captured",
+    }
+    column_sortable_list = [
+        Payment.created_at,
+        Payment.status,
+        Payment.amount,
+        Payment.provider,
+        Payment.purpose,
+    ]
+    column_searchable_list = [Payment.provider_payment_id]
     column_default_sort = [(Payment.created_at, True)]
     can_create = False
     can_edit = False  # money — credited only through the audited service layer
     can_delete = False
 
-    def list_query(self, request: Request):
-        return select(Payment).where(Payment.provider == "manual_bank")
+    @action(
+        name="check_with_provider",
+        label="Check with provider (settle if paid)",
+        confirmation_message=(
+            "Ask Stripe / NOWPayments how the selected pending card or crypto payment(s) "
+            "ended and settle them exactly as the webhook would (credit the wallet or confirm "
+            "the units). Bank-transfer claims and settled payments are left untouched."
+        ),
+        add_in_detail=True,
+        add_in_list=True,
+    )
+    async def check_with_provider(self, request: Request) -> RedirectResponse:
+        from app.services import payment_service
+
+        pks = [p for p in request.query_params.get("pks", "").split(",") if p]
+        actor = request.session.get("admin_id")
+        async with session_scope() as session:
+            for pk in pks:
+                payment = await session.get(Payment, uuid.UUID(pk))
+                if payment is None:
+                    continue
+                try:
+                    result = await payment_service.sync_payment(session, payment)
+                except (AppError, httpx.HTTPError) as exc:
+                    logger.warning(
+                        "Admin %s: provider lookup for payment %s failed: %s", actor, pk, exc
+                    )
+                    continue
+                await write_audit(
+                    session,
+                    action="payment.admin_check",
+                    entity_type="payment",
+                    entity_id=pk,
+                    actor_id=uuid.UUID(actor) if actor else None,
+                    after={"result": result},
+                )
+        return _back(request)
 
     @action(
         name="confirm_deposit",

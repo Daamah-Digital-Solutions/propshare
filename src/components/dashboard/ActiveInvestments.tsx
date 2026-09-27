@@ -13,7 +13,8 @@ import {
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ExitButton } from "@/components/exit/ExitButton";
-import { holdingsApi } from "@/lib/api";
+import { PaymentReturnStatus } from "@/components/dashboard/PaymentReturnStatus";
+import { holdingsApi, investApi } from "@/lib/api";
 
 const money = (v: number) => `$${v.toLocaleString()}`;
 
@@ -21,12 +22,40 @@ export const ActiveInvestments = () => {
   // Live holdings from the ownership ledger (server-authoritative). No mock portfolio.
   const { data } = useQuery({ queryKey: ["holdings", "mine"], queryFn: holdingsApi.mine });
   const holdings = (data?.items ?? []).filter((h) => h.units > 0);
+  // Purchases paid through a hosted checkout that the server has not confirmed yet: the
+  // units are reserved, the money is with the provider — show them instead of nothing.
+  const { data: investments } = useQuery({ queryKey: ["investments", "list"], queryFn: investApi.list });
+  const awaiting = (investments?.items ?? []).filter((i) => i.status === "pending");
 
   const totalValue = holdings.reduce((s, h) => s + h.units * Number(h.unit_price), 0);
   const totalUnits = holdings.reduce((s, h) => s + h.units, 0);
 
   return (
     <div className="space-y-6">
+      {/* Back from the hosted checkout: follow the purchase until the units are confirmed */}
+      <PaymentReturnStatus kind="invest" />
+
+      {awaiting.length > 0 && (
+        <Card className="bg-card border-border" data-testid="awaiting-purchases">
+          <CardContent className="p-5 space-y-3">
+            <p className="text-sm font-semibold text-foreground">Awaiting payment confirmation</p>
+            {awaiting.map((i) => (
+              <div
+                key={i.id}
+                className="flex items-center justify-between gap-3 flex-wrap rounded-lg bg-muted/50 p-3 text-sm"
+              >
+                <span>
+                  {i.units} unit(s) · {money(Number(i.total_charged))} — reserved for you until the
+                  payment is confirmed
+                </span>
+                <Link to={`/property/${i.property_id}`} className="text-primary underline">
+                  View property
+                </Link>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
       {/* Summary Cards — live */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">

@@ -295,3 +295,149 @@ def test_unknown_customer_is_recognised_from_the_refusal() -> None:
     assert stripe.is_unknown_customer(err)
     other = AppError("X", "e", status_code=502, details={"code": "resource_missing", "param": "pm"})
     assert not stripe.is_unknown_customer(other)
+
+
+# --- Delayed payment methods + the direct session lookup ---------------------- #
+def _session_event(etype: str, *, payment_status: str, event_id: str = "evt_a") -> bytes:
+    return json.dumps(
+        {
+            "id": event_id,
+            "type": etype,
+            "data": {
+                "object": {
+                    "id": "cs_async",
+                    "client_reference_id": "22222222-2222-2222-2222-222222222222",
+                    "payment_status": payment_status,
+                    "amount_total": 1234,
+                    "currency": "usd",
+                }
+            },
+        }
+    ).encode()
+
+
+def test_stripe_completed_unpaid_stays_pending_until_async_success(monkeypatch) -> None:
+    """A bank-debit checkout completes unpaid, then async_payment_succeeded carries the money."""
+    monkeypatch.setattr(get_settings(), "stripe_webhook_secret", "whsec_t", raising=False)
+    body = _session_event("checkout.session.completed", payment_status="unpaid")
+    out = stripe.verify_and_parse(body, _stripe_header("whsec_t", body))
+    assert out.status == "pending" and out.captured_amount is None
+
+    body = _session_event(
+        "checkout.session.async_payment_succeeded", payment_status="paid", event_id="evt_b"
+    )
+    out = stripe.verify_and_parse(body, _stripe_header("whsec_t", body))
+    assert out.status == "succeeded"
+    assert out.captured_amount == decimal.Decimal("12.34")
+    assert out.order_id == "22222222-2222-2222-2222-222222222222"
+    assert out.event_id == "evt_b"
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int, payload: dict):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = json.dumps(payload)
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeClient:
+    """Stands in for httpx.AsyncClient: one canned GET answer, records the URL."""
+
+    calls: list[str] = []
+    answer: _FakeResponse = _FakeResponse(200, {})
+
+    def __init__(self, *a, **kw):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, **kw):
+        _FakeClient.calls.append(url)
+        return _FakeClient.answer
+
+
+@pytest.mark.asyncio
+async def test_stripe_session_lookup_maps_like_the_webhook(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "stripe_secret_key", "sk_test_x", raising=False)
+    monkeypatch.setattr(stripe.httpx, "AsyncClient", _FakeClient)
+    session = {
+        "id": "cs_look",
+        "client_reference_id": "33333333-3333-3333-3333-333333333333",
+        "payment_status": "paid",
+        "status": "complete",
+        "amount_total": 5000,
+    }
+    _FakeClient.answer = _FakeResponse(200, session)
+    out = await stripe.get_checkout_status("cs_look")
+    assert _FakeClient.calls[-1].endswith("/checkout/sessions/cs_look")
+    assert out.status == "succeeded" and out.captured_amount == 50
+    assert out.order_id == "33333333-3333-3333-3333-333333333333"
+    assert out.event_id == "sync:cs_look:succeeded"
+
+    _FakeClient.answer = _FakeResponse(
+        200, {**session, "payment_status": "unpaid", "status": "open"}
+    )
+    out = await stripe.get_checkout_status("cs_look")
+    assert out.status == "pending" and out.event_id == "sync:cs_look:pending"
+
+    _FakeClient.answer = _FakeResponse(
+        200, {**session, "payment_status": "unpaid", "status": "expired"}
+    )
+    out = await stripe.get_checkout_status("cs_look")
+    assert out.status == "failed"
+
+    _FakeClient.answer = _FakeResponse(404, {"error": {"message": "No such checkout session"}})
+    with pytest.raises(AppError) as exc:
+        await stripe.get_checkout_status("cs_look")
+    assert exc.value.code == "PAYMENT_PROVIDER_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_stripe_session_lookup_needs_a_key_of_either_mode(monkeypatch) -> None:
+    s = get_settings()
+    monkeypatch.setattr(s, "stripe_secret_key", "", raising=False)
+    assert stripe.lookup_configured() is False
+    with pytest.raises(AppError) as exc:
+        await stripe.get_checkout_status("cs_x")
+    assert exc.value.status_code == 503
+    # a TEST key can look up a test-mode payment even where the customer rail is hidden
+    monkeypatch.setattr(s, "stripe_secret_key", "sk_test_x", raising=False)
+    monkeypatch.setattr(s, "environment", "production", raising=False)
+    assert stripe.lookup_configured() is True
+
+
+@pytest.mark.asyncio
+async def test_nowpayments_payment_lookup_is_keyed_like_the_ipn(monkeypatch) -> None:
+    s = get_settings()
+    monkeypatch.setattr(s, "nowpayments_api_key", "np_x", raising=False)
+    monkeypatch.setattr(s, "nowpayments_ipn_secret", "ipn_x", raising=False)
+    monkeypatch.setattr(nowp, "is_configured", lambda: True)
+    monkeypatch.setattr(nowp.httpx, "AsyncClient", _FakeClient)
+    _FakeClient.answer = _FakeResponse(
+        200,
+        {
+            "payment_id": 987,
+            "payment_status": "finished",
+            "price_amount": 40.5,
+            "order_id": "44444444-4444-4444-4444-444444444444",
+        },
+    )
+    out = await nowp.get_payment_status("987")
+    assert _FakeClient.calls[-1].endswith("/payment/987")
+    assert out.status == "succeeded"
+    assert out.captured_amount == decimal.Decimal("40.5")
+    assert out.event_id == "987:finished"  # the IPN for the same outcome dedupes against it
+
+    _FakeClient.answer = _FakeResponse(200, {"payment_id": 987, "payment_status": "waiting"})
+    assert (await nowp.get_payment_status("987")).status == "pending"
+    _FakeClient.answer = _FakeResponse(200, {"payment_id": 987, "payment_status": "partially_paid"})
+    assert (await nowp.get_payment_status("987")).status == "ignored"
+    _FakeClient.answer = _FakeResponse(200, {"payment_id": 987, "payment_status": "expired"})
+    assert (await nowp.get_payment_status("987")).status == "failed"

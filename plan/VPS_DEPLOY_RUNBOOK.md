@@ -478,6 +478,7 @@ Paste (replace `SECRET` with the **real** `CRON_SECRET`, and the API host):
 */2  * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/admin/withdrawals/execute
 */15 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/admin/withdrawals/reconcile
 */5  * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/investments/maintenance/expire-reservations
+*/5  * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/payments/maintenance/reconcile
 *    * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/admin/notifications/dispatch-emails
 */10 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/admin/liquidity/expire-requests
 */30 * * * *  curl -fsS -X POST -H "X-Cron-Secret: SECRET" https://api.example.com/api/v1/admin/gifts/run-due

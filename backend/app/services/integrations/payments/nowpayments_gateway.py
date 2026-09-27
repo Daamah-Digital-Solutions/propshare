@@ -241,3 +241,50 @@ def verify_and_parse(raw_body: bytes, signature: str | None) -> ParsedWebhook:
         type=ps,
         raw=data,
     )
+
+
+def _outcome(ps: str) -> str:
+    """NOWPayments ``payment_status`` -> our outcome (shared by the IPN and the lookup)."""
+    if ps in _SUCCESS:
+        return "succeeded"
+    if ps in _FAILED:
+        return "failed"
+    if ps == "partially_paid":
+        return "ignored"  # under-payment — do not credit; surfaced for manual review
+    return "pending"
+
+
+async def get_payment_status(provider_payment_id: str) -> ParsedWebhook:
+    """Ask NOWPayments directly how a payment ended — the safety net for an IPN that never
+    arrived. Keyed exactly like the IPN (``<payment id>:<status>``), so a lookup that finds
+    the payment finished after the IPN already credited it is deduped as the same event."""
+    if not is_configured():
+        raise AppError("PAYMENTS_NOT_CONFIGURED", "NOWPayments is not configured.", status_code=503)
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(
+            f"{settings.nowpayments_base_url}/payment/{provider_payment_id}",
+            headers={"x-api-key": settings.nowpayments_api_key},
+        )
+    if resp.status_code >= 400:
+        raise AppError(
+            "PAYMENT_PROVIDER_ERROR",
+            f"NOWPayments error ({resp.status_code}).",
+            status_code=502,
+            details={"body": resp.text[:300]},
+        )
+    data = resp.json()
+    ps = str(data.get("payment_status", ""))
+    status = _outcome(ps)
+    captured = None
+    if status == "succeeded" and data.get("price_amount") is not None:
+        captured = decimal.Decimal(str(data["price_amount"]))
+    return ParsedWebhook(
+        event_id=f"{provider_payment_id}:{ps}",
+        provider_payment_id=provider_payment_id,
+        order_id=str(data.get("order_id")) if data.get("order_id") else None,
+        status=status,
+        captured_amount=captured,
+        type=f"lookup:{ps}",
+        raw=data,
+    )

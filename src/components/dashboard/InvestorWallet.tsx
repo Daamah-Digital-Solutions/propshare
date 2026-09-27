@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { AccountStatementCard } from "@/components/dashboard/AccountStatementCard";
+import { PaymentReturnStatus, rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   walletApi,
@@ -322,7 +323,8 @@ export const InvestorWallet = () => {
       } else {
         const res = await walletApi.deposit({ amount: amt, method: depositMethod }, crypto.randomUUID());
         if (res.checkout_url) {
-          window.location.href = res.checkout_url; // hosted checkout; credit on webhook
+          rememberPendingPayment(res.payment_id);
+          window.location.href = res.checkout_url; // hosted checkout; credited server-side
         } else {
           toast.info("Deposit created", { description: "Awaiting payment confirmation." });
         }
@@ -433,6 +435,9 @@ export const InvestorWallet = () => {
 
   return (
     <div className="space-y-6">
+      {/* Back from the hosted checkout: follow the deposit until it is credited */}
+      <PaymentReturnStatus kind="deposit" />
+
       {/* Wallet Balance Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="bg-gradient-to-br from-primary to-primary/80 text-primary-foreground">

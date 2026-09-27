@@ -32,7 +32,7 @@ from app.schemas.withdrawal import (
     WithdrawalListOut,
     WithdrawalOut,
 )
-from app.services import connect_service, withdrawal_service
+from app.services import connect_service, dashboard_links, withdrawal_service
 
 router = APIRouter(prefix="/api/v1/wallet", tags=["withdrawals"])
 
@@ -113,8 +113,8 @@ async def connect_onboard(request: Request, session: SessionDep, principal: KycV
         user_id=principal.user_id,
         email=str(email or ""),
         # back on the wallet tab, where the linked bank shows up
-        refresh_url=f"{app_base}/dashboard?tab=wallet&connect=refresh",
-        return_url=f"{app_base}/dashboard?tab=wallet&connect=done",
+        refresh_url=dashboard_links.wallet_url(app_base, principal.active_role, connect="refresh"),
+        return_url=dashboard_links.wallet_url(app_base, principal.active_role, connect="done"),
     )
     return ConnectOnboardOut(**result)
 

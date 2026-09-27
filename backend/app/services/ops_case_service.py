@@ -19,10 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.core.config import get_settings
-from app.models import EmailOutbox, SupportTicket, UserRole
+from app.models import EmailOutbox, Payment, SupportTicket, UserRole
 from app.services import (
     manual_deposit_service,
     notification_service,
+    payment_service,
     reconciliation_service,
     settings_service,
     withdrawal_service,
@@ -79,6 +80,12 @@ async def _open_case(
 
 async def stale_hours(session: AsyncSession) -> int:
     return int(await settings_service.get_setting(session, "ops_stale_hours") or 48)
+
+
+async def payment_stale_minutes(session: AsyncSession) -> int:
+    """Minutes a card/crypto payment may stay pending (after the provider lookup) before a
+    case is opened. A hosted checkout is normally settled within seconds of the payment."""
+    return int(await settings_service.get_setting(session, "ops_payment_stale_minutes") or 30)
 
 
 async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dict[str, Any]:
@@ -163,6 +170,60 @@ async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dic
                     "The member's funds are on hold: mark it paid or reject it under Withdrawals."
                 ),
                 context={"withdrawal_id": str(w.id), "age_hours": age},
+            )
+        )
+        open_keys.add(key)
+
+    # 4) card/crypto payments the provider's webhook never settled. First let the provider
+    #    lookup settle whatever it can; a case is only for what stays pending after that —
+    #    the sign of a dead endpoint, a wrong signing secret, or a provider-side problem.
+    await payment_service.reconcile_pending(session, now=now)
+    payment_cutoff = now - dt.timedelta(minutes=await payment_stale_minutes(session))
+    stuck = (
+        (
+            await session.execute(
+                select(Payment)
+                .where(
+                    Payment.status == "pending",
+                    Payment.provider.in_(payment_service.SYNC_PROVIDERS),
+                    Payment.created_at <= payment_cutoff,
+                    Payment.created_at >= now - payment_service.SYNC_MAX_AGE,
+                )
+                .order_by(Payment.created_at)
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for payment in stuck:
+        key = f"provider_payment:{payment.id}"
+        if key in open_keys:
+            continue
+        age_min = round((now - payment.created_at).total_seconds() / 60)
+        what = "purchase" if payment.purpose == "investment" else "deposit"
+        new.append(
+            await _open_case(
+                session,
+                case_key=key,
+                category="payments",
+                priority="high",
+                subject=f"{payment.provider} {what} still pending after {age_min} min",
+                summary=(
+                    f"A {payment.payment_method or payment.provider} {what} of {payment.amount} "
+                    f"{payment.currency} (provider reference "
+                    f"{payment.provider_payment_id or 'none'}) has been pending for {age_min} "
+                    "minutes and the provider does not report it "
+                    "as paid or expired. If the member was charged, check the webhook endpoint and "
+                    "its signing secret in the provider dashboard, then use 'Check with provider' "
+                    "under Payments."
+                ),
+                context={
+                    "payment_id": str(payment.id),
+                    "provider": payment.provider,
+                    "provider_payment_id": payment.provider_payment_id,
+                    "age_minutes": age_min,
+                },
             )
         )
         open_keys.add(key)

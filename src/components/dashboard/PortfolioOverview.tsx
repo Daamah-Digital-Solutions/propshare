@@ -24,13 +24,16 @@ export const PortfolioOverview = () => {
 
   // Recent activity merged from the real investment + return histories.
   const activity = [
-    ...(investments?.items ?? []).map((i) => ({
-      id: `inv-${i.id}`,
-      label: "Investment",
-      amount: `-${money(i.total_charged)}`,
-      date: i.created_at,
-      positive: false,
-    })),
+    // a purchase still waiting for its payment is shown as such; a lapsed one is not shown
+    ...(investments?.items ?? [])
+      .filter((i) => i.status === "confirmed" || i.status === "pending")
+      .map((i) => ({
+        id: `inv-${i.id}`,
+        label: i.status === "pending" ? "Investment (awaiting payment)" : "Investment",
+        amount: `-${money(i.total_charged)}`,
+        date: i.created_at,
+        positive: false,
+      })),
     ...(returns?.items ?? []).map((r) => ({
       id: `ret-${r.distribution_id}-${r.property_id}`,
       label: `Return (${r.kind})`,

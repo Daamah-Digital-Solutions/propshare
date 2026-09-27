@@ -82,8 +82,10 @@ async def create_investment(
         amount=body.amount,
         method=body.method,
         idempotency_key=idempotency_key,
-        success_url=f"{app_base}/dashboard?invest=success",
-        cancel_url=f"{app_base}/dashboard?invest=cancelled",
+        # Back to the Investments tab, which follows the payment until the units are confirmed
+        # (the service appends the payment id).
+        success_url=f"{app_base}/dashboard?tab=investments&invest=success",
+        cancel_url=f"{app_base}/dashboard?tab=investments&invest=cancelled",
         ipn_url=f"{api_base}/api/v1/payments/webhooks/nowpayments",
     )
     return InvestmentCreateOut(**result)

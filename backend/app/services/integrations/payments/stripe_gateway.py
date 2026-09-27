@@ -139,11 +139,45 @@ def _unknown_customer(resp: httpx.Response) -> bool:
     return err.get("code") == "resource_missing" and err.get("param") == "customer"
 
 
+def _session_outcome(
+    *, event_id: str, obj: dict, etype: str, status: str, raw: dict
+) -> ParsedWebhook:
+    """One Checkout Session (from a webhook event or a direct lookup) as our outcome."""
+    captured = None
+    if status == "succeeded" and obj.get("amount_total") is not None:
+        captured = decimal.Decimal(int(obj["amount_total"])) / decimal.Decimal(100)
+    return ParsedWebhook(
+        event_id=event_id,
+        provider_payment_id=str(obj.get("id")) if obj.get("id") else None,
+        order_id=obj.get("client_reference_id") or (obj.get("metadata") or {}).get("payment_id"),
+        status=status,
+        captured_amount=captured,
+        type=etype,
+        raw=raw,
+    )
+
+
+def _signature_timestamp(header: str) -> str:
+    """The ``t=`` part of a Stripe-Signature header, for the log line (never the body)."""
+    for part in header.split(","):
+        if part.startswith("t="):
+            return part[2:][:20]
+    return "?"
+
+
 def verify_and_parse(raw_body: bytes, signature: str | None) -> ParsedWebhook:
     secret = get_settings().stripe_webhook_secret
     if not secret:
         raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe webhook not configured.", status_code=503)
     if not _verify(secret, raw_body, signature or ""):
+        # The only trace of a wrong STRIPE_WEBHOOK_SECRET on our side: Stripe keeps retrying
+        # for days and every payment stays pending. Nothing from the unverified body is logged.
+        logger.warning(
+            "Stripe webhook signature rejected on the deposits endpoint (sig_ts=%s, body=%d bytes):"
+            " check STRIPE_WEBHOOK_SECRET against the endpoint's signing secret",
+            _signature_timestamp(signature or ""),
+            len(raw_body),
+        )
         raise AppError("WEBHOOK_SIGNATURE_INVALID", "Invalid Stripe signature.", status_code=401)
 
     event = json.loads(raw_body.decode("utf-8"))
@@ -152,32 +186,59 @@ def verify_and_parse(raw_body: bytes, signature: str | None) -> ParsedWebhook:
     event_id = str(event.get("id"))
 
     if etype == "checkout.session.completed":
+        # A delayed payment method (bank debit, bank transfer) completes the session unpaid;
+        # the money is confirmed later by checkout.session.async_payment_succeeded.
         paid = obj.get("payment_status") == "paid"
-        captured = None
-        if obj.get("amount_total") is not None:
-            captured = decimal.Decimal(int(obj["amount_total"])) / decimal.Decimal(100)
-        return ParsedWebhook(
+        return _session_outcome(
             event_id=event_id,
-            provider_payment_id=str(obj.get("id")) if obj.get("id") else None,
-            order_id=obj.get("client_reference_id")
-            or (obj.get("metadata") or {}).get("payment_id"),
+            obj=obj,
+            etype=etype,
             status="succeeded" if paid else "pending",
-            captured_amount=captured,
-            type=etype,
             raw=event,
+        )
+    if etype == "checkout.session.async_payment_succeeded":
+        return _session_outcome(
+            event_id=event_id, obj=obj, etype=etype, status="succeeded", raw=event
         )
     if etype in ("checkout.session.expired", "checkout.session.async_payment_failed"):
-        return ParsedWebhook(
-            event_id=event_id,
-            provider_payment_id=str(obj.get("id")) if obj.get("id") else None,
-            order_id=obj.get("client_reference_id")
-            or (obj.get("metadata") or {}).get("payment_id"),
-            status="failed",
-            captured_amount=None,
-            type=etype,
-            raw=event,
-        )
+        return _session_outcome(event_id=event_id, obj=obj, etype=etype, status="failed", raw=event)
     return ParsedWebhook(event_id, None, None, "ignored", None, etype, event)
+
+
+def lookup_configured() -> bool:
+    """Whether we can ask Stripe about a session at all (a key of either mode). Unlike
+    ``is_configured`` this is not the customer-facing readiness gate: a payment made in test
+    mode must still be reconcilable with the test key."""
+    return bool(get_settings().stripe_secret_key)
+
+
+async def get_checkout_status(session_id: str) -> ParsedWebhook:
+    """Ask Stripe directly how a Checkout Session ended — the safety net for a webhook that
+    never arrived (endpoint created after the payment, wrong signing secret, delivery failure).
+    Maps to the same outcome the webhook would: paid -> succeeded, expired -> failed, else
+    pending. The event id is qualified by the outcome so a first look that finds the session
+    unpaid never blocks the later one that finds it paid."""
+    if not lookup_configured():
+        raise AppError("PAYMENTS_NOT_CONFIGURED", "Stripe is not configured.", status_code=503)
+    settings = get_settings()
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(f"{_API}/{session_id}", auth=(settings.stripe_secret_key, ""))
+    if resp.status_code >= 400:
+        raise _refused(resp, "PAYMENT_PROVIDER_ERROR", "a checkout session lookup")
+    obj = resp.json()
+    if obj.get("payment_status") == "paid":
+        status = "succeeded"
+    elif obj.get("status") == "expired":
+        status = "failed"
+    else:
+        status = "pending"
+    return _session_outcome(
+        event_id=f"sync:{session_id}:{status}",
+        obj=obj,
+        etype="checkout.session.lookup",
+        status=status,
+        raw=obj,
+    )
 
 
 # --- Saved payment methods (Group 3, PCI-safe tokenization) ---------------- #

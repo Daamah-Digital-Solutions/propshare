@@ -751,4 +751,5 @@ def _result(inv: Investment, checkout_url: str | None) -> dict:
         "total_charged": str(inv.total_charged or inv.amount),
         "management_fee_rate": str(inv.management_fee_rate or "0"),
         "checkout_url": checkout_url,
+        "payment_id": inv.payment_id,
     }
