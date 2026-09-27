@@ -7,7 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/contexts/AuthContext";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { roleHome } from "@/lib/roles";
+import { OAUTH_REF_KEY } from "@/lib/referral";
 import { authApi, ApiError } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -28,7 +30,8 @@ const AUTH_TABS = ["login", "register"];
 const Auth = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const { isAuthenticated, login, register } = useAuth();
+  const { isAuthenticated, userRole, login, register } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
@@ -53,12 +56,14 @@ const Auth = () => {
     if (ref) setReferralCode(ref);
   }, [searchParams]);
 
-  // Redirect if already authenticated
+  // Redirect once authenticated: back to the page that sent the member here, else to the
+  // dashboard of the role they are using (an LP / broker / owner cannot open /dashboard).
   useEffect(() => {
     if (isAuthenticated) {
-      navigate("/dashboard");
+      const from = (location.state as { from?: string } | null)?.from;
+      navigate(from && from !== "/auth" ? from : roleHome(userRole), { replace: true });
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, userRole, navigate, location.state]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,7 +76,7 @@ const Auth = () => {
         return;
       }
       toast({ title: "Welcome back!", description: "You have successfully signed in." });
-      navigate("/dashboard");
+      // the redirect effect above sends them to the dashboard of the role they use
     } catch (error) {
       const message =
         error instanceof ApiError ? error.message : "An unexpected error occurred. Please try again.";
@@ -136,7 +141,7 @@ const Auth = () => {
         title: "Account Created!",
         description: "Welcome to Capimax PropShare. Check your email to verify your address.",
       });
-      navigate("/dashboard");
+      // the redirect effect above takes them to their dashboard
     } catch (error) {
       if (error instanceof ApiError && error.code === "EMAIL_EXISTS") {
         toast({
@@ -161,6 +166,14 @@ const Auth = () => {
   const startOAuth = (provider: "google" | "apple") => {
     const origin = window.location.origin;
     const redirectUri = `${origin}/auth/callback/${provider}`;
+    // A broker's share link (?ref=CODE) must survive the round trip to Google / Apple, so a
+    // client who signs up with them is linked to the broker exactly like a password sign-up.
+    try {
+      if (referralCode.trim()) sessionStorage.setItem(OAUTH_REF_KEY, referralCode.trim());
+      else sessionStorage.removeItem(OAUTH_REF_KEY);
+    } catch {
+      /* blocked storage: the sign-up simply carries no referral */
+    }
     if (provider === "google") {
       const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
       if (!clientId) {
@@ -226,7 +239,7 @@ const Auth = () => {
                 mfaToken={mfaToken}
                 onDone={() => {
                   toast({ title: "Welcome back!", description: "You have successfully signed in." });
-                  navigate("/dashboard");
+                  // the redirect effect above sends them on once the session exists
                 }}
                 onRestart={() => {
                   setMfaToken(null);

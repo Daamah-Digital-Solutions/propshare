@@ -26,6 +26,8 @@ import { toast } from "sonner";
 import { ApiError, holdingsApi, secondaryApi } from "@/lib/api";
 
 /** A sale the assistant prepared (from /secondary-market?tab=sell&property=…&units=…&price=…). */
+// units / price come only from a sale the assistant prepared; a plain "Sell" button on a
+// holding passes the property alone (no "Prepared by PropShare AI" banner then).
 export type SellPrefill = { propertyId: string; units?: number; price?: number };
 
 const SellUnitsForm = ({ prefill = null }: { prefill?: SellPrefill | null }) => {
@@ -33,7 +35,8 @@ const SellUnitsForm = ({ prefill = null }: { prefill?: SellPrefill | null }) => 
   const [selectedProperty, setSelectedProperty] = useState(prefill?.propertyId ?? "");
   const [unitsToSell, setUnitsToSell] = useState(prefill?.units ? String(prefill.units) : "");
   const [pricePerUnit, setPricePerUnit] = useState(prefill?.price ? String(prefill.price) : "");
-  const [prepared, setPrepared] = useState(Boolean(prefill)); // banner until the listing is made
+  // banner until the listing is made — only for a sale the assistant prepared (units / price)
+  const [prepared, setPrepared] = useState(Boolean(prefill && (prefill.units || prefill.price)));
   const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     // arriving from the assistant: bring the filled-in form into view

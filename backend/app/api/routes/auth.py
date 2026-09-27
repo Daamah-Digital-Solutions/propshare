@@ -357,6 +357,7 @@ async def oauth_login(
         subject=profile.subject,
         email=profile.email,
         full_name=profile.full_name,
+        referral_code=body.referral_code,
     )
     # Google proves the first factor only; an account with 2FA on still needs its code.
     return await _session_or_challenge(session, user, request, response, via=f"oauth:{provider}")

@@ -3,12 +3,16 @@
 The single source of truth for the marketplace. Public reads only ever return
 ``active``/``funded`` rows (replicating the old RLS "anyone can view active"
 rule). Owners create drafts and submit them for review; admins approve a draft to
-``active`` (go-live), reject it back to ``draft`` with a reason, or close it.
-Every admin moderation action is written to the append-only audit log.
+``active`` (go-live), send it back to ``draft`` with a message (request changes),
+decline it (``closed``, never public) or close it. The owner is told every step
+(in-app + email) and staff are told of every submission. Every admin moderation
+action is written to the append-only audit log.
 """
 
 from __future__ import annotations
 
+import datetime
+import logging
 import re
 import unicodedata
 import uuid
@@ -29,6 +33,8 @@ from app.schemas.property import OWNERSHIP_MODELS
 
 PUBLIC_STATUSES = (PropertyStatus.active, PropertyStatus.funded)
 EDITABLE_STATUSES = (PropertyStatus.draft, PropertyStatus.under_review)
+
+logger = logging.getLogger(__name__)
 
 
 def _slugify(title: str) -> str:
@@ -122,6 +128,10 @@ def serialize_detail(prop: Property, owner_names: dict[uuid.UUID, str | None]) -
             "owner_id": prop.owner_id,
             "created_at": prop.created_at,
             "updated_at": prop.updated_at,
+            "submitted_at": prop.submitted_at,
+            "review_note": prop.review_note,
+            "review_outcome": prop.review_outcome,
+            "reviewed_at": prop.reviewed_at,
         }
     )
     return data
@@ -365,6 +375,7 @@ _EDITABLE_FIELDS = (
     "property_type",
     "total_value",
     "unit_price",
+    "minimum_investment",
     "target_yield",
     "expected_yield",
     "capital_appreciation",
@@ -409,16 +420,160 @@ async def submit(session: AsyncSession, *, owner_id: uuid.UUID, prop_id: uuid.UU
             "Only a draft can be submitted for review.",
             status_code=409,
         )
+    if prop.review_outcome == "declined":  # pragma: no cover - a declined listing is closed
+        raise AppError("INVALID_TRANSITION", "This listing was not approved.", status_code=409)
+    resubmission = prop.submitted_at is not None
     prop.status = PropertyStatus.under_review
+    prop.submitted_at = datetime.datetime.now(datetime.UTC)
+    # the owner has acted on the last review; its note stays in the audit trail
+    prop.review_note = None
+    prop.review_outcome = None
     await write_audit(
         session,
         action="property.submit",
         entity_type="property",
         entity_id=str(prop.id),
         actor_id=owner_id,
-        after={"status": str(prop.status)},
+        after={"status": str(prop.status), "resubmission": resubmission},
     )
+    await _notify_submitted(session, prop, resubmission=resubmission)
     return prop
+
+
+# --- Owner submission notices ------------------------------------------------ #
+# The owner hears about every step of their submission (in-app + email), the admins get an
+# in-app notice and the support inbox one email for each submission to review. All of it is
+# best-effort: a notification problem must never undo the submission or the decision.
+_OUTCOME_OF_ACTION = {
+    "approve": "approved",
+    "request_changes": "changes_requested",
+    "reject": "changes_requested",  # legacy name: back to draft for the owner to fix
+    "decline": "declined",
+    "close": "closed",
+}
+
+
+async def _notify_owner(
+    session: AsyncSession, prop: Property, *, title: str, message: str, link: str
+) -> None:
+    if prop.owner_id is None:
+        return
+    from app.services import notification_service
+
+    try:
+        await notification_service.notify(
+            session,
+            user_id=prop.owner_id,
+            type="property",
+            title=title,
+            message=message,
+            email_category="listing",
+            force_email=True,  # transactional: the owner always hears the outcome
+            email_subject=title,
+            email_body=f"{message}\n\n{link}",
+        )
+    except Exception:  # noqa: BLE001 — best-effort, never block the listing change
+        logger.exception("listing notice to the owner failed (property=%s)", prop.id)
+
+
+async def _notify_submitted(session: AsyncSession, prop: Property, *, resubmission: bool) -> None:
+    from app.models import EmailOutbox, UserRole
+    from app.services import notification_service
+
+    site = get_settings().app_base_url.rstrip("/")
+    what = "resubmitted" if resubmission else "received"
+    await _notify_owner(
+        session,
+        prop,
+        title=f"Listing {what} — under review",
+        message=(
+            f'We {what} "{prop.title}". Our team is reviewing it and will tell you the outcome '
+            "here and by email. You can still add documents from your dashboard meanwhile."
+        ),
+        link=f"Follow it from your dashboard: {site}/owner-dashboard?tab=properties",
+    )
+    owner = await session.get(User, prop.owner_id) if prop.owner_id else None
+    who = (owner.full_name or owner.email) if owner else "an owner"
+    try:
+        admins = (
+            (await session.execute(select(UserRole.user_id).where(UserRole.role == "admin")))
+            .scalars()
+            .all()
+        )
+        for admin_id in admins:
+            await notification_service.notify(
+                session,
+                user_id=admin_id,
+                type="listing_review",
+                title="Owner listing waiting for review",
+                message=(
+                    f'"{prop.title}" from {who} was {what}. Review it in the admin panel under '
+                    "Owner Submissions."
+                ),
+            )
+        inbox = get_settings().support_inbox_email
+        if inbox:
+            session.add(
+                EmailOutbox(
+                    user_id=None,
+                    to_email=inbox,
+                    subject=f"[Listing review] {prop.title} — {what} from {who}",
+                    body=(
+                        f'A property owner {what} "{prop.title}" ({prop.location}) for review.\n'
+                        f"Owner: {who}"
+                        + (f" <{owner.email}>" if owner else "")
+                        + (f", phone {owner.phone}" if owner and owner.phone else "")
+                        + f"\n\nReview it in the admin panel: /admin/owner-submissions/{prop.id}"
+                    ),
+                    category="listing_review",
+                    status="pending",
+                )
+            )
+    except Exception:  # noqa: BLE001 — best-effort, never block the submission
+        logger.exception("listing review notice to staff failed (property=%s)", prop.id)
+
+
+async def _notify_decision(
+    session: AsyncSession, prop: Property, *, action: str, note: str | None
+) -> None:
+    site = get_settings().app_base_url.rstrip("/")
+    dashboard = f"{site}/owner-dashboard?tab=properties"
+    note_line = f"\n\nMessage from our team: {note}" if note else ""
+    if action == "approve":
+        await _notify_owner(
+            session,
+            prop,
+            title="Your listing is live",
+            message=f'"{prop.title}" was approved and is now open for investment.',
+            link=f"See it on the marketplace: {site}/property/{prop.slug or prop.id}",
+        )
+    elif action in ("request_changes", "reject"):
+        await _notify_owner(
+            session,
+            prop,
+            title="Changes requested on your listing",
+            message=(
+                f'Our team reviewed "{prop.title}" and needs some changes before it can go '
+                f"live. Update it from your dashboard and send it back for review.{note_line}"
+            ),
+            link=f"Edit and resubmit: {dashboard}",
+        )
+    elif action == "decline":
+        await _notify_owner(
+            session,
+            prop,
+            title="Your listing was not approved",
+            message=f'After review, "{prop.title}" was not approved.{note_line}',
+            link=f"Questions? Reply to this email or contact support. Your listings: {dashboard}",
+        )
+    elif action == "close":
+        await _notify_owner(
+            session,
+            prop,
+            title="Your listing was unpublished",
+            message=f'"{prop.title}" is no longer visible to investors.{note_line}',
+            link=f"Your listings: {dashboard}",
+        )
 
 
 async def list_owner(session: AsyncSession, owner_id: uuid.UUID) -> list[Property]:
@@ -449,6 +604,7 @@ async def admin_moderate(
     prop = await session.get(Property, prop_id)
     if prop is None:
         raise AppError("NOT_FOUND", "Property not found", status_code=404)
+    note = (reason or "").strip()[:2000] or None
     before = {"status": str(prop.status)}
     if action == "approve":
         # Publish checklist — the ONE gate every publish path goes through (Listing Editor,
@@ -470,12 +626,32 @@ async def admin_moderate(
                 details={"blockers": check["blockers"]},
             )
         prop.status = PropertyStatus.active
-    elif action == "reject":
+    elif action in ("reject", "request_changes"):
+        # back to the owner as a draft; the note tells them what to change
+        if action == "request_changes" and not note:
+            raise AppError(
+                "NOTE_REQUIRED",
+                "Write what the owner should change — they will see this message.",
+                status_code=422,
+            )
         prop.status = PropertyStatus.draft
+    elif action == "decline":
+        # a final "no" for a submission: closed, never public, not editable by the owner
+        if not note:
+            raise AppError(
+                "NOTE_REQUIRED",
+                "Write why the listing is not approved — the owner will see this message.",
+                status_code=422,
+            )
+        prop.status = PropertyStatus.closed
     elif action == "close":
         prop.status = PropertyStatus.closed
     else:  # pragma: no cover - guarded by the route
         raise AppError("INVALID_ACTION", f"Unknown action {action!r}", status_code=400)
+    prop.review_outcome = _OUTCOME_OF_ACTION[action]
+    prop.review_note = None if action == "approve" else note
+    prop.reviewed_at = datetime.datetime.now(datetime.UTC)
+    prop.reviewed_by = actor_id
     await write_audit(
         session,
         action=f"property.{action}",
@@ -483,6 +659,7 @@ async def admin_moderate(
         entity_id=str(prop.id),
         actor_id=actor_id,
         before=before,
-        after={"status": str(prop.status), "reason": reason},
+        after={"status": str(prop.status), "reason": note},
     )
+    await _notify_decision(session, prop, action=action, note=note)
     return prop

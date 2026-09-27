@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -59,6 +59,8 @@ import { PropertyCreationForm } from "@/components/developer/PropertyCreationFor
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { ownerStatsApi, propertyApi, type PropertyDetail } from "@/lib/api";
+import { ownerListingStatus, isOnMarket, OWNER_STATUS_BADGE } from "@/lib/propertyStatus";
+import { ListingReviewPanel } from "@/components/dashboard/ListingReviewPanel";
 import {
   AreaChart,
   Area,
@@ -81,12 +83,17 @@ const toOwnerPropertyCard = (p: PropertyDetail) => ({
   name: p.title,
   location: p.location,
   image: p.image ?? p.images?.[0] ?? "",
-  status: p.status === "active" || p.status === "funded" ? "active" : "funding",
+  // the real lifecycle: a submission under review is never shown as "Funding"
+  status: p.status,
+  statusView: ownerListingStatus(p),
+  onMarket: isOnMarket(p.status),
+  reviewNote: p.review_note ?? null,
   fundingProgress: Math.round(p.funding_progress),
   investors: p.investors_count,
   // Revenue/occupancy are post-investment operating metrics with no backend yet
   // (no per-owner rental ledger). Shown as "not available" rather than faked.
   nextPayout: OWNER_READY.has(p.model) ? "—" : "After completion",
+  detail: p,
 });
 
 // Server-authoritative money formatting; never fabricates a value.
@@ -345,10 +352,22 @@ const OwnerDashboard = () => {
                               <h3 className="font-semibold">{property.name}</h3>
                               <p className="text-sm text-muted-foreground">{property.location}</p>
                             </div>
-                            <Badge className={property.status === "active" ? "bg-primary" : "bg-accent"}>
-                              {property.status}
+                            <Badge className={OWNER_STATUS_BADGE[property.statusView.tone]}>
+                              {property.statusView.label}
                             </Badge>
                           </div>
+                          {!property.onMarket && (
+                            <p className="text-xs text-muted-foreground">
+                              {property.statusView.hint}{" "}
+                              <button
+                                type="button"
+                                className="text-primary underline"
+                                onClick={() => handleTabChange("properties")}
+                              >
+                                Details
+                              </button>
+                            </p>
+                          )}
                           <div className="grid grid-cols-2 gap-2 mt-3">
                             <div>
                               <p className="text-xs text-muted-foreground">Revenue Generated</p>
@@ -400,12 +419,14 @@ const OwnerDashboard = () => {
                               {property.location}
                             </div>
                           </div>
-                          <Badge className={property.status === "active" ? "bg-primary" : "bg-accent"}>
-                            {property.status === "active" ? "Active" : "Funding"}
+                          <Badge className={OWNER_STATUS_BADGE[property.statusView.tone]}>
+                            {property.statusView.label}
                           </Badge>
                         </div>
 
-                        {property.status === "funding" && (
+                        <ListingReviewPanel property={property.detail} />
+
+                        {property.onMarket && (
                           <div className="mb-4">
                             <div className="flex justify-between mb-1">
                               <span className="text-sm text-muted-foreground">Funding Progress</span>
@@ -439,10 +460,19 @@ const OwnerDashboard = () => {
                         </div>
 
                         <div className="flex gap-3 mt-4">
-                          <Button variant="outline" size="sm" className="gap-2" disabled>
-                            <Eye className="h-4 w-4" />
-                            View Details
-                          </Button>
+                          {property.onMarket ? (
+                            <Button asChild variant="outline" size="sm" className="gap-2">
+                              <Link to={`/property/${property.detail.slug ?? property.id}`}>
+                                <Eye className="h-4 w-4" />
+                                View Details
+                              </Link>
+                            </Button>
+                          ) : (
+                            <Button variant="outline" size="sm" className="gap-2" disabled>
+                              <Eye className="h-4 w-4" />
+                              View Details
+                            </Button>
+                          )}
                           <Button variant="outline" size="sm" className="gap-2" disabled>
                             <BarChart3 className="h-4 w-4" />
                             Analytics

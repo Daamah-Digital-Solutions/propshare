@@ -66,4 +66,9 @@ describe("SellUnitsForm — prepared by the assistant", () => {
     show(null);
     expect(screen.queryByTestId("assistant-sale-banner")).toBeNull();
   });
+
+  it("shows no assistant banner for a holding's own Sell button (property only)", () => {
+    show({ propertyId: "prop-1" });
+    expect(screen.queryByTestId("assistant-sale-banner")).toBeNull();
+  });
 });

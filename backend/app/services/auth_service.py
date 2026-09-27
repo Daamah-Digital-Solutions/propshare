@@ -112,18 +112,31 @@ async def register(
     # commission-bearing broker_referrals link (Phase 11) AND sets referred_by to the
     # broker; anything else falls back to raw user→user attribution that earns no
     # commission. A client who signs up without a broker code can never be linked later.
-    broker_id = await broker_service.resolve_signup_referral(
-        session, new_user_id=user.id, referral_code=referral_code
-    )
-    user.referred_by = (
-        broker_id if broker_id is not None else await _resolve_referral(session, referral_code)
-    )
+    await _attribute_signup(session, user, referral_code)
 
     await _provision_new_user(session, user)
     session.add(UserRole(user_id=user.id, role=AppRole.investor))
 
     await issue_email_token(session, user, kind="verify")
     return user
+
+
+async def _attribute_signup(session: AsyncSession, user: User, referral_code: str | None) -> None:
+    """Referral attribution for a NEW account — register and OAuth sign-up alike. A broker
+    code creates the first-class, commission-bearing broker_referrals link (Phase 11) AND sets
+    referred_by to the broker, and the broker's pending invitation for this address (if any)
+    becomes 'joined'; anything else falls back to raw user→user attribution that earns no
+    commission. A client who signs up without a broker code can never be linked later."""
+    broker_id = await broker_service.resolve_signup_referral(
+        session, new_user_id=user.id, referral_code=referral_code
+    )
+    user.referred_by = (
+        broker_id if broker_id is not None else await _resolve_referral(session, referral_code)
+    )
+    if broker_id is not None:
+        from app.services import broker_lead_service  # lazy: it imports broker_service
+
+        await broker_lead_service.mark_joined(session, broker_id=broker_id, client=user)
 
 
 async def _provision_new_user(session: AsyncSession, user: User) -> None:
@@ -639,8 +652,11 @@ async def oauth_upsert(
     subject: str,
     email: str,
     full_name: str | None,
+    referral_code: str | None = None,
 ) -> User:
-    """Find or create the user for a verified OAuth identity."""
+    """Find or create the user for a verified OAuth identity. A NEW account made this way is
+    attributed to the broker whose share link brought the visitor, exactly like a password
+    sign-up (an existing account is never linked afterwards)."""
     res = await session.execute(
         select(OAuthIdentity).where(
             OAuthIdentity.provider == provider, OAuthIdentity.provider_subject == subject
@@ -662,6 +678,7 @@ async def oauth_upsert(
         )
         session.add(user)
         await session.flush()
+        await _attribute_signup(session, user, referral_code)
         await _provision_new_user(session, user)
         session.add(UserRole(user_id=user.id, role=AppRole.investor))
 

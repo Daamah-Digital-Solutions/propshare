@@ -132,6 +132,13 @@ class PropertyDetailOut(PropertySummaryOut):
     # + the construction % computed from them (no stored scalar that can drift).
     milestones: list[MilestoneOut] = Field(default_factory=list)
     construction_progress: int = 0
+    # Owner submission review trail: when it was submitted, the last decision
+    # (approved | changes_requested | declined | closed) and the reviewer's note to the owner
+    # (cleared when the owner resubmits or the listing is approved).
+    submitted_at: dt.datetime | None = None
+    review_note: str | None = None
+    review_outcome: str | None = None
+    reviewed_at: dt.datetime | None = None
 
 
 class OwnerPropertyOut(PropertyDetailOut):

@@ -224,9 +224,13 @@ property documents are available on each property page.""",
 them and allocate returns within the group; the assistant shows your group and its members'
 allocations (never their identity documents). Brokers: an approved broker has a referral code;
 investors who sign up with it are linked to the broker, who earns a share of the platform's
-fees on their activity (never a share of the investment itself). The broker dashboard shows
-referrals and commissions. Applying for the broker, owner or liquidity-provider role is done
-from Account -> Roles and reviewed by the team.""",
+fees on their activity (never a share of the investment itself). The broker dashboard's
+"Listings & Referrals" tab lists everything the broker brought, with its status: "Add client"
+emails the person the broker's link (they are linked only if they sign up through it), and
+"Add property" / "Add project" introduces a property or an off-plan project with the owner or
+developer contact and documents for the team to review (the team contacts them and lists it,
+or explains why not; an introduction alone earns no commission). Applying for the broker,
+owner or liquidity-provider role is done from Account -> Roles and reviewed by the team.""",
     ),
     (
         "support-and-the-assistant",
@@ -471,8 +475,12 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
         """مجموعة العائلة: يستطيع عضو إنشاء مجموعة عائلية وإضافة أقاربه وتحويل وحدات إليهم وتخصيص
 العوائد داخل المجموعة؛ يعرض المساعد مجموعتك وتخصيصات أعضائها (ولا يعرض وثائق هوياتهم أبدًا).
 الوسطاء: للوسيط المعتمد كود إحالة؛ المستثمرون الذين يسجلون به يُربطون بالوسيط الذي يحصل على نسبة
-من رسوم المنصة على نشاطهم (وليس من الاستثمار نفسه أبدًا). تعرض لوحة الوسيط الإحالات والعمولات.
-التقدم لدور الوسيط أو المالك أو مزوّد السيولة يتم من الحساب ← الأدوار ويراجعه الفريق.""",
+من رسوم المنصة على نشاطهم (وليس من الاستثمار نفسه أبدًا). في لوحة الوسيط تبويب "الإدراجات
+والإحالات" يعرض كل ما قدّمه الوسيط وحالته: "إضافة عميل" يرسل للشخص رابط الوسيط بالبريد (ولا يُربط به
+إلا إذا سجّل من الرابط)، و"إضافة عقار" / "إضافة مشروع" لتقديم عقار أو مشروع على الخريطة مع بيانات
+المالك أو المطوّر ومستنداته ليراجعه الفريق (يتواصل معه ويدرجه أو يوضح السبب، والتقديم وحده لا
+يستحق عمولة). التقدم لدور الوسيط أو المالك أو مزوّد السيولة يتم من الحساب ← الأدوار ويراجعه
+الفريق.""",
     ),
     (
         "support-and-the-assistant",

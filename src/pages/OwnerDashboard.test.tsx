@@ -30,11 +30,11 @@ vi.mock("@/components/developer/PropertyCreationForm", () => ({
   PropertyCreationForm: () => <div>form</div>,
 }));
 
-function wrap(node: React.ReactNode) {
+function wrap(node: React.ReactNode, url = "/owner-dashboard") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>{node}</MemoryRouter>
+      <MemoryRouter initialEntries={[url]}>{node}</MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -102,5 +102,70 @@ describe("OwnerDashboard real stats (Phase 15)", () => {
     expect(screen.queryByText("1,234")).toBeNull();
     expect(screen.queryByText("94%")).toBeNull();
     expect(screen.queryByText("Emaar Properties")).toBeNull();
+  });
+});
+
+describe("OwnerDashboard — where a submitted listing stands (client feedback #4)", () => {
+  const base = {
+    id: "p2",
+    title: "Cristamar Residence",
+    location: "Marbella",
+    image: "",
+    images: [],
+    model: "ready-income",
+    total_value: 1_000_000,
+    funded_amount: 0,
+    funding_progress: 0,
+    investors_count: 0,
+  };
+
+  beforeEach(() => {
+    listOwnerMock.mockReset();
+    portfolioStatsMock.mockReset();
+    portfolioStatsMock.mockResolvedValue(STATS);
+  });
+
+  it("shows a listing under review as Under review, never as Funding", async () => {
+    listOwnerMock.mockResolvedValue([
+      { ...base, status: "under_review", submitted_at: "2026-09-26T10:00:00Z" },
+    ]);
+    wrap(<OwnerDashboard />);
+    expect((await screen.findAllByText("Under review")).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("Funding")).toBeNull();
+    expect(screen.queryByText("funding")).toBeNull();
+    expect(screen.queryByText("Funding Progress")).toBeNull();
+  });
+
+  it("shows the reviewer's message and the way to fix and resubmit", async () => {
+    listOwnerMock.mockResolvedValue([
+      {
+        ...base,
+        status: "draft",
+        submitted_at: "2026-09-25T10:00:00Z",
+        review_outcome: "changes_requested",
+        review_note: "Please upload the title deed.",
+        reviewed_at: "2026-09-26T10:00:00Z",
+      },
+    ]);
+    wrap(<OwnerDashboard />, "/owner-dashboard?tab=properties");
+    expect((await screen.findAllByText("Changes requested")).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/Please upload the title deed\./)).toBeInTheDocument();
+    // the edit form (mocked here) is offered right on the card
+    expect(screen.getAllByText("form").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("tells the owner a declined listing was not approved, with the reason", async () => {
+    listOwnerMock.mockResolvedValue([
+      {
+        ...base,
+        status: "closed",
+        submitted_at: "2026-09-25T10:00:00Z",
+        review_outcome: "declined",
+        review_note: "We only list income-producing assets for now.",
+      },
+    ]);
+    wrap(<OwnerDashboard />, "/owner-dashboard?tab=properties");
+    expect((await screen.findAllByText("Not approved")).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/income-producing assets/)).toBeInTheDocument();
   });
 });

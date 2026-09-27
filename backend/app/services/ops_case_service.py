@@ -174,9 +174,10 @@ async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dic
         )
         open_keys.add(key)
 
-    # 4) card/crypto payments the provider's webhook never settled. First let the provider
+    # 4) card/crypto payments the provider's webhook never settled. First let the Stripe
     #    lookup settle whatever it can; a case is only for what stays pending after that —
-    #    the sign of a dead endpoint, a wrong signing secret, or a provider-side problem.
+    #    the sign of a dead endpoint, a wrong signing secret, or a provider-side problem
+    #    (crypto is not looked up: its case is the signal to check the NOWPayments IPN).
     await payment_service.reconcile_pending(session, now=now)
     payment_cutoff = now - dt.timedelta(minutes=await payment_stale_minutes(session))
     stuck = (
@@ -185,7 +186,7 @@ async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dic
                 select(Payment)
                 .where(
                     Payment.status == "pending",
-                    Payment.provider.in_(payment_service.SYNC_PROVIDERS),
+                    Payment.provider.in_(payment_service.WEBHOOK_PROVIDERS),
                     Payment.created_at <= payment_cutoff,
                     Payment.created_at >= now - payment_service.SYNC_MAX_AGE,
                 )

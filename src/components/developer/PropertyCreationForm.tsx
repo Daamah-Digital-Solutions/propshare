@@ -20,10 +20,10 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
-import { Upload, X, Plus, Loader2, ImageIcon, FileText } from "lucide-react";
+import { Upload, X, Plus, Loader2, ImageIcon, FileText, Pencil } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
-import { propertyApi, documentsApi, ApiError } from "@/lib/api";
+import { propertyApi, documentsApi, ApiError, type PropertyDetail } from "@/lib/api";
 import { DOC_CATEGORIES } from "@/lib/documentCategories";
 import { toast } from "sonner";
 
@@ -70,7 +70,32 @@ const propertyTypes = [
   "Land",
 ];
 
-export function PropertyCreationForm() {
+const numText = (v: number | string | null | undefined) =>
+  v === null || v === undefined || v === "" ? "" : String(v);
+
+/** The form filled with a listing the owner already sent (to fix what the review asked). */
+const fromProperty = (p: PropertyDetail): PropertyFormData => ({
+  title: p.title ?? "",
+  description: p.description ?? "",
+  location: p.location ?? "",
+  property_type: p.property_type ?? "",
+  total_value: numText(p.total_value),
+  unit_price: numText(p.unit_price),
+  total_units: numText(p.total_units),
+  minimum_investment: numText(p.minimum_investment),
+  target_yield: numText(p.target_yield),
+  expected_completion: p.expected_completion ?? "",
+  spv_name: p.spv_name ?? "",
+  spv_registration: p.spv_registration ?? "",
+  legal_structure: p.legal_structure ?? "",
+});
+
+interface PropertyCreationFormProps {
+  /** a listing sent back with "changes requested" (or never submitted): edit and resubmit it */
+  editing?: PropertyDetail;
+}
+
+export function PropertyCreationForm({ editing }: PropertyCreationFormProps = {}) {
   const [open, setOpen] = useState(false);
   const [formData, setFormData] = useState<PropertyFormData>(initialFormData);
   const [images, setImages] = useState<File[]>([]);
@@ -147,7 +172,7 @@ export function PropertyCreationForm() {
 
     setIsSubmitting(true);
     try {
-      const created = await propertyApi.create({
+      const payload = {
         title: formData.title,
         property_type: formData.property_type,
         location: formData.location,
@@ -163,7 +188,10 @@ export function PropertyCreationForm() {
         spv_name: formData.spv_name || null,
         spv_registration: formData.spv_registration || null,
         legal_structure: formData.legal_structure || null,
-      });
+      };
+      const created = editing
+        ? await propertyApi.update(editing.id, payload)
+        : await propertyApi.create(payload);
       // The property now has an id + storage is live — upload its images and documents.
       let uploadErrors = 0;
       for (const img of images) {
@@ -180,11 +208,12 @@ export function PropertyCreationForm() {
           uploadErrors++;
         }
       }
-      await propertyApi.submit(created.id);
-      toast.success("Property submitted for review", {
+      // a listing already under review stays there (the edit is enough); a draft goes back
+      if (!editing || editing.status === "draft") await propertyApi.submit(created.id);
+      toast.success(editing ? "Listing sent for review" : "Property submitted for review", {
         description: uploadErrors
           ? `${uploadErrors} file(s) couldn't be uploaded — you can add them later from Documents.`
-          : "An admin will review and publish it to the marketplace.",
+          : "Our team will review it and tell you the outcome here and by email.",
       });
       await queryClient.invalidateQueries({ queryKey: ["owner-properties"] });
       setOpen(false);
@@ -210,19 +239,29 @@ export function PropertyCreationForm() {
   return (
     <Dialog open={open} onOpenChange={(isOpen) => {
       setOpen(isOpen);
+      if (isOpen && editing) setFormData(fromProperty(editing));
       if (!isOpen) resetForm();
     }}>
       <DialogTrigger asChild>
-        <Button className="gap-2">
-          <Plus className="h-4 w-4" />
-          New Project
-        </Button>
+        {editing ? (
+          <Button size="sm" className="gap-2">
+            <Pencil className="h-4 w-4" />
+            {editing.submitted_at ? "Edit & resubmit" : "Edit & submit"}
+          </Button>
+        ) : (
+          <Button className="gap-2">
+            <Plus className="h-4 w-4" />
+            New Project
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create New Property Listing</DialogTitle>
+          <DialogTitle>{editing ? "Update your listing" : "Create New Property Listing"}</DialogTitle>
           <DialogDescription>
-            Fill in the details below to list a new property for investment.
+            {editing
+              ? "Change what our team asked for and add any missing photos or documents, then send it for review."
+              : "Fill in the details below to list a new property for investment."}
           </DialogDescription>
         </DialogHeader>
 
@@ -259,6 +298,10 @@ export function PropertyCreationForm() {
                         {type}
                       </SelectItem>
                     ))}
+                    {formData.property_type &&
+                      !propertyTypes.some((t) => t.toLowerCase() === formData.property_type) && (
+                        <SelectItem value={formData.property_type}>{formData.property_type}</SelectItem>
+                      )}
                   </SelectContent>
                 </Select>
               </div>
@@ -553,12 +596,12 @@ export function PropertyCreationForm() {
               {isSubmitting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  {uploadProgress > 0 ? `Uploading ${uploadProgress}%` : "Creating..."}
+                  {uploadProgress > 0 ? `Uploading ${uploadProgress}%` : editing ? "Saving..." : "Creating..."}
                 </>
               ) : (
                 <>
                   <Upload className="h-4 w-4 mr-2" />
-                  Create Property
+                  {editing ? "Save & send for review" : "Create Property"}
                 </>
               )}
             </Button>

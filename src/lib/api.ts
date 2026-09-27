@@ -245,10 +245,17 @@ export const authApi = {
     return finishLogin(res);
   },
 
-  async oauthLogin(provider: string, code: string, redirect_uri: string): Promise<LoginResult> {
+  /** `referral_code`: the broker code of the share link that brought the visitor (it only
+   * counts if this creates a new account — same rule as a password sign-up). */
+  async oauthLogin(
+    provider: string,
+    code: string,
+    redirect_uri: string,
+    referral_code?: string | null,
+  ): Promise<LoginResult> {
     const res = await apiRequest<LoginResponse>(`/api/v1/auth/oauth/${provider}`, {
       method: "POST",
-      body: { code, redirect_uri },
+      body: referral_code ? { code, redirect_uri, referral_code } : { code, redirect_uri },
       auth: false,
     });
     return finishLogin(res);
@@ -444,6 +451,12 @@ export interface PropertyDetail extends PropertySummary {
   // Phase 15b — real milestones + the construction % computed from them.
   milestones: PropertyMilestone[];
   construction_progress: number;
+  // Owner submission review trail (owner views): when it was submitted, the last decision
+  // (approved | changes_requested | declined | closed) and the reviewer's message.
+  submitted_at?: string | null;
+  review_note?: string | null;
+  review_outcome?: string | null;
+  reviewed_at?: string | null;
 }
 
 export interface PropertyListResponse {
@@ -1713,7 +1726,46 @@ export const brokerApi = {
   commissions(): Promise<{ items: BrokerCommissionItem[]; total: number }> {
     return apiRequest("/api/v1/broker/commissions");
   },
+  /** The broker's "Listings & Referrals" rows: invited clients and introduced properties/projects. */
+  leads(): Promise<{ items: BrokerLead[]; total: number }> {
+    return apiRequest("/api/v1/broker/leads");
+  },
+  /** Invite a client by email: they get the broker's share link and join through it. */
+  inviteClient(input: { name: string; email: string; phone?: string; notes?: string }): Promise<BrokerLead> {
+    return apiRequest<BrokerLead>("/api/v1/broker/leads/client", { method: "POST", body: input });
+  },
+  /** Introduce a property (ready) or a project (off-plan) with the owner contact + documents. */
+  introduceListing(
+    kind: "property" | "project",
+    fields: Record<string, string>,
+    files: File[],
+  ): Promise<BrokerLead> {
+    const fd = new FormData();
+    fd.append("kind", kind);
+    fd.append("fields", JSON.stringify(fields));
+    for (const f of files) fd.append("files", f, f.name);
+    return apiRequest<BrokerLead>("/api/v1/broker/leads/listing", { method: "POST", body: fd });
+  },
+  cancelLead(id: string): Promise<BrokerLead> {
+    return apiRequest<BrokerLead>(`/api/v1/broker/leads/${id}/cancel`, { method: "POST" });
+  },
 };
+
+export interface BrokerLead {
+  id: string;
+  kind: "client" | "property" | "project";
+  /** client: invited | joined | cancelled; property/project: new | contacted | listed | declined | withdrawn */
+  status: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  details: Record<string, string>;
+  documents: string[];
+  admin_note: string | null;
+  property_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
 
 // ---- Notifications (Phase 12) ----
 export interface NotificationItem {

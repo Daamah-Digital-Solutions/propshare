@@ -45,7 +45,8 @@ interface AuthContextType {
     documents: { label: string; file: File }[],
   ) => Promise<{ status: string; role: string; request_id: string }>;
   /** Reload the current user from the backend. */
-  refresh: () => Promise<void>;
+  /** Re-read the signed-in member; resolves with it (null when signed out). */
+  refresh: () => Promise<MeResponse | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -56,12 +57,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const applyMe = useCallback((me: MeResponse | null) => setUser(me), []);
 
-  const loadMe = useCallback(async () => {
+  const loadMe = useCallback(async (): Promise<MeResponse | null> => {
     try {
       const me = await authApi.me();
       applyMe(me);
+      return me;
     } catch {
       applyMe(null);
+      return null;
     }
   }, [applyMe]);
 

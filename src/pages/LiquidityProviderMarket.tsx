@@ -32,9 +32,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { ApiError, liquidityApi, type LpExitRequest } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 const num = (s: string | null | undefined) => Number(s ?? 0);
 
@@ -52,15 +54,32 @@ export default function LiquidityProviderMarket() {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<LpExitRequest | null>(null);
   const [fundUnits, setFundUnits] = useState("");
+  const { isAuthenticated, userRole, authorizedRoles, pendingRoles, switchActiveRole } = useAuth();
+  // Only a signed-in member using the Liquidity Provider role can fund (the server enforces it).
+  const isLp = isAuthenticated && userRole === "liquidity_provider";
 
   const { data: openData } = useQuery({
     queryKey: ["liquidity", "open"],
     queryFn: () => liquidityApi.listOpen(),
+    enabled: isAuthenticated,
   });
   const { data: positionsData } = useQuery({
     queryKey: ["liquidity", "positions"],
     queryFn: () => liquidityApi.positions(),
+    enabled: isAuthenticated,
   });
+  const [switching, setSwitching] = useState(false);
+  const switchToLp = async () => {
+    setSwitching(true);
+    try {
+      await switchActiveRole("liquidity_provider");
+      queryClient.invalidateQueries({ queryKey: ["liquidity"] });
+    } catch {
+      toast.error("The switch did not go through. Please try again.");
+    } finally {
+      setSwitching(false);
+    }
+  };
 
   const requests = useMemo(() => {
     const rows = openData?.items ?? [];
@@ -129,6 +148,36 @@ export default function LiquidityProviderMarket() {
       </section>
 
       <div className="container mx-auto px-4 py-8 space-y-8">
+        {/* Who can fund: sign in / switch role / apply — instead of an empty page */}
+        {!isLp && (
+          <Card className="border-primary/30 bg-primary/5" data-testid="lp-access">
+            <CardContent className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <p className="text-sm">
+                {!isAuthenticated
+                  ? "Sign in to see the open exit requests and fund them."
+                  : authorizedRoles.includes("liquidity_provider")
+                    ? "You are using another role right now. Switch to your Liquidity Provider role to fund requests."
+                    : pendingRoles.includes("liquidity_provider")
+                      ? "Your Liquidity Provider application is waiting for approval. You can look around; funding opens once it is approved."
+                      : "Funding exit requests is for approved Liquidity Providers."}
+              </p>
+              {!isAuthenticated ? (
+                <Button asChild size="sm">
+                  <Link to="/auth">Sign in</Link>
+                </Button>
+              ) : authorizedRoles.includes("liquidity_provider") ? (
+                <Button size="sm" onClick={switchToLp} disabled={switching}>
+                  {switching ? "Switching…" : "Switch to Liquidity Provider"}
+                </Button>
+              ) : pendingRoles.includes("liquidity_provider") ? null : (
+                <Button asChild size="sm" variant="outline">
+                  <Link to="/roles/apply/liquidity_provider">Apply to become a Liquidity Provider</Link>
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Stats (live) */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {stats.map((s, i) => (
@@ -179,8 +228,18 @@ export default function LiquidityProviderMarket() {
 
             {requests.length === 0 ? (
               <Card>
-                <CardContent className="p-10 text-center text-sm text-muted-foreground">
-                  No open exit requests right now. Check back soon.
+                <CardContent className="p-10 text-center text-sm text-muted-foreground space-y-3">
+                  <p className="font-medium text-foreground">No open exit requests right now.</p>
+                  <p>
+                    When an investor asks to sell instantly, the request appears here straight away
+                    with the property, the units and the price. You fund it from your wallet balance,
+                    so keep your wallet funded to act quickly.
+                  </p>
+                  {isLp && (
+                    <Button asChild size="sm" variant="outline">
+                      <Link to="/liquidity-dashboard?tab=wallet">Fund my wallet</Link>
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             ) : (
@@ -237,7 +296,7 @@ export default function LiquidityProviderMarket() {
                         </div>
 
                         <div className="flex items-center justify-end pt-1">
-                          <Button size="sm" className="gap-1" onClick={() => setSelected(req)}>
+                          <Button size="sm" className="gap-1" onClick={() => setSelected(req)} disabled={!isLp}>
                             Review & Provide <ArrowRight className="w-3 h-3" />
                           </Button>
                         </div>
@@ -310,6 +369,16 @@ export default function LiquidityProviderMarket() {
                 icon: Shield,
                 title: "Asset-Backed & Atomic",
                 desc: "Ownership transfers atomically on settlement and is recorded on the ownership ledger. Funding is server-priced and the seller's payout is locked at request time.",
+              },
+              {
+                icon: Wallet,
+                title: "Funded From Your Wallet",
+                desc: "You pay for a request from your wallet balance. Deposit first (card, crypto or bank transfer) from the Wallet tab of your dashboard; withdrawals go back out the same way.",
+              },
+              {
+                icon: BarChart3,
+                title: "Your Exit: the Secondary Market",
+                desc: "The units you buy show under Backed Assets. When you want out, list them on the Secondary Market at your price; the proceeds go to your wallet when a buyer pays.",
               },
               {
                 icon: Sparkles,

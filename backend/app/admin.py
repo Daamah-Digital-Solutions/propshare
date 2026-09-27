@@ -29,7 +29,9 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from wtforms import SelectField
 
 from app.admin_assistant import ASSISTANT_VIEWS
+from app.admin_leads import BROKER_LEAD_VIEWS
 from app.admin_listing import ListingEditorView, is_full_admin
+from app.admin_owner import OWNER_VIEWS, platform_listing_filter
 from app.admin_pages import PW_PAGE, TWO_FACTOR_PAGE
 from app.core.audit import write_audit
 from app.core.config import get_settings
@@ -201,6 +203,15 @@ def _fmt_property_title(m: Property) -> Markup:
     ).format(title=m.title, id=m.id)
 
 
+def _fmt_property_source(m) -> Markup:
+    if m.owner_id is None:
+        return Markup("Platform")
+    return Markup(
+        '<a href="/admin/owner-submissions/{id}">Owner-submitted</a>'
+        ' · <a href="/admin/property-owners/{owner}">owner file</a>'
+    ).format(id=m.id, owner=m.owner_id)
+
+
 class PropertyAdmin(AdminOnlyModelView, model=Property):
     name = "Property"
     name_plural = "Properties"
@@ -218,6 +229,12 @@ class PropertyAdmin(AdminOnlyModelView, model=Property):
     column_searchable_list = [Property.title, Property.slug]
     column_sortable_list = [Property.created_at, Property.status, Property.total_value]
     column_default_sort = [(Property.created_at, True)]
+
+    def list_query(self, request: Request):
+        # What the platform lists. An owner's submission is "under listing", not listed: it
+        # waits in Owner Submissions until approved (its detail page still opens by id).
+        return select(Property).where(platform_listing_filter())
+
     # Listings are created ONLY through the Listing Editor (/admin/listing/new), which applies
     # the model rules, calculated units and the consistency checks. The raw create page is
     # hidden here and redirected in AdminAuth.authenticate. Raw edit stays for admin fixes.
@@ -234,7 +251,7 @@ class PropertyAdmin(AdminOnlyModelView, model=Property):
         Property.images: "Photo URLs (managed in the Listing Editor)",
         Property.content: "Structured content JSON (managed in the Listing Editor)",
         Property.fees: "Per-listing fee overrides JSON (technical)",
-        Property.owner_id: "Owner user id (blank = platform-listed)",
+        Property.owner_id: "Source (owner-submitted or platform)",
     }
     form_args = {f.name: {"description": f.description} for f in listing_service.CORE_FIELDS} | {
         "model": {
@@ -256,8 +273,14 @@ class PropertyAdmin(AdminOnlyModelView, model=Property):
     form_widget_args = {
         f.name: {"placeholder": f.example} for f in listing_service.CORE_FIELDS if f.example
     }
-    column_formatters = {Property.title: lambda m, _a: _fmt_property_title(m)}
-    column_formatters_detail = {Property.title: lambda m, _a: _fmt_property_title(m)}
+    column_formatters = {
+        Property.title: lambda m, _a: _fmt_property_title(m),
+        Property.owner_id: lambda m, _a: _fmt_property_source(m),
+    }
+    column_formatters_detail = {
+        Property.title: lambda m, _a: _fmt_property_title(m),
+        Property.owner_id: lambda m, _a: _fmt_property_source(m),
+    }
 
     # Only listing content is editable by hand. Server-authoritative counters
     # (funded_amount, funding_progress, investors_count, available_units) and the
@@ -1984,6 +2007,8 @@ def setup_admin(app) -> Admin:
         InstallmentPaymentAdmin,
         DocumentUploadView,
         ListingEditorView,
+        *OWNER_VIEWS,
+        *BROKER_LEAD_VIEWS,
         PasswordChangeView,
         TwoFactorView,
         RoleDocView,

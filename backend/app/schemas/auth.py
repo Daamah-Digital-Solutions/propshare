@@ -77,10 +77,12 @@ class VerifyEmailIn(BaseModel):
 
 
 class OAuthCallbackIn(BaseModel):
-    """SPA posts the provider's authorization code + redirect_uri it used."""
+    """SPA posts the provider's authorization code + redirect_uri it used, and the broker code
+    of the share link that brought the visitor (applied only if this creates a new account)."""
 
     code: str
     redirect_uri: str
+    referral_code: str | None = Field(default=None, max_length=32)
 
 
 # --------------------------------------------------------------------------- #

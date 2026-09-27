@@ -1,6 +1,10 @@
 {% extends "sqladmin/list.html" %}
-{#- Properties list: listings are created in the Listing Editor, so the header links there. -#}
+{#- Properties list: listings are created in the Listing Editor, so the header links there.
+    What owners submit waits in Owner Submissions and appears here once approved. -#}
 {% block model_menu_bar %}
+<div class="ms-3 d-inline-block">
+  <a href="/admin/owner-submissions" class="btn btn-secondary" data-owner-submissions>Owner submissions</a>
+</div>
 <div class="ms-3 d-inline-block">
   <a href="/admin/listing/" class="btn btn-secondary" data-listing-index>All listings</a>
 </div>

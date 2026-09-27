@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,17 +20,79 @@ import {
   Wallet,
   BarChart3,
   FileText,
-  CheckCircle2,
   Lock,
   CreditCard,
   Droplet,
+  Droplets,
+  ArrowRightLeft,
+  Tag,
+  Zap,
 } from "lucide-react";
 import { VirtualCardRequest } from "@/components/dashboard/VirtualCardRequest";
-import { liquidityApi, returnsApi } from "@/lib/api";
+import { InvestorWallet } from "@/components/dashboard/InvestorWallet";
+import { liquidityApi, returnsApi, walletApi } from "@/lib/api";
 
 const num = (s: string | null | undefined) => Number(s ?? 0);
 
+// ?tab= deep links (sidebar, return from a hosted checkout, the assistant's prepared deposit)
+const LP_TABS = ["overview", "assets", "returns", "wallet", "cards", "provide"];
+
+// The liquidity provider's cycle, end to end — every step links to where it happens.
+const CYCLE = [
+  {
+    icon: Wallet,
+    title: "1. Fund your wallet",
+    text: "Deposit by card, crypto or bank transfer. Your wallet balance is what you fund exit requests with.",
+    cta: "Open my wallet",
+    to: "/liquidity-dashboard?tab=wallet",
+  },
+  {
+    icon: Droplets,
+    title: "2. Choose an exit request",
+    text: "Investors who want to sell instantly post requests on the Liquidity Market: the property, the units and the price.",
+    cta: "Open the Liquidity Market",
+    to: "/liquidity-market",
+  },
+  {
+    icon: Zap,
+    title: "3. Buy the units",
+    text: "Fund a request from your wallet at the price shown. The seller is paid at once and the units move to you.",
+    cta: "See open requests",
+    to: "/liquidity-market",
+  },
+  {
+    icon: Building2,
+    title: "4. Hold them",
+    text: "The units show under Backed Assets; rental distributions on them are paid into your wallet.",
+    cta: "My backed assets",
+    to: "/liquidity-dashboard?tab=assets",
+  },
+  {
+    icon: ArrowRightLeft,
+    title: "5. Exit on the Secondary Market",
+    text: "When you want out, list your units on the Secondary Market at your price; the proceeds go to your wallet when a buyer pays.",
+    cta: "Sell units",
+    to: "/secondary-market?tab=sell",
+  },
+];
+
 const LiquidityDashboard = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState(() =>
+    LP_TABS.includes(tabFromUrl || "") ? tabFromUrl! : "overview",
+  );
+  useEffect(() => {
+    if (tabFromUrl && LP_TABS.includes(tabFromUrl) && tabFromUrl !== activeTab) {
+      setActiveTab(tabFromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabFromUrl]);
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    setSearchParams({ tab: value });
+  };
+
   const { data: holdings } = useQuery({
     queryKey: ["liquidity", "holdings"],
     queryFn: () => liquidityApi.holdings(),
@@ -46,6 +109,7 @@ const LiquidityDashboard = () => {
     queryKey: ["liquidity", "settings"],
     queryFn: () => liquidityApi.settings(),
   });
+  const { data: wallet } = useQuery({ queryKey: ["wallet"], queryFn: walletApi.getMe });
 
   const holdingItems = useMemo(() => holdings?.items ?? [], [holdings]);
   const passiveEnabled = settings?.passive_enabled ?? false;
@@ -53,12 +117,12 @@ const LiquidityDashboard = () => {
   const stats = useMemo(() => {
     const holdingsValue = holdingItems.reduce((s, h) => s + h.units * num(h.unit_price), 0);
     return [
+      { title: "Wallet Balance (to fund requests)", value: `$${num(wallet?.balance).toLocaleString()}` },
       { title: "Holdings Value (Active)", value: `$${holdingsValue.toLocaleString()}` },
       { title: "Rental Distributions", value: `$${num(returns?.total_net).toLocaleString()}` },
       { title: "Backed Assets", value: String(holdingItems.length) },
-      { title: "Active Positions", value: String((positions?.items ?? []).length) },
     ];
-  }, [holdingItems, returns, positions]);
+  }, [holdingItems, returns, wallet]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -74,14 +138,14 @@ const LiquidityDashboard = () => {
 
       <section className="py-8">
         <div className="container mx-auto px-4">
-          <Tabs defaultValue="overview" className="space-y-8">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-8">
             <TabsList className="w-full flex flex-wrap justify-start gap-2 h-auto p-2 bg-muted/50">
               <TabsTrigger value="overview" className="gap-2"><BarChart3 className="h-4 w-4" />Overview</TabsTrigger>
               <TabsTrigger value="assets" className="gap-2"><Building2 className="h-4 w-4" />Backed Assets</TabsTrigger>
               <TabsTrigger value="returns" className="gap-2"><TrendingUp className="h-4 w-4" />Realized Cash Flows</TabsTrigger>
-              <TabsTrigger value="provide" className="gap-2"><PiggyBank className="h-4 w-4" />Fixed-Yield Pool</TabsTrigger>
               <TabsTrigger value="wallet" className="gap-2"><Wallet className="h-4 w-4" />Wallet</TabsTrigger>
               <TabsTrigger value="cards" className="gap-2"><CreditCard className="h-4 w-4" />Virtual Cards</TabsTrigger>
+              <TabsTrigger value="provide" className="gap-2"><PiggyBank className="h-4 w-4" />Fixed-Yield Pool (planned)</TabsTrigger>
             </TabsList>
 
             {/* Overview */}
@@ -96,12 +160,26 @@ const LiquidityDashboard = () => {
                   </Card>
                 ))}
               </div>
-              <Card className="bg-card border-border">
-                <CardContent className="p-6 text-sm text-muted-foreground">
-                  Find fundable instant-exit opportunities on the{" "}
-                  <a href="/liquidity-market" className="text-primary hover:underline">Liquidity Market</a>.
-                  Returns shown here are realized cash flows (rental distributions + resale proceeds),
-                  not a projected or guaranteed figure.
+              <Card className="bg-card border-border" data-testid="lp-cycle">
+                <CardHeader>
+                  <CardTitle>How it works</CardTitle>
+                  <CardDescription>
+                    Your cycle as a liquidity provider, from funding your wallet to selling the units
+                    you bought. Figures here are realized cash flows, never a projected or guaranteed
+                    return.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+                  {CYCLE.map((step) => (
+                    <div key={step.title} className="rounded-xl border border-border p-4 flex flex-col gap-2">
+                      <step.icon className="h-5 w-5 text-primary" />
+                      <p className="font-semibold text-sm">{step.title}</p>
+                      <p className="text-xs text-muted-foreground flex-1">{step.text}</p>
+                      <Button asChild size="sm" variant="outline" className="mt-1">
+                        <Link to={step.to}>{step.cta}</Link>
+                      </Button>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -110,8 +188,14 @@ const LiquidityDashboard = () => {
             <TabsContent value="assets" className="space-y-4">
               {holdingItems.length === 0 ? (
                 <Card className="bg-card border-border">
-                  <CardContent className="py-16 text-center text-muted-foreground">
-                    You don't hold any units yet. Fund an instant-exit request on the Liquidity Market to acquire ownership.
+                  <CardContent className="py-16 text-center text-muted-foreground space-y-4">
+                    <p>
+                      You don't hold any units yet. Fund an instant-exit request on the Liquidity
+                      Market to acquire ownership.
+                    </p>
+                    <Button asChild>
+                      <Link to="/liquidity-market">Open the Liquidity Market</Link>
+                    </Button>
                   </CardContent>
                 </Card>
               ) : (
@@ -122,7 +206,7 @@ const LiquidityDashboard = () => {
                         <h3 className="text-lg font-semibold">{asset.title ?? "Property"}</h3>
                         <p className="text-sm text-muted-foreground">{asset.location ?? "—"}</p>
                       </div>
-                      <div className="grid grid-cols-3 gap-6">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                         <div>
                           <p className="text-sm text-muted-foreground">Units Held</p>
                           <p className="text-lg font-semibold">{asset.units}</p>
@@ -137,7 +221,26 @@ const LiquidityDashboard = () => {
                             ${(asset.units * num(asset.unit_price)).toLocaleString()}
                           </p>
                         </div>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Listed / Sellable</p>
+                          <p className="text-lg font-semibold">
+                            {asset.listed_units} / {asset.sellable_units}
+                          </p>
+                        </div>
                       </div>
+                      {asset.sellable_units > 0 ? (
+                        <Button asChild variant="outline" size="sm" className="gap-1.5 shrink-0">
+                          <Link to={`/secondary-market?tab=sell&property=${asset.property_id}`}>
+                            <Tag className="h-3 w-3" />
+                            Sell on Secondary Market
+                          </Link>
+                        </Button>
+                      ) : (
+                        <Button variant="outline" size="sm" className="gap-1.5 shrink-0" disabled>
+                          <Tag className="h-3 w-3" />
+                          All units listed
+                        </Button>
+                      )}
                     </CardContent>
                   </Card>
                 ))
@@ -171,7 +274,11 @@ const LiquidityDashboard = () => {
                     <Wallet className="h-8 w-8 text-accent mb-3" />
                     <p className="text-sm text-muted-foreground">Resale Proceeds</p>
                     <p className="text-base font-medium mt-2 text-muted-foreground">
-                      Settle to your wallet on each secondary-market sale (see Wallet → Transactions).
+                      Settle to your wallet on each secondary-market sale (see{" "}
+                      <Link to="/liquidity-dashboard?tab=wallet" className="text-primary hover:underline">
+                        Wallet → Transactions
+                      </Link>
+                      ).
                     </p>
                   </CardContent>
                 </Card>
@@ -264,21 +371,10 @@ const LiquidityDashboard = () => {
               </Card>
             </TabsContent>
 
-            {/* Wallet */}
+            {/* Wallet — the real per-user wallet (shared across roles): deposit, withdraw,
+                saved cards and payout accounts. It funds exit requests and receives proceeds. */}
             <TabsContent value="wallet" className="space-y-6">
-              <Card className="bg-card border-border">
-                <CardContent className="p-6 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-5 w-5 text-primary" />
-                    <p className="font-medium">Your wallet is shared across roles.</p>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Deposit, view your balance and ledger, and withdraw to bank/crypto from the
-                    investor <a href="/dashboard" className="text-primary hover:underline">Wallet</a> tab —
-                    the same balance funds your liquidity allocations and receives your proceeds.
-                  </p>
-                </CardContent>
-              </Card>
+              <InvestorWallet />
             </TabsContent>
 
             <TabsContent value="cards" className="space-y-6">

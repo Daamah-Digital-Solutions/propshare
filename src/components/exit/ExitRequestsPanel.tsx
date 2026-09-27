@@ -164,7 +164,7 @@ function ExitList({ items }: { items: ExitRequest[] }) {
                   size="sm"
                   variant="ghost"
                   className="h-7 px-2 text-xs text-destructive hover:text-destructive"
-                  onClick={() => cancelExitRequest(r.id)}
+                  onClick={() => cancelExitRequest(r)}
                 >
                   Cancel
                 </Button>

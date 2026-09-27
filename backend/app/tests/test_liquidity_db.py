@@ -487,3 +487,50 @@ async def test_liquidity_requires_auth(client):
     assert (await client.get("/api/v1/liquidity/exit-requests")).status_code == 401
     assert (await client.get("/api/v1/liquidity/positions")).status_code == 401
     assert (await client.post("/api/v1/liquidity/exit-requests", json={})).status_code == 401
+
+
+# --- the LP's exit: resell acquired units on the secondary market (client feedback #3) --- #
+@pytest.mark.asyncio
+async def test_lp_resells_acquired_units_on_the_secondary_market(client, db):
+    """The whole cycle: an investor asks to exit -> the LP funds it from the wallet (seller
+    paid at once) -> the LP later lists those units on the secondary market with their LP
+    token -> another investor buys -> the LP is paid the full gross and holds fewer units."""
+    ts = await _verified_user(client, db, "cyc_s@l.com")
+    tl = await _lp_user(client, db, "cyc_l@l.com")
+    tb = await _verified_user(client, db, "cyc_b@l.com")
+    sid, lid, bid = _uid(db, "cyc_s@l.com"), _uid(db, "cyc_l@l.com"), _uid(db, "cyc_b@l.com")
+    pid = _seed_property(db, unit_price=100)
+    _grant_units(db, sid, pid, 50)
+    _fund_wallet(db, lid, 10000)
+    _fund_wallet(db, bid, 10000)
+
+    req = (await _create_request(client, ts, pid, 10)).json()["request_id"]
+    assert (await _fund(client, tl, req, 10)).status_code == 200
+    assert _holding(db, lid, pid) == 10
+    lp_after_buy = db("SELECT balance FROM wallets WHERE user_id=:i", i=lid)[0][0]
+
+    # the LP (active role liquidity_provider) sees the units as sellable and lists them
+    held = await client.get("/api/v1/secondary/holdings", headers={"Authorization": f"Bearer {tl}"})
+    assert held.status_code == 200, held.text
+    item = next(h for h in held.json()["items"] if str(h["property_id"]) == str(pid))
+    assert item["sellable_units"] == 10
+    listing = await client.post(
+        "/api/v1/secondary/listings",
+        json={"property_id": pid, "units": 10, "price_per_unit": 100},
+        headers={"Authorization": f"Bearer {tl}"},
+    )
+    assert listing.status_code == 200, listing.text
+
+    bought = await client.post(
+        f"/api/v1/secondary/listings/{listing.json()['listing_id']}/buy",
+        json={"units": 4},
+        headers={"Authorization": f"Bearer {tb}", "Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert bought.status_code == 200, bought.text
+    # the LP receives the full gross (4 x 100); units moved LP -> buyer; Σ conserved
+    assert db("SELECT balance FROM wallets WHERE user_id=:i", i=lid)[0][0] == lp_after_buy + 400
+    assert _holding(db, lid, pid) == 6
+    assert _holding(db, bid, pid) == 4
+    assert _ownership_sum(db, pid) == 50
+    _assert_balance_invariant(db, lid)
+    _assert_balance_invariant(db, bid)

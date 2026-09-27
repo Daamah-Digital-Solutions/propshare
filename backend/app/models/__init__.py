@@ -181,6 +181,14 @@ class Property(Base):
     fees: Mapped[object | None] = mapped_column(
         JSONB, server_default='{"platform_fee": 2.5, "management_fee": 1.0}'
     )
+    # Owner submission review trail (0030): when the owner submitted it, the last decision
+    # and the note the owner sees. Platform-listed rows (owner_id NULL) never use these.
+    submitted_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    review_note: Mapped[str | None] = mapped_column(Text)
+    # approved | changes_requested | declined | closed
+    review_outcome: Mapped[str | None] = mapped_column(Text)
+    reviewed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )
@@ -518,7 +526,12 @@ from app.models.assistant import (  # noqa: E402
     AssistantConversation,
     AssistantMessage,
 )
-from app.models.broker import BrokerCode, BrokerCommission, BrokerReferral  # noqa: E402
+from app.models.broker import (  # noqa: E402
+    BrokerCode,
+    BrokerCommission,
+    BrokerLead,
+    BrokerReferral,
+)
 from app.models.compliance import AuditLog, KycWebhookEvent  # noqa: E402
 from app.models.developer_updates import (  # noqa: E402
     DeveloperUpdate,
@@ -605,6 +618,7 @@ __all__ = [
     "LpPosition",
     # broker referrals & commissions (Phase 11)
     "BrokerCode",
+    "BrokerLead",
     "BrokerReferral",
     "BrokerCommission",
     # notifications + email (Phase 12)

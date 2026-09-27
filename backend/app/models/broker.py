@@ -4,6 +4,8 @@
 * ``BrokerReferral``   — the first-class broker↔client link. ``client_id`` is UNIQUE
   and the link is created ONLY on the signup path (never retroactively), so a client
   who signed up without a broker code stays broker-less permanently.
+* ``BrokerLead``       — a client the broker invites, or a property / project the broker
+  brings for listing (0031). Tracking only: no money attaches to a lead.
 * ``BrokerCommission`` — append-only accrual/credit ledger. ``UNIQUE(revenue_event_type,
   revenue_event_id)`` makes one platform-revenue event yield at most one accrual; the
   ``commission_amount <= revenue_amount`` CHECK is the structural guarantee that a
@@ -27,7 +29,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -140,6 +142,51 @@ class BrokerCommission(Base):
     client = relationship(
         "User",
         primaryjoin="foreign(BrokerCommission.client_id) == User.id",
+        viewonly=True,
+        lazy="selectin",
+    )
+
+
+class BrokerLead(Base):
+    """A client the broker invites (kind 'client'), or a property / project the broker brings
+    for listing. Statuses: client invited -> joined | cancelled; property / project new ->
+    contacted -> listed | declined, or withdrawn by the broker while new."""
+
+    __tablename__ = "broker_leads"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    broker_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    email: Mapped[str | None] = mapped_column(Text)
+    phone: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    documents: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    client_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    property_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("properties.id", ondelete="SET NULL")
+    )
+    admin_note: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    decided_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=_NOW
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=_NOW
+    )
+    broker = relationship(
+        "User",
+        primaryjoin="foreign(BrokerLead.broker_id) == User.id",
         viewonly=True,
         lazy="selectin",
     )

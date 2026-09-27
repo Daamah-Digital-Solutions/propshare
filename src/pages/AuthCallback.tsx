@@ -3,6 +3,8 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { authApi, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { MfaChallenge } from "@/components/auth/MfaChallenge";
+import { roleHome } from "@/lib/roles";
+import { OAUTH_REF_KEY } from "@/lib/referral";
 
 /** OAuth redirect target: providers send the user back here with ?code=...
  *  We exchange the code with the backend, which verifies it with the provider.
@@ -31,15 +33,23 @@ export default function AuthCallback() {
       return;
     }
     const redirectUri = `${window.location.origin}/auth/callback/${provider}`;
+    let referralCode: string | null = null;
+    try {
+      referralCode = sessionStorage.getItem(OAUTH_REF_KEY);
+      sessionStorage.removeItem(OAUTH_REF_KEY);
+    } catch {
+      referralCode = null;
+    }
     authApi
-      .oauthLogin(provider, code, redirectUri)
+      .oauthLogin(provider, code, redirectUri, referralCode)
       .then(async (result) => {
         if (result.status === "mfa_required") {
           setMfaToken(result.mfaToken);
           return;
         }
-        await refresh();
-        navigate("/dashboard", { replace: true });
+        const me = await refresh();
+        // the dashboard of the role they use (an LP / broker / owner cannot open /dashboard)
+        navigate(roleHome(me?.active_role), { replace: true });
       })
       .catch((e: unknown) => {
         if (e instanceof ApiError && e.code === "OAUTH_NOT_CONFIGURED") {
@@ -56,7 +66,9 @@ export default function AuthCallback() {
         <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6">
           <MfaChallenge
             mfaToken={mfaToken}
-            onDone={() => navigate("/dashboard", { replace: true })}
+            onDone={() =>
+              void refresh().then((me) => navigate(roleHome(me?.active_role), { replace: true }))
+            }
             onRestart={() => navigate("/auth", { replace: true })}
           />
         </div>

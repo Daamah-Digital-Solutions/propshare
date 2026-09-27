@@ -16,6 +16,11 @@ const TYPE_LABEL: Record<string, string> = {
   family: "Family",
   broker: "Broker",
   info: "Notice",
+  wallet: "Wallet",
+  property: "Listing",
+  listing_review: "Listing review",
+  account: "Account",
+  ops_case: "Operations",
 };
 
 const Notifications = () => {

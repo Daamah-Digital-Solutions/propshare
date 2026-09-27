@@ -65,6 +65,11 @@ class OwnedProperty(ToolOutput):
     expected_completion: str | None
     construction_progress_pct: int | None
     created_at: str | None
+    # our review of an owner submission: when it was sent, the last decision
+    # (approved | changes_requested | declined | closed) and the team's message to the owner
+    submitted_at: str | None
+    review_outcome: str | None
+    review_note: str | None
 
 
 class MyPropertiesOut(ToolOutput):
@@ -91,6 +96,9 @@ async def _list_my_properties(session: AsyncSession, ctx: AgentContext, args) ->
                 "expected_completion": _iso(p.expected_completion),
                 "construction_progress_pct": progress.get(p.id),
                 "created_at": _iso(p.created_at),
+                "submitted_at": _iso(p.submitted_at),
+                "review_outcome": p.review_outcome,
+                "review_note": p.review_note,
             }
             for p in props
         ],
@@ -103,7 +111,9 @@ register(
         "list_my_properties",
         "The signed-in owner's or developer's own listings with status (draft, pending "
         "review, active, funded, closed), units sold, funding progress and construction "
-        "progress. Owners and developers only.",
+        "progress, plus our review: when it was submitted, the last decision "
+        "(changes_requested = edit and resubmit from the dashboard; declined = not approved) "
+        "and the team's message to the owner. Owners and developers only.",
         NoArgs,
         MyPropertiesOut,
         "read_own",

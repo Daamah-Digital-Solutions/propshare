@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
 
 class ReferralCodeOut(BaseModel):
@@ -39,4 +39,34 @@ class CommissionItemOut(BaseModel):
 
 class CommissionListOut(BaseModel):
     items: list[CommissionItemOut]
+    total: int
+
+
+# --- Listings & Referrals: the broker's leads (client feedback #2) ---------------------- #
+class ClientInviteIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
+    phone: str | None = Field(default=None, max_length=40)
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class BrokerLeadOut(BaseModel):
+    id: str
+    kind: str  # client | property | project
+    status: (
+        str  # client: invited|joined|cancelled; listing: new|contacted|listed|declined|withdrawn
+    )
+    name: str
+    email: str | None
+    phone: str | None
+    details: dict
+    documents: list[str]
+    admin_note: str | None
+    property_id: str | None
+    created_at: str | None
+    updated_at: str | None
+
+
+class BrokerLeadListOut(BaseModel):
+    items: list[BrokerLeadOut]
     total: int

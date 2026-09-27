@@ -20,7 +20,7 @@ import uuid
 
 from jinja2 import Environment
 from sqladmin import BaseView, expose
-from sqlalchemy import select
+from sqlalchemy import func, select
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
@@ -28,6 +28,7 @@ from app.core.config import get_settings
 from app.core.db import session_scope
 from app.core.errors import AppError
 from app.models import Document, Property
+from app.models.base import PropertyStatus
 from app.services import (
     document_service,
     listing_media_service,
@@ -512,8 +513,9 @@ _INDEX_PAGE = _env.from_string(
     + _STYLE
     + """</style></head><body><div class="wrap">
 <div class="top"><div><div class="muted">{% if full_admin %}<a href="/admin/">&larr; Admin home</a>{% endif %}</div><h1>Listings</h1>
-<p class="lead">Every property on the platform. Open one to edit photos, documents, facts, milestones — or create a new draft.</p></div>
-<div class="actions"><a class="btn primary" href="/admin/listing/new">+ New listing</a></div></div>
+<p class="lead">Every property the platform lists. Open one to edit photos, documents, facts, milestones — or create a new draft.</p></div>
+<div class="actions">{% if full_admin %}<a class="btn" href="/admin/owner-submissions">Owner submissions{% if owner_waiting %} ({{ owner_waiting }} waiting){% endif %}</a>{% endif %}<a class="btn primary" href="/admin/listing/new">+ New listing</a></div></div>
+{% if full_admin and owner_waiting %}<div class="warn">{{ owner_waiting }} propert{{ 'y' if owner_waiting == 1 else 'ies' }} submitted by owners {{ 'is' if owner_waiting == 1 else 'are' }} waiting for review in <a href="/admin/owner-submissions">Owner Submissions</a>. They join this list once approved.</div>{% endif %}
 <div class="card">
 {% if rows %}<table><tr><th>Title</th><th>Model</th><th>Status</th><th>Location</th><th>Updated</th><th></th></tr>
 {% for p in rows %}<tr>
@@ -545,6 +547,26 @@ _GENERIC_ERROR = (
 def _actor(request: Request) -> uuid.UUID | None:
     actor = request.session.get("admin_id")
     return uuid.UUID(actor) if actor else None
+
+
+async def _mark_lead_listed(lead_id: str, prop_id: uuid.UUID, actor: uuid.UUID | None) -> None:
+    """The listing was created from a broker's lead: link them and tell the broker. Its own
+    transaction, so a lead already closed never undoes the listing that was just created."""
+    from app.services import broker_lead_service
+
+    try:
+        lid = uuid.UUID(lead_id)
+        async with session_scope() as session:
+            await broker_lead_service.admin_decide(
+                session,
+                lead_id=lid,
+                decision="listed",
+                note=None,
+                actor_id=actor,
+                property_id=prop_id,
+            )
+    except (ValueError, AppError) as exc:
+        log.info("listing %s created from lead %s without linking it: %s", prop_id, lead_id, exc)
 
 
 LISTING_ROLES = frozenset({"admin", "content_editor"})
@@ -669,16 +691,33 @@ class ListingEditorView(BaseView):
         if (resp := self._gate(request)) is not None:
             return resp
         async with session_scope() as session:
+            from app.admin_owner import platform_listing_filter
+
+            # What the platform lists. Owner submissions waiting for a decision live in
+            # Owner Submissions and join this list once approved.
             rows = (
-                (await session.execute(select(Property).order_by(Property.updated_at.desc())))
+                (
+                    await session.execute(
+                        select(Property)
+                        .where(platform_listing_filter())
+                        .order_by(Property.updated_at.desc())
+                    )
+                )
                 .scalars()
                 .all()
+            )
+            waiting = await session.scalar(
+                select(func.count(Property.id)).where(
+                    Property.owner_id.is_not(None),
+                    Property.status == PropertyStatus.under_review,
+                )
             )
             html = _INDEX_PAGE.render(
                 rows=rows,
                 status_labels=_STATUS_LABELS,
                 model_labels=listing_service.MODEL_LABELS,
                 full_admin=is_full_admin(request),
+                owner_waiting=waiting or 0,
             )
         return HTMLResponse(html)
 
@@ -693,6 +732,18 @@ class ListingEditorView(BaseView):
             start_model = "ready-income"
         values: dict = {"model": start_model, "property_type": "apartment"}
         message, error = "", False
+        # Started from a broker's property / project introduction (Broker Leads page)
+        lead_id = request.query_params.get("lead")
+        if lead_id and request.method == "GET":
+            from app.admin_leads import lead_prefill
+
+            prefill = await lead_prefill(lead_id)
+            if prefill:
+                values.update(prefill)
+                message = (
+                    "Filled in from the broker's introduction. Check every field and complete "
+                    "the offering before creating the draft."
+                )
         if request.method == "POST":
             form = await request.form()
             values = {n: form.get(n) for n in names}
@@ -706,6 +757,8 @@ class ListingEditorView(BaseView):
                         session, data=data, actor_id=_actor(request)
                     )
                     new_id = prop.id
+                if lead_id:
+                    await _mark_lead_listed(lead_id, new_id, _actor(request))
                 return RedirectResponse(f"/admin/listing/{new_id}?created=1", status_code=303)
             except Exception as exc:  # noqa: BLE001 — every error becomes a sentence
                 message, error = _friendly(exc), True

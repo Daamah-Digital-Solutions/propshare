@@ -2,18 +2,25 @@ import { Link, useLocation } from "react-router-dom";
 import { Home, Store, PieChart, UserCircle, LogOut, Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "@/components/ui/sidebar";
-
-const navItems = [
-  { label: "Home", href: "/", icon: Home },
-  { label: "Marketplace", href: "/marketplace", icon: Store },
-  { label: "Portfolio", href: "/dashboard", icon: PieChart },
-  { label: "Account", href: "/settings", icon: UserCircle },
-  { label: "Exit", href: "/secondary-market", icon: LogOut },
-];
+import { useAuth } from "@/contexts/AuthContext";
+import { roleHome } from "@/lib/roles";
 
 const MobileBottomNav = () => {
   const location = useLocation();
   const { toggleSidebar } = useSidebar();
+  const { userRole } = useAuth();
+  // the dashboard of the role in use (an LP / broker / owner cannot open /dashboard)
+  const navItems = [
+    { label: "Home", href: "/", icon: Home },
+    { label: "Marketplace", href: "/marketplace", icon: Store },
+    {
+      label: userRole === "investor" || userRole === "guest" ? "Portfolio" : "Dashboard",
+      href: roleHome(userRole),
+      icon: PieChart,
+    },
+    { label: "Account", href: "/settings", icon: UserCircle },
+    { label: "Exit", href: "/secondary-market", icon: LogOut },
+  ];
 
   const isActive = (href: string) => {
     if (href === "/") return location.pathname === "/";

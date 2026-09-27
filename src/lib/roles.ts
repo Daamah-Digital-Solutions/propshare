@@ -153,3 +153,17 @@ export const ROLE_APPLICATIONS: Record<string, RoleApplicationSpec> = {
 };
 
 export const applicationRoles = () => Object.keys(ROLE_APPLICATIONS);
+
+// The dashboard each active role lands on. The wallet is shared across roles, but each role
+// has its own dashboard and the investor one (/dashboard) is closed to another active role —
+// sending an LP / broker / owner there bounces them.
+const ROLE_HOME: Record<string, string> = {
+  investor: "/dashboard",
+  owner: "/owner-dashboard",
+  broker: "/broker-dashboard",
+  liquidity_provider: "/liquidity-dashboard",
+};
+
+export function roleHome(role: string | null | undefined): string {
+  return ROLE_HOME[role ?? ""] ?? "/dashboard";
+}

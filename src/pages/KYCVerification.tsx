@@ -7,6 +7,7 @@ import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { roleHome } from "@/lib/roles";
 import { kycApi, KycStatusResponse, ApiError } from "@/lib/api";
 import {
   Shield,
@@ -296,7 +297,7 @@ const KYCVerification = () => {
             <Separator className="my-6" />
             <div className="flex gap-4">
               <Button onClick={() => navigate("/marketplace")}>Browse Properties</Button>
-              <Button variant="outline" onClick={() => navigate("/dashboard")}>
+              <Button variant="outline" onClick={() => navigate(roleHome(user?.active_role))}>
                 Go to Dashboard
               </Button>
             </div>

@@ -44,7 +44,7 @@ const secondaryFlow = [
 
 const lpFlow = [
   { step: "Request", text: "Investor submits an instant exit request for full or partial ownership." },
-  { step: "Match", text: "System auto-matches the request with available liquidity providers." },
+  { step: "Match", text: "Liquidity providers see the request on the Liquidity Market and one funds it." },
   { step: "Acquire", text: "Liquidity provider acquires the ownership at a transparent quoted price." },
   { step: "Pay", text: "Investor receives funds in real time — settlement is immediate." },
 ];

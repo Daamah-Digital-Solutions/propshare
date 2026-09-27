@@ -1,8 +1,10 @@
 """Admin property moderation (Phase 3).
 
-Promotes an owner's submitted draft to ``active`` (go-live), rejects it back to
-``draft`` with a reason, or closes a property. Every action is gated by the
-action-time DB admin re-check (AdminDep) and written to the audit log.
+Promotes an owner's submitted draft to ``active`` (go-live), sends it back to ``draft``
+with a message (``request-changes``; legacy ``reject``), declines it for good (``decline``,
+closed and never public) or closes a property. The owner is told each outcome with the
+message. Every action is gated by the action-time DB admin re-check (AdminDep) and written
+to the audit log.
 """
 
 from __future__ import annotations
@@ -47,6 +49,34 @@ async def reject(
 ):
     prop = await property_service.admin_moderate(
         session, actor_id=admin.user_id, prop_id=prop_id, action="reject", reason=body.reason
+    )
+    owner_names = await property_service._owner_names(session, [prop])
+    return OwnerPropertyOut(**property_service.serialize_detail(prop, owner_names))
+
+
+@router.post("/{prop_id}/request-changes", response_model=OwnerPropertyOut)
+async def request_changes(
+    prop_id: uuid.UUID, body: PropertyModerateIn, session: SessionDep, admin: AdminDep
+):
+    """Back to the owner as a draft; ``reason`` (required) is the message they see."""
+    prop = await property_service.admin_moderate(
+        session,
+        actor_id=admin.user_id,
+        prop_id=prop_id,
+        action="request_changes",
+        reason=body.reason,
+    )
+    owner_names = await property_service._owner_names(session, [prop])
+    return OwnerPropertyOut(**property_service.serialize_detail(prop, owner_names))
+
+
+@router.post("/{prop_id}/decline", response_model=OwnerPropertyOut)
+async def decline(
+    prop_id: uuid.UUID, body: PropertyModerateIn, session: SessionDep, admin: AdminDep
+):
+    """A final no: closed, never public; ``reason`` (required) is the message the owner sees."""
+    prop = await property_service.admin_moderate(
+        session, actor_id=admin.user_id, prop_id=prop_id, action="decline", reason=body.reason
     )
     owner_names = await property_service._owner_names(session, [prop])
     return OwnerPropertyOut(**property_service.serialize_detail(prop, owner_names))

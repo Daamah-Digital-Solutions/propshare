@@ -44,6 +44,8 @@ import { MilestonesManager } from "@/components/developer/MilestonesManager";
 import { InvestorCommunications } from "@/components/developer/InvestorCommunications";
 import { useQuery } from "@tanstack/react-query";
 import { ownerStatsApi, propertyApi, type PropertyDetail } from "@/lib/api";
+import { ownerListingStatus } from "@/lib/propertyStatus";
+import { ListingReviewPanel } from "@/components/dashboard/ListingReviewPanel";
 import { Loader2 } from "lucide-react";
 import {
   BarChart,
@@ -75,6 +77,9 @@ type ProjectCard = {
   targetAmount: number;
   expectedCompletion: string;
   phase: string;
+  /** where a project that is not on the market stands in our review (never "Funding") */
+  reviewLabel: string;
+  detail: PropertyDetail;
 };
 
 const PHASE_LABEL: Record<ProjectCard["status"], string> = {
@@ -105,6 +110,8 @@ const toProjectCard = (p: PropertyDetail): ProjectCard => {
     targetAmount: p.total_value,
     expectedCompletion: p.expected_completion ?? "TBD",
     phase: PHASE_LABEL[status],
+    reviewLabel: ownerListingStatus(p).label,
+    detail: p,
   };
 };
 
@@ -391,10 +398,12 @@ const DeveloperDashboard = () => {
                             ) : project.status === "funding" ? (
                               <><DollarSign className="h-3 w-3 mr-1" />Funding</>
                             ) : (
-                              <><Clock className="h-3 w-3 mr-1" />Planning</>
+                              <><Clock className="h-3 w-3 mr-1" />{project.reviewLabel}</>
                             )}
                           </Badge>
                         </div>
+
+                        <ListingReviewPanel property={project.detail} />
 
                         <div className="space-y-3 mb-4">
                           {project.status !== "planning" && (

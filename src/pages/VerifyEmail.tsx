@@ -4,6 +4,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { authApi, ApiError } from "@/lib/api";
 import { CheckCircle2, XCircle } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { roleHome } from "@/lib/roles";
 
 /** Target of the email-verification link: /verify-email?token=…
  *  Consumes the token via /api/v1/auth/verify-email on mount. */
@@ -11,6 +13,7 @@ export default function VerifyEmail() {
   const [params] = useSearchParams();
   const token = params.get("token") ?? "";
   const navigate = useNavigate();
+  const { userRole } = useAuth();
   const ran = useRef(false);
   const [state, setState] = useState<"loading" | "ok" | "error">("loading");
   const [message, setMessage] = useState("");
@@ -60,7 +63,7 @@ export default function VerifyEmail() {
               <>
                 <CheckCircle2 className="h-12 w-12 text-primary mx-auto" />
                 <p className="text-foreground font-medium">Your email is verified.</p>
-                <Button className="w-full" onClick={() => navigate("/dashboard")}>Go to dashboard</Button>
+                <Button className="w-full" onClick={() => navigate(roleHome(userRole))}>Go to dashboard</Button>
                 <Link to="/auth" className="text-sm text-primary underline block">Back to sign in</Link>
               </>
             )}

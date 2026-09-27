@@ -1,8 +1,9 @@
 // Exit / secondary-market data (Phase 8) — DB-backed (no more localStorage mock).
 //
-// Holdings come from the ownership ledger (holdingsApi); "exit requests" are the
-// caller's real secondary-market listings (secondaryApi). The old localStorage seed
-// + mock ownedPositions are retired.
+// Holdings come from the ownership ledger (holdingsApi); "exit requests" are the caller's
+// real secondary-market listings (secondaryApi) AND their instant-exit requests to the
+// liquidity providers (liquidityApi.myRequests), so an investor sees — and can cancel — a
+// request that waits for a liquidity provider, and sees it paid once one funds it.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -10,6 +11,7 @@ import {
   liquidityApi,
   secondaryApi,
   type Holding,
+  type LpExitRequest,
   type SecondaryListing,
 } from "@/lib/api";
 
@@ -72,6 +74,41 @@ function toExitRequest(l: SecondaryListing): ExitRequest {
   };
 }
 
+const LP_STATUS: Record<string, ExitStatus> = {
+  open: "matching",
+  filled: "completed",
+  cancelled: "cancelled",
+  expired: "cancelled",
+};
+
+function toLpExitRequest(r: LpExitRequest): ExitRequest {
+  const net = Number(r.seller_net);
+  const expires = r.expires_at ? new Date(r.expires_at).toLocaleDateString() : "";
+  const eta =
+    r.status === "filled"
+      ? "Paid to your wallet"
+      : r.status === "open"
+        ? `Waiting for a liquidity provider${expires ? ` (until ${expires})` : ""}`
+        : r.status === "expired"
+          ? "Expired — no provider funded it"
+          : "Cancelled";
+  return {
+    id: r.request_id,
+    propertyId: r.property_id,
+    propertyName: r.property_title ?? "Property",
+    method: "liquidity",
+    units: r.units,
+    pricePerUnit: r.units ? net / r.units : 0,
+    estimatedProceeds: Number(r.gross),
+    fee: Number(r.liquidity_fee),
+    netProceeds: net,
+    remainingUnits: r.units_remaining,
+    settlementEta: eta,
+    createdAt: r.created_at ?? new Date(0).toISOString(),
+    status: LP_STATUS[r.status] ?? "matching",
+  };
+}
+
 function toOwnedPosition(h: Holding): OwnedPosition {
   const price = Number(h.unit_price);
   return {
@@ -87,13 +124,19 @@ function toOwnedPosition(h: Holding): OwnedPosition {
   };
 }
 
-/** The caller's real secondary-market listings, shaped as exit requests. */
+/** The caller's real exit requests: secondary-market listings + instant exits to the LPs. */
 export function useExitRequests(): ExitRequest[] {
   const { data } = useQuery({
     queryKey: ["secondary", "mine"],
     queryFn: () => secondaryApi.mine(),
   });
-  return (data?.items ?? []).map(toExitRequest);
+  const { data: lp } = useQuery({
+    queryKey: ["liquidity", "mine"],
+    queryFn: () => liquidityApi.myRequests(),
+  });
+  return [...(data?.items ?? []).map(toExitRequest), ...(lp?.items ?? []).map(toLpExitRequest)].sort(
+    (a, b) => b.createdAt.localeCompare(a.createdAt),
+  );
 }
 
 /** The caller's net holdings (sellable units), shaped as positions for the exit flow. */
@@ -105,14 +148,18 @@ export function useOwnedPositions(): OwnedPosition[] {
   return (data?.items ?? []).filter((h) => h.sellable_units > 0).map(toOwnedPosition);
 }
 
-/** Cancel one of the caller's active listings. */
+/** Cancel one of the caller's open exit requests (a listing, or an instant exit to the LPs). */
 export function useCancelExitRequest() {
   const qc = useQueryClient();
   const m = useMutation({
-    mutationFn: (id: string) => secondaryApi.cancel(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["secondary"] }),
+    mutationFn: async (r: Pick<ExitRequest, "id" | "method">): Promise<{ status: string }> =>
+      r.method === "liquidity" ? liquidityApi.cancelRequest(r.id) : secondaryApi.cancel(r.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["secondary"] });
+      qc.invalidateQueries({ queryKey: ["liquidity"] });
+    },
   });
-  return (id: string) => m.mutate(id);
+  return (r: Pick<ExitRequest, "id" | "method">) => m.mutate(r);
 }
 
 /** Create a real secondary-market listing (the secondary-exit path). */

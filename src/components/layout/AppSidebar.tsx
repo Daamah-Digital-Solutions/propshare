@@ -198,7 +198,7 @@ const ownerNavigation: NavSection[] = [
       { title: "Performance Reports", url: "/owner-dashboard?tab=overview", icon: BarChart3 },
       { title: "Financial Analytics", url: "/owner-dashboard?tab=financials", icon: TrendingUp },
       { title: "Documents", url: "/owner-dashboard?tab=documents", icon: FolderOpen },
-      { title: "Wallet", url: "/owner-wallet", icon: Wallet },
+      { title: "Wallet", url: "/owner-dashboard?tab=wallet", icon: Wallet },
       { title: "Property Types", url: "/property-types", icon: Layers },
       { title: "Secondary Market", url: "/secondary-market", icon: ArrowLeftRight },
       { title: "Liquidity Provider Market", url: "/liquidity-market", icon: Droplets },
@@ -220,24 +220,17 @@ const liquidityProviderNavigation: NavSection[] = [
     label: "Liquidity Provider",
     defaultOpen: true,
     items: [
+      // the LP cycle in order: fund the wallet, buy on the LP market, hold, sell on the
+      // secondary market (every link opens a real page or dashboard tab)
       { title: "LP Dashboard", url: "/liquidity-dashboard", icon: LayoutDashboard },
+      { title: "Wallet", url: "/liquidity-dashboard?tab=wallet", icon: Wallet },
       { title: "Liquidity Provider Market", url: "/liquidity-market", icon: Droplets },
+      { title: "Backed Assets", url: "/liquidity-dashboard?tab=assets", icon: Building2 },
+      { title: "Realized Cash Flows", url: "/liquidity-dashboard?tab=returns", icon: TrendingUp },
+      { title: "Sell on Secondary Market", url: "/secondary-market?tab=sell", icon: ArrowLeftRight },
+      { title: "Reports", url: "/lp-reports", icon: BarChart3 },
       { title: "Property Types", url: "/property-types", icon: Layers },
       { title: "Exit Mechanisms", url: "/exit-mechanisms", icon: LogOut },
-      { title: "Provide Liquidity", url: "/provide-liquidity", icon: PiggyBank },
-      { title: "Backed Assets", url: "/backed-assets", icon: Building2 },
-      { title: "Returns & Analytics", url: "/lp-analytics", icon: TrendingUp },
-      { title: "Reports", url: "/lp-reports", icon: BarChart3 },
-      { title: "Documents", url: "/lp-documents", icon: FolderOpen },
-      { 
-        title: "Wallet", 
-        url: "/lp-wallet", 
-        icon: Wallet,
-        children: [
-          { title: "Bank Withdrawals", url: "/lp-wallet?method=bank", icon: Landmark },
-          { title: "Crypto Withdrawals", url: "/lp-wallet?method=crypto", icon: Bitcoin },
-        ]
-      },
     ],
   },
   {
@@ -256,7 +249,7 @@ const brokerNavigation: NavSection[] = [
     defaultOpen: true,
     items: [
       { title: "Broker Dashboard", url: "/broker-dashboard", icon: LayoutDashboard },
-      { title: "Referrals", url: "/broker-dashboard?tab=referrals", icon: Handshake },
+      { title: "Listings & Referrals", url: "/broker-dashboard?tab=referrals", icon: Handshake },
       { title: "Commissions", url: "/broker-dashboard?tab=commissions", icon: PiggyBank },
       { title: "Wallet", url: "/broker-dashboard?tab=wallet", icon: Wallet },
       { title: "Property Types", url: "/property-types", icon: Layers },

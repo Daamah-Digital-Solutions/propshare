@@ -15,10 +15,10 @@ import {
   Percent,
   Copy,
   CreditCard,
-  CheckCircle2,
 } from "lucide-react";
 import { VirtualCardRequest } from "@/components/dashboard/VirtualCardRequest";
 import { InvestorWallet } from "@/components/dashboard/InvestorWallet";
+import { ListingsReferrals } from "@/components/broker/ListingsReferrals";
 import { brokerApi } from "@/lib/api";
 import {
   BarChart,
@@ -42,7 +42,6 @@ const BrokerDashboard = () => {
 
   const { data: dashboard } = useQuery({ queryKey: ["broker", "dashboard"], queryFn: brokerApi.dashboard });
   const { data: code } = useQuery({ queryKey: ["broker", "code"], queryFn: brokerApi.referralCode });
-  const { data: referrals } = useQuery({ queryKey: ["broker", "referrals"], queryFn: brokerApi.referrals });
   const { data: commissions } = useQuery({
     queryKey: ["broker", "commissions"],
     queryFn: brokerApi.commissions,
@@ -89,7 +88,9 @@ const BrokerDashboard = () => {
             <div>
               <Badge className="bg-accent text-accent-foreground mb-2">Broker</Badge>
               <h1 className="text-3xl font-bold text-foreground">Broker Dashboard</h1>
-              <p className="text-muted-foreground mt-1">Track your referrals and commissions</p>
+              <p className="text-muted-foreground mt-1">
+                Your clients, the properties and projects you bring, and your commissions
+              </p>
             </div>
           </div>
         </div>
@@ -106,7 +107,7 @@ const BrokerDashboard = () => {
               </TabsTrigger>
               <TabsTrigger value="referrals" className="flex items-center gap-2 data-[state=active]:bg-accent data-[state=active]:text-accent-foreground">
                 <Handshake className="h-4 w-4" />
-                Referrals
+                Listings &amp; Referrals
               </TabsTrigger>
               <TabsTrigger value="commissions" className="flex items-center gap-2 data-[state=active]:bg-accent data-[state=active]:text-accent-foreground">
                 <DollarSign className="h-4 w-4" />
@@ -207,45 +208,8 @@ const BrokerDashboard = () => {
             </TabsContent>
 
             <TabsContent value="referrals" className="space-y-6">
-              <Card className="bg-card border-border">
-                <CardHeader>
-                  <CardTitle>Referred Clients</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {(referrals?.items.length ?? 0) === 0 ? (
-                    <p className="text-sm text-muted-foreground py-8 text-center">
-                      No referrals yet. Share your link to start earning commissions.
-                    </p>
-                  ) : (
-                    <div className="space-y-4">
-                      {referrals?.items.map((ref) => (
-                        <div
-                          key={ref.referral_id}
-                          className="flex items-center justify-between p-4 rounded-lg bg-muted/30"
-                        >
-                          <div className="flex items-center gap-4">
-                            <div className="h-10 w-10 rounded-full bg-accent/10 flex items-center justify-center">
-                              <CheckCircle2 className="h-5 w-5 text-accent" />
-                            </div>
-                            <div>
-                              <p className="font-medium">{ref.client_masked}</p>
-                              <p className="text-sm text-muted-foreground">
-                                Joined {new Date(ref.created_at).toLocaleDateString()}
-                              </p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-semibold text-accent">
-                              +${Number(ref.commission_to_date).toLocaleString()}
-                            </p>
-                            <p className="text-sm text-muted-foreground">commission to date</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+              {/* clients linked to you, clients you invited, properties / projects you brought */}
+              <ListingsReferrals shareLink={code?.share_link} />
             </TabsContent>
 
             <TabsContent value="commissions" className="space-y-6">
