@@ -293,11 +293,12 @@ def _psql(dotenv: dict[str, str | None], sql: str) -> str | None:
     return out.strip() if out is not None else None
 
 
-def write_env(text: str) -> Path:
-    """Replace .env atomically with the same owner and mode; the previous one stays beside it."""
+def write_env(text: str, tag: str = "stripe") -> Path:
+    """Replace .env atomically with the same owner and mode; the previous one stays beside it
+    (``.env.bak-<tag>-<time>``)."""
     st = ENV_FILE.stat()
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%d-%H%M%S")
-    backup = ENV_FILE.with_name(f"{ENV_FILE.name}.bak-stripe-{stamp}")
+    backup = ENV_FILE.with_name(f"{ENV_FILE.name}.bak-{tag}-{stamp}")
     shutil.copy2(ENV_FILE, backup)
     os.chmod(backup, 0o600)
     fd, tmp = tempfile.mkstemp(prefix=f"{ENV_FILE.name}.", dir=ENV_FILE.parent)

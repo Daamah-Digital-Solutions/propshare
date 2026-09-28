@@ -74,6 +74,12 @@ what is paid now, settled on Stripe) and Nova Sukuk. A rail whose keys are missi
    - `NOWPAYMENTS_API_KEY=...`
    - `NOWPAYMENTS_IPN_SECRET=...`
    - `NOWPAYMENTS_SANDBOX=false`  (true while testing on the sandbox)
+4. The account needs a **payout wallet** (where the paid crypto goes). The IPN callback URL is
+   also sent with every invoice, so step 2 is a fallback.
+5. To set or replace the keys on the VPS as root:
+   `/opt/capimax/venv/bin/python /opt/capimax/app/backend/scripts/set_nowpayments_keys.py`
+   (asks for them without showing them, checks the API key with NOWPayments — production or
+   sandbox — writes one line each, restarts the API and checks crypto is live on the pages).
 
 ### 1.4 NOWPayments — crypto withdrawals (payouts)
 1. Enable the **Payouts/Mass-payout** API (requires account **email + password** for the JWT, **2FA**, and **IP-whitelisting** your VPS IP, plus a **funded payout balance**).
