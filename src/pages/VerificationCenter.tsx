@@ -5,14 +5,15 @@ import {
   TrustGatewayCard,
   TrustScopeNote,
 } from "@/components/verification/CapimaxTrustGateway";
+import { VerificationPartners } from "@/components/verification/VerificationPartners";
 
 /**
- * Verification Center — a GATEWAY page (no verification logic lives here). Every document,
- * certificate and record issued by this platform (or by external parties: valuers, insurers,
- * legal advisors, auditors, financial institutions, government authorities) is verified,
- * status-checked and downloaded through the CENTRAL Capimax Trust platform. This page simply
- * explains that and hands the user off to Capimax Trust. (Group-wide requirement — the same
- * page exists on every Capimax platform; each one links to the single Capimax Trust source.)
+ * Verification Center — a GATEWAY page (no verification logic lives here). It lists the
+ * designated partner that verifies each kind of record (Capimax documents and certificates,
+ * valuations and financial reports, insurance, legal documents, digital-asset records of the
+ * ecosystem's other platforms; see VerificationPartners) and hands off to the central Capimax
+ * Trust platform. (Group-wide requirement — the same page exists on every Capimax platform;
+ * each one links to the single Capimax Trust source.)
  */
 
 export default function VerificationCenter() {
@@ -50,6 +51,9 @@ export default function VerificationCenter() {
       </section>
 
       <div className="container mx-auto px-4 py-14 max-w-4xl space-y-12">
+        {/* The designated partner for each kind of record (shared with the dashboard tab) */}
+        <VerificationPartners />
+
         {/* Capimax Trust gateway card + primary CTA (shared with the dashboard tab) */}
         <TrustGatewayCard />
 

@@ -11,6 +11,7 @@ from app.services.assistant.tools import (  # noqa: F401
     portfolio,
     roles,
     staff,
+    verification,
     wallet,
 )
 from app.services.assistant.tools.base import REGISTRY, ToolSpec, get_spec, llm_tools

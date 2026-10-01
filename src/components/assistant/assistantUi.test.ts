@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Building2, LogIn, UserPlus, Wallet } from "lucide-react";
+import { BadgeCheck, Building2, LogIn, UserPlus, Wallet } from "lucide-react";
 import { coveredPaths, greeting, linkIcon, pageStarters, toolLabel } from "./assistantUi";
 
 describe("assistant UI helpers", () => {
@@ -76,6 +76,19 @@ describe("assistant UI helpers", () => {
     }
     expect(toolLabel("compare_properties", "running")).toBe("Comparing properties…");
     expect(toolLabel("prepare_sale", "ok")).toBe("Prepared your listing");
+  });
+
+  it("helps verify a document on the verification pages, a partner's site gets a badge", () => {
+    expect(linkIcon("https://www.proofanchor.io/verify")).toBe(BadgeCheck);
+    expect(linkIcon("/verification-center")).toBe(BadgeCheck);
+    expect(toolLabel("get_verification_services", "running")).toBe("Finding where to verify it…");
+    const visitor = pageStarters("/verification-center", "", false);
+    expect(visitor?.en[0]).toBe("How do I verify an investment certificate?");
+    const member = pageStarters("/dashboard", "?tab=verification", true);
+    expect(member?.en[0]).toBe("How do I verify my investment certificate?");
+    expect(member?.en).toContain("Where do I verify a valuation report?");
+    for (const s of [visitor, member]) expect(s?.ar).toHaveLength(s?.en.length ?? -1);
+    expect(pageStarters("/dashboard", "?tab=verification", false)).toBeNull();
   });
 
   it("greets by time of day and name", () => {

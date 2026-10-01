@@ -275,15 +275,35 @@ never turns it on or off and never asks you for a code or password.""",
     ),
     (
         "developers-and-verification-center",
-        "Developer profiles and the Verification Center",
+        "Developer profiles and verifying documents",
         "basics",
         160,
         """Each property page names its developer; View Profile opens the developer's public page
 with what the platform has recorded about them (about, website, track record, verifications)
-and their listings that are open on the platform. The Verification Center tab in your investor
-dashboard lists the reference number of each of your investment certificates and links to
-Capimax Trust, where a certificate, a property record or a developer can be checked
-independently. Certificates themselves are downloaded from the Certificates tab.""",
+and their listings that are open on the platform. Investment certificates are downloaded from
+the Certificates tab; each one carries a reference, and the Verification tab of the investor
+dashboard lists the reference of every certificate you hold.
+
+PropShare verifies nothing itself: the Verification Center page links to the ecosystem's
+designated verification partners, each for one kind of record.
+- Capimax documents and investment certificates: CIM Global Financial's Capimax Verify
+  (https://www.cimglobalfinancial.com/capimax-verify). Enter the verification, record or
+  certificate number (for a PropShare certificate, the reference printed on it), or scan the
+  QR code, to confirm authenticity and the current status.
+- Valuation and financial documents (valuation reports, investment studies, financial
+  analyses, accounting and financial reports, due diligence reports): CIM Global Financial,
+  same link. Enter the document number or verification ID.
+- Insurance certificates: CoverTech Insurance
+  (https://www.covertechinsurance.com/capimax-ecosystem), to confirm authenticity, coverage
+  and current status.
+- Legal documents and agreements: the LexCrest Global Document Center
+  (https://lexcrestlegal.xyz/document-center). Enter the unique document number shown on the
+  document; where permitted, public documents can be previewed or downloaded.
+- Blockchain records, smart contracts, tokenized assets and digital certificates of the
+  ecosystem's blockchain-enabled platforms (not PropShare): Proof Anchor
+  (https://www.proofanchor.io/verify). Search by certificate or verification number, contract
+  or token address, asset ID or project name.
+The Capimax Trust gateway is linked from the same page.""",
     ),
     (
         "capimax-ecosystem-and-partners",
@@ -527,14 +547,32 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
     ),
     (
         "developers-and-verification-center",
-        "صفحات المطوّرين ومركز التحقق",
+        "صفحات المطوّرين والتحقق من المستندات",
         "basics",
         160,
         """تذكر كل صفحة عقار اسم المطوّر؛ وزر "عرض الملف" يفتح صفحة المطوّر العامة بما سجّلته المنصة
-عنه (نبذة، الموقع الإلكتروني، سجل الأعمال، التحققات) وعقاراته المعروضة حاليًا على المنصة. تبويب
-"مركز التحقق" في لوحة المستثمر يعرض الرقم المرجعي لكل شهادة استثمار لديك ورابطًا إلى Capimax Trust
-حيث يمكن التحقق بشكل مستقل من الشهادة أو سجل العقار أو المطوّر. أما الشهادات نفسها فتُنزَّل من
-تبويب الشهادات.""",
+عنه (نبذة، الموقع الإلكتروني، سجل الأعمال، التحققات) وعقاراته المعروضة حاليًا على المنصة. تُنزَّل
+شهادات الاستثمار من تبويب الشهادات، ولكل شهادة رقم مرجعي، ويعرض تبويب "مركز التحقق" في لوحة
+المستثمر الرقم المرجعي لكل شهادة لديك.
+
+لا تتحقق بروبشير من أي مستند بنفسها: صفحة مركز التحقق تربطك بشركاء التحقق المعتمدين في المنظومة،
+ولكل نوع من السجلات جهة:
+- مستندات Capimax وشهادات الاستثمار: Capimax Verify من CIM Global Financial
+  (https://www.cimglobalfinancial.com/capimax-verify). أدخل رقم التحقق أو رقم السجل أو رقم
+  الشهادة (لشهادة بروبشير: الرقم المرجعي المطبوع عليها)، أو امسح رمز QR، لتأكيد صحتها وحالتها
+  الحالية.
+- مستندات التقييم والمستندات المالية (تقارير تقييم العقارات والوحدات، دراسات الاستثمار، التحليلات
+  المالية، السجلات المحاسبية والتقارير المالية، تقارير العناية الواجبة): CIM Global Financial على
+  الرابط نفسه. أدخل رقم المستند أو معرّف التحقق.
+- شهادات التأمين: CoverTech Insurance (https://www.covertechinsurance.com/capimax-ecosystem)
+  لتأكيد صحة الشهادة وبيانات التغطية وحالتها الحالية.
+- المستندات القانونية والاتفاقيات: مركز مستندات LexCrest Global
+  (https://lexcrestlegal.xyz/document-center). أدخل رقم المستند الفريد المكتوب عليه؛ وحيثما
+  يُسمح، يمكن معاينة المستندات العامة أو تنزيلها.
+- سجلات البلوك تشين والعقود الذكية والأصول المرمّزة والشهادات الرقمية لمنصات المنظومة القائمة على
+  البلوك تشين (وليس بروبشير): Proof Anchor (https://www.proofanchor.io/verify). ابحث برقم الشهادة
+  أو رقم التحقق أو عنوان العقد أو عنوان التوكن أو معرّف الأصل أو اسم المشروع.
+وبوابة Capimax Trust متاحة من الصفحة نفسها.""",
     ),
     (
         "capimax-ecosystem-and-partners",

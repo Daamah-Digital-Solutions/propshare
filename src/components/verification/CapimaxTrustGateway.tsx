@@ -5,7 +5,8 @@ import { Card, CardContent } from "@/components/ui/card";
 /**
  * The Capimax Trust hand-off, shared by the public Verification Center page and the
  * Verification tab of the investor dashboard so the two can never drift apart. No
- * verification logic lives here: every document is verified on Capimax Trust.
+ * verification logic lives here: documents are verified on Capimax Trust or by the
+ * designated partner for their kind (VerificationPartners).
  */
 
 // The central Capimax Trust verification gateway. Single source of truth for the destination.
@@ -94,9 +95,9 @@ export function TrustCapabilities() {
 export function TrustScopeNote() {
   return (
     <p className="text-center text-sm text-muted-foreground max-w-2xl mx-auto">
-      To keep verification consistent and trustworthy across the group, all document
-      verification for the Capimax ecosystem is handled exclusively by Capimax Trust. This page
-      is a secure gateway to that central service.
+      Capimax Trust is the central verification gateway of the Capimax ecosystem, and each
+      designated partner above verifies its own kind of record directly. Verification never
+      takes place on this platform itself: this page connects you to those services.
     </p>
   );
 }

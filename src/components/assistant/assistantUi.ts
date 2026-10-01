@@ -54,6 +54,7 @@ const TOOL_LABELS: Record<string, ToolLabel> = {
   search_kb: { running: "Looking it up", done: "Looked it up" },
   search_reference: { running: "Reading company documents", done: "Read company documents" },
   search_documents: { running: "Searching property documents", done: "Searched property documents" },
+  get_verification_services: { running: "Finding where to verify it", done: "Found where to verify it" },
   prepare_deposit: { running: "Preparing your deposit", done: "Prepared your deposit" },
   prepare_withdrawal: { running: "Preparing your withdrawal", done: "Prepared your withdrawal" },
   prepare_statement: { running: "Preparing your statement", done: "Prepared your statement" },
@@ -79,6 +80,8 @@ export function toolLabel(name: string, status: "running" | "ok" | "error"): str
 
 /** Icon for a page button, from the allow-listed path the server sent. */
 export function linkIcon(path: string): LucideIcon {
+  // the only outside links the server lets through are the verification partners' sites
+  if (path.startsWith("https://") || path.startsWith("/verification-center")) return BadgeCheck;
   if (path.startsWith("/auth?tab=register")) return UserPlus;
   if (path.startsWith("/auth")) return LogIn;
   if (path.startsWith("/dashboard?tab=wallet")) return Wallet;
@@ -160,6 +163,24 @@ export function pageStarters(pathname: string, search: string, member: boolean):
         };
   }
   const tab = new URLSearchParams(search).get("tab");
+  if (pathname === "/verification-center" || (member && pathname === "/dashboard" && tab === "verification")) {
+    return {
+      title: { en: "Verifying a document", ar: "للتحقق من مستند" },
+      en: [
+        member ? "How do I verify my investment certificate?" : "How do I verify an investment certificate?",
+        "Where do I verify a valuation report?",
+        "How do I check an insurance certificate?",
+        "How do I verify a legal agreement?",
+      ],
+      ar: [
+        member ? "أتحقق من شهادة الاستثمار بتاعتي إزاي؟" : "أتحقق من شهادة استثمار إزاي؟",
+        "أتحقق من تقرير تقييم فين؟",
+        "أتأكد من شهادة تأمين إزاي؟",
+        "أتحقق من عقد قانوني إزاي؟",
+      ],
+      icons: [BadgeCheck, FileText, ShieldCheck, Scale],
+    };
+  }
   if (member && pathname === "/dashboard" && tab === "installments") {
     return {
       title: { en: "For your installments", ar: "لأقساطك" },

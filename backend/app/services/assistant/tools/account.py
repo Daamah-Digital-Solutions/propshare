@@ -20,6 +20,7 @@ from app.models.identity import User
 from app.services import (
     auth_service,
     broker_service,
+    certificate_service,
     distribution_service,
     family_service,
     installment_service,
@@ -565,6 +566,8 @@ class HoldingOut(ToolOutput):
     listed_units: int
     sellable_units: int
     unit_price: str
+    # printed on the investment certificate; the number to enter at Capimax Verify
+    certificate_reference: str
 
 
 class HoldingsOut(ToolOutput):
@@ -572,15 +575,27 @@ class HoldingsOut(ToolOutput):
 
 
 async def _get_my_holdings(session: AsyncSession, ctx: AgentContext, args) -> dict:
-    rows = await secondary_service.my_holdings(session, _uid(ctx))
+    uid = _uid(ctx)
+    rows = await secondary_service.my_holdings(session, uid)
     keep = HoldingOut.model_fields.keys()
-    return {"items": [{k: r.get(k) for k in keep} for r in rows[:50]]}
+    return {
+        "items": [
+            {
+                **{k: r.get(k) for k in keep},
+                "certificate_reference": certificate_service.certificate_reference(
+                    r["property_id"], uid
+                ),
+            }
+            for r in rows[:50]
+        ]
+    }
 
 
 register(
     ToolSpec(
         "get_my_holdings",
-        "Units the signed-in user holds per property, and how many can be sold.",
+        "Units the signed-in user holds per property, how many can be sold, and the reference "
+        "printed on each property's investment certificate.",
         NoArgs,
         HoldingsOut,
         "read_own",

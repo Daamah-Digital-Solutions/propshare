@@ -13,14 +13,16 @@ import {
   TrustGatewayCard,
   TrustScopeNote,
 } from "@/components/verification/CapimaxTrustGateway";
+import { VerificationPartners } from "@/components/verification/VerificationPartners";
 
 /**
  * Verification Center, inside the investor dashboard.
  *
- * Same hand-off to Capimax Trust as the public page, plus the one thing only a signed-in
- * investor has: the reference of every certificate they hold, ready to copy, and the PDF
- * that carries it. The references are the stable ids printed on the certificates, never
- * made up here. Verification itself happens on Capimax Trust, not on this platform.
+ * Same verification partners and hand-off to Capimax Trust as the public page, plus the one
+ * thing only a signed-in investor has: the reference of every certificate they hold, ready to
+ * copy, and the PDF that carries it. The references are the stable ids printed on the
+ * certificates, never made up here. Verification itself happens on the partners' and Capimax
+ * Trust's own sites, not on this platform.
  */
 export const VerificationTab = () => {
   const { user } = useAuth();
@@ -65,7 +67,8 @@ export const VerificationTab = () => {
           <p className="mt-1 max-w-3xl text-muted-foreground">
             Every certificate and document issued through Capimax PropShare can be verified, its
             status reviewed, and an official copy downloaded through Capimax Trust, the central
-            verification gateway of the Capimax ecosystem.
+            verification gateway of the Capimax ecosystem, or directly with the designated
+            partner for its kind of record below.
           </p>
         </div>
       </div>
@@ -76,8 +79,9 @@ export const VerificationTab = () => {
             <FileText className="h-5 w-5" /> Your certificates
           </CardTitle>
           <CardDescription>
-            Each certificate carries a reference. Keep it at hand when you verify a certificate
-            or request an official copy through Capimax Trust.
+            Each certificate carries a reference: it is the certificate number you enter at
+            Capimax Verify (CIM Global Financial, below) to confirm the certificate. Keep it at
+            hand when you request an official copy through Capimax Trust, too.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -141,6 +145,7 @@ export const VerificationTab = () => {
         </CardContent>
       </Card>
 
+      <VerificationPartners compact />
       <TrustGatewayCard compact />
       <TrustCapabilities />
       <TrustScopeNote />

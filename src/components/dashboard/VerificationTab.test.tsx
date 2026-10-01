@@ -77,4 +77,15 @@ describe("VerificationTab", () => {
     expect(cta).toHaveAttribute("href", CAPIMAX_TRUST_URL);
     expect(cta).toHaveAttribute("target", "_blank");
   });
+
+  it("lists the verification partners, certificates first at Capimax Verify", async () => {
+    holdings.mockResolvedValue({ items: [], total: 0 });
+    mount();
+    expect(await screen.findByTestId("verification-partners")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /verify document \/ certificate/i })).toHaveAttribute(
+      "href",
+      "https://www.cimglobalfinancial.com/capimax-verify",
+    );
+    expect(screen.getByText(/the certificate number you enter at\s+Capimax Verify/)).toBeInTheDocument();
+  });
 });

@@ -66,9 +66,11 @@ NOT_BUILT: tuple[tuple[re.Pattern[str], str], ...] = (
             r"certificate|\bcpv\b|capimax pro\b",
             _I,
         ),
-        "Checking a certificate by its reference is not on the platform itself yet: the "
-        "Verification Center lists the holder's references and links to Capimax's external "
-        "verification site. There is no holder register separate from the platform ledger yet.",
+        "Certificates and documents are not checked on the platform itself: each kind is "
+        "verified on its partner's site (an investment certificate at CIM Global Financial's "
+        "Capimax Verify, with the reference printed on it); get_verification_services gives "
+        "every service and its link. There is no holder register separate from the platform "
+        "ledger yet.",
     ),
     (
         re.compile(r"liquidity.provider|\blps?\b|lp (quote|route)|time.limited quote", _I),

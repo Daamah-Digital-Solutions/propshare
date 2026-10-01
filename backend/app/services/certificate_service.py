@@ -399,6 +399,14 @@ async def _held_property_ids(session: AsyncSession, user_id: uuid.UUID) -> list[
     return [r[0] for r in res.all()]
 
 
+def certificate_reference(property_id: uuid.UUID | str, user_id: uuid.UUID | str) -> str:
+    """The reference printed on a holder's certificate for one property: derived from the
+    property and the holder, so it is stable and never random. The investor's Verification tab
+    shows the same value (src/lib/certificates.ts), and it is the certificate number they
+    enter at Capimax Verify."""
+    return ("CMX-" + str(property_id)[:4] + str(user_id)[:4]).upper()
+
+
 async def build_for_holding(
     session: AsyncSession,
     *,
@@ -429,7 +437,7 @@ async def build_for_holding(
         else "-"
     )
     jurisdiction = prop.country or getattr(prop, "city", None) or prop.location or "-"
-    cert_ref = ("CMX-" + str(property_id)[:4] + str(user_id)[:4]).upper()
+    cert_ref = certificate_reference(property_id, user_id)
     issued = (now or dt.datetime.now(dt.UTC)).strftime("%b %d, %Y")
 
     pdf = render_certificate_pdf(

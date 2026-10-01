@@ -7,7 +7,8 @@ Principles:
     the HASH of a one-time token that the user's own confirmation call must present;
   * tool results are data, never instructions: free text is wrapped under
     ``untrusted_text`` with control characters stripped and a hard size cap;
-  * the model can only link to an allow-list of routes, never to arbitrary URLs;
+  * the model can only link to an allow-list of routes, never to arbitrary URLs (outside the
+    platform: only the verification partners' exact links);
   * the provider's safety identifier is a keyed hash of the user id with a dedicated
     secret (an unkeyed hash of a UUID could be reversed against our own database).
 """
@@ -30,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import AssistantActionProposal
+from app.services import verification_partners
 from app.services.assistant.context import AgentContext
 
 if TYPE_CHECKING:  # the tools package imports this module; keep the dependency one-way
@@ -79,6 +81,7 @@ DEEP_LINKS: dict[str, tuple[str, str]] = {
     "certificates": ("/dashboard?tab=certificates", "Your investment certificates"),
     "documents": ("/dashboard?tab=documents", "Your documents"),
     "verification_center": ("/dashboard?tab=verification", "Verification Center"),
+    "verification_services": ("/verification-center", "All verification services"),
     "my_exits": ("/dashboard?tab=exits", "Your exit requests"),
     "family": ("/dashboard?tab=family", "Family investment group"),
     "kyc": ("/kyc", "Start or continue identity verification"),
@@ -122,11 +125,22 @@ def make_link(route_id: str, slug: str | None = None) -> dict[str, str]:
 
 
 _URL_RE = re.compile(r"https?://[^\s)>\]]+", re.I)
+# punctuation that ends the sentence, not the URL ("…/verify." or "…/verify،")
+_URL_TAIL = ".,;:!?'\"”’»،؛؟"
+_PARTNER_URLS = {url.lower(): url for url in verification_partners.URLS}
+# a link card that opens a verification partner's site (not a route of ours)
+PARTNER_ROUTE = "verification_partner"
+
+
+def partner_url(url: str) -> str | None:
+    """The verification partner's link this URL is, exactly (a trailing slash and the case of
+    the letters aside), or None. A longer path, a query string or http:// is not it."""
+    return _PARTNER_URLS.get(url.rstrip("/").lower())
 
 
 def url_allowed(url: str) -> bool:
     base = get_settings().app_base_url.rstrip("/")
-    return url.startswith(base + "/") or url == base
+    return url.startswith(base + "/") or url == base or partner_url(url) is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -283,11 +297,27 @@ FORBIDDEN_TERMS = (
     re.compile(r"guarantee[ds]?\s+(return|profit|yield|income)", re.I),
     re.compile(r"risk[- ]free", re.I),
 )
+# Naming the ecosystem's blockchain verification partner is not describing PropShare: a
+# sentence (or table row) about Proof Anchor, or that service's own title, is not scanned
+# for the words above. URLs are taken out first, so their dots do not end the sentence.
+_PARTNER_SENTENCE_RE = re.compile(r"[^.!?\u061f\n]*\bProof Anchor\b[^.!?\u061f\n]*", re.I)
+_PARTNER_TITLES = tuple(s.title for s in verification_partners.SERVICES if s.key == "blockchain")
 
 
-_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(\s*(/[^)\s]*)\s*\)")
+def _forbidden_scan_text(text: str) -> str:
+    scanned = _URL_RE.sub(" ", text)
+    for title in _PARTNER_TITLES:
+        scanned = scanned.replace(title, " ")
+    return _PARTNER_SENTENCE_RE.sub(" ", scanned)
+
+
+# a link target: a route of ours or a full URL (only a verification partner's survives)
+_LINK_TARGET = r"(/[^)\s]*|https?://[^)\s]+)"
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(\s*" + _LINK_TARGET + r"\s*\)")
 # a line holding only a link (optionally bulleted), e.g. "- [Sign in](/auth)"
-_LINK_ONLY_LINE_RE = re.compile(r"^[ \t>*\-\u2022]*\[([^\]]+)\]\(\s*(/[^)\s]*)\s*\)[ \t.:]*$", re.M)
+_LINK_ONLY_LINE_RE = re.compile(
+    r"^[ \t>*\-\u2022]*\[([^\]]+)\]\(\s*" + _LINK_TARGET + r"\s*\)[ \t.:]*$", re.M
+)
 # the automatic sign-in buttons in the reply's language
 SIGN_IN_LABELS_AR = {"sign_in": "تسجيل الدخول", "register": "إنشاء حساب مجاني"}
 _BARE_PATH_RE = re.compile(
@@ -332,6 +362,19 @@ def page_route(raw: str | None) -> tuple[str, str, str | None] | None:
     return (route_id, path, slug)
 
 
+def _link_target(target: str) -> tuple[str, str] | None:
+    """(route id, path) for a link the reply may carry, or None: a route of ours (also when
+    written as a full URL of the site), or a verification partner's exact link."""
+    base = get_settings().app_base_url.rstrip("/")
+    if base and target.startswith(base + "/"):
+        target = target[len(base) :]
+    if target.startswith("/"):
+        route_id = allowed_route_for(target)
+        return (route_id, target) if route_id else None
+    url = partner_url(target)
+    return (PARTNER_ROUTE, url) if url else None
+
+
 def postprocess_output(text: str) -> tuple[str, list[str], list[dict[str, str]]]:
     """Strip links that are not ours, flag forbidden wording, and collect the platform
     routes the text refers to. Returns (text, flags, links).
@@ -340,38 +383,45 @@ def postprocess_output(text: str) -> tuple[str, list[str], list[dict[str, str]]]
     card (``links``) carrying the model's own label, so the button speaks the reply's
     language; a line that was nothing but a link is removed (the button replaces it, instead
     of the same words appearing twice). Anything not allow-listed is reduced to its label so
-    no unknown route reaches the user."""
+    no unknown route reaches the user. A verification partner's exact link becomes a card
+    that opens their site (``route_id`` PARTNER_ROUTE); every other outside URL is removed."""
     flags: list[str] = []
     links: list[dict[str, str]] = []
 
-    def _label(route_id: str, label: str) -> str:
-        label = re.sub(r"[*_`]", "", label).strip()
-        return label[:60] if label else DEEP_LINKS[route_id][1]
+    def _add(route_id: str, path: str, label: str) -> None:
+        if any(link["path"] == path for link in links):
+            return
+        label = re.sub(r"[*_`]", "", label).strip()[:60]
+        if not label:
+            label = (
+                verification_partners.LINK_LABELS[path]
+                if route_id == PARTNER_ROUTE
+                else DEEP_LINKS[route_id][1]
+            )
+        links.append({"route_id": route_id, "path": path, "label": label})
 
     def _link_only_line(m: re.Match) -> str:
-        label, path = m.group(1), m.group(2)
-        route_id = allowed_route_for(path)
-        if route_id is None:
+        target = _link_target(m.group(2))
+        if target is None:
             return m.group(0)  # handled (and flagged) by the inline pass below
-        if not any(link["path"] == path for link in links):
-            links.append({"route_id": route_id, "path": path, "label": _label(route_id, label)})
+        _add(*target, m.group(1))
         return ""
 
     def _link(m: re.Match) -> str:
         url = m.group(0)
-        if url_allowed(url):
+        core = url.rstrip(_URL_TAIL)
+        if url_allowed(core):
             return url
         flags.append("external_link_removed")
-        return "[link removed]"
+        return "[link removed]" + url[len(core) :]
 
     def _md(m: re.Match) -> str:
-        label, path = m.group(1), m.group(2)
-        route_id = allowed_route_for(path)
-        if route_id is None:
+        label = m.group(1)
+        target = _link_target(m.group(2))
+        if target is None:
             flags.append("unknown_route_removed")
             return label
-        if not any(link["path"] == path for link in links):
-            links.append({"route_id": route_id, "path": path, "label": _label(route_id, label)})
+        _add(*target, label)
         return label
 
     cleaned = _URL_RE.sub(_link, text)
@@ -381,9 +431,14 @@ def postprocess_output(text: str) -> tuple[str, list[str], list[dict[str, str]]]
     for m in _BARE_PATH_RE.finditer(cleaned):
         path = m.group(1)
         route_id = allowed_route_for(path)
-        if route_id is not None and not any(link["path"] == path for link in links):
-            links.append({"route_id": route_id, "path": path, "label": DEEP_LINKS[route_id][1]})
+        if route_id is not None:
+            _add(route_id, path, "")
+    # a partner's link written out in full: it stays readable in the text and gets its button
+    for m in _URL_RE.finditer(cleaned):
+        if url := partner_url(m.group(0).rstrip(_URL_TAIL)):
+            _add(PARTNER_ROUTE, url, "")
+    scanned = _forbidden_scan_text(cleaned)
     for pattern in FORBIDDEN_TERMS:
-        if pattern.search(cleaned):
+        if pattern.search(scanned):
             flags.append(f"forbidden_term:{pattern.pattern[:30]}")
     return cleaned, sorted(set(flags)), links

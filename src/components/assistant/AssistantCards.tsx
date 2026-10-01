@@ -7,6 +7,7 @@ import {
   Building2,
   CalendarClock,
   Check,
+  ExternalLink,
   FileSpreadsheet,
   FileText,
   Loader2,
@@ -543,7 +544,9 @@ export function ComparisonCardView({ card, onClose }: { card: ComparisonCard; on
   );
 }
 
-/** A page button. The first button of a reply is the primary call to action. */
+/** A page button. The first button of a reply is the primary call to action. A verification
+ * partner's site (the only outside link the server lets through) opens in a new tab and leaves
+ * the chat open. */
 export function LinkButton({
   card,
   primary,
@@ -554,18 +557,25 @@ export function LinkButton({
   onClose?: () => void;
 }) {
   const Icon = linkIcon(card.path);
+  const className = cn(
+    "group inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition",
+    primary
+      ? "bg-primary text-primary-foreground shadow-[0_6px_16px_-8px_hsl(var(--primary)/0.8)] hover:brightness-110"
+      : "border border-border bg-card text-foreground hover:border-primary/40 hover:bg-primary/5",
+  );
+  const icon = <Icon className={cn("h-3.5 w-3.5", primary ? "" : "text-primary")} />;
+  if (/^https:\/\//.test(card.path)) {
+    return (
+      <a href={card.path} target="_blank" rel="noopener noreferrer" className={className}>
+        {icon}
+        {card.label}
+        <ExternalLink className="h-3.5 w-3.5 opacity-60 transition group-hover:opacity-100" />
+      </a>
+    );
+  }
   return (
-    <Link
-      to={card.path}
-      onClick={onClose}
-      className={cn(
-        "group inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition",
-        primary
-          ? "bg-primary text-primary-foreground shadow-[0_6px_16px_-8px_hsl(var(--primary)/0.8)] hover:brightness-110"
-          : "border border-border bg-card text-foreground hover:border-primary/40 hover:bg-primary/5",
-      )}
-    >
-      <Icon className={cn("h-3.5 w-3.5", primary ? "" : "text-primary")} />
+    <Link to={card.path} onClick={onClose} className={className}>
+      {icon}
       {card.label}
       <ArrowRight className="h-3.5 w-3.5 opacity-60 transition group-hover:translate-x-0.5 group-hover:opacity-100 rtl:rotate-180" />
     </Link>

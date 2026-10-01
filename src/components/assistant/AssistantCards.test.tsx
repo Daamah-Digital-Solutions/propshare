@@ -23,7 +23,7 @@ vi.mock("@/lib/api", async (orig) => {
 vi.mock("@/lib/certificates", () => ({ saveBlob: (...a: unknown[]) => save(...a) }));
 
 import { ApiError } from "@/lib/api";
-import { AssistantCardView } from "./AssistantCards";
+import { AssistantCardView, LinkButton } from "./AssistantCards";
 
 const show = (
   card: DepositCard | WithdrawalCard | StatementCard | SaleCard | InstallmentCard | ComparisonCard,
@@ -237,5 +237,34 @@ describe("prepared cards", () => {
     fireEvent.click(screen.getByRole("button", { name: /download excel/i }));
     expect(await screen.findByText("Please choose a shorter period.")).toBeInTheDocument();
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe("page buttons", () => {
+  it("a verification partner's site opens in a new tab and keeps the chat open", () => {
+    const onClose = vi.fn();
+    const url = "https://www.cimglobalfinancial.com/capimax-verify";
+    render(
+      <MemoryRouter>
+        <LinkButton card={{ kind: "link", path: url, label: "Verify Document / Certificate" }} onClose={onClose} />
+      </MemoryRouter>,
+    );
+    const link = screen.getByRole("link", { name: /verify document \/ certificate/i });
+    expect(link).toHaveAttribute("href", url);
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    fireEvent.click(link);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("a page of ours stays in the app", () => {
+    render(
+      <MemoryRouter>
+        <LinkButton card={{ kind: "link", path: "/verification-center", label: "All verification services" }} />
+      </MemoryRouter>,
+    );
+    const link = screen.getByRole("link", { name: /all verification services/i });
+    expect(link).toHaveAttribute("href", "/verification-center");
+    expect(link).not.toHaveAttribute("target");
   });
 });
