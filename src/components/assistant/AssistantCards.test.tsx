@@ -9,16 +9,25 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type {
   ComparisonCard,
   DepositCard,
+  DocumentCard,
   InstallmentCard,
   SaleCard,
   StatementCard,
   WithdrawalCard,
 } from "@/lib/assistantApi";
 
-const { download, save } = vi.hoisted(() => ({ download: vi.fn(), save: vi.fn() }));
+const { download, save, blobOf } = vi.hoisted(() => ({
+  download: vi.fn(),
+  save: vi.fn(),
+  blobOf: vi.fn(),
+}));
 vi.mock("@/lib/api", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
-  return { ...real, walletApi: { downloadStatement: (...a: unknown[]) => download(...a) } };
+  return {
+    ...real,
+    walletApi: { downloadStatement: (...a: unknown[]) => download(...a) },
+    fetchBlob: (...a: unknown[]) => blobOf(...a),
+  };
 });
 vi.mock("@/lib/certificates", () => ({ saveBlob: (...a: unknown[]) => save(...a) }));
 
@@ -237,6 +246,103 @@ describe("prepared cards", () => {
     fireEvent.click(screen.getByRole("button", { name: /download excel/i }));
     expect(await screen.findByText("Please choose a shorter period.")).toBeInTheDocument();
     expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe("document cards (client meeting 2026-10-01: 'give me the PDF here')", () => {
+  const certificates: DocumentCard = {
+    kind: "document",
+    doc: "certificate",
+    title: "Your ownership certificates",
+    sections: [
+      {
+        heading: "Creek Tower Installment Suite",
+        rows: [
+          ["Units", "20"],
+          ["Share of the property", "0.04762%"],
+          ["Certificate number", "CMX-1A2B3C4D"],
+        ],
+        files: [{ label: "Certificate (PDF)", path: "/api/v1/investments/certificate/p1", filename: "certificate-creek.pdf", format: "pdf" }],
+      },
+      {
+        heading: "Marina Loft Income Suite",
+        rows: [["Units", "3"]],
+        files: [{ label: "Certificate (PDF)", path: "/api/v1/investments/certificate/p2", filename: "certificate-loft.pdf", format: "pdf" }],
+      },
+    ],
+    files: [{ label: "All my certificates (ZIP)", path: "/api/v1/investments/certificates.zip", filename: "capimax-certificates.zip", format: "zip" }],
+    links: [{ label: "Verify at CIM Global Financial", path: "https://www.cimglobalfinancial.com/capimax-verify" }],
+    path: "/dashboard?tab=certificates",
+    footnote: "Generated live from the ownership ledger.",
+  };
+
+  beforeEach(() => blobOf.mockReset());
+
+  it("downloads each certificate and the ZIP from the chat, with the share and the verifier", async () => {
+    const blob = new Blob(["%PDF"]);
+    blobOf.mockResolvedValue(blob);
+    render(
+      <MemoryRouter>
+        <AssistantCardView card={certificates} />
+      </MemoryRouter>,
+    );
+    const card = screen.getByTestId("document-card");
+    expect(card).toHaveTextContent("Share of the property0.04762%");
+    expect(card).toHaveTextContent("Certificate numberCMX-1A2B3C4D");
+    fireEvent.click(screen.getAllByRole("button", { name: /certificate \(pdf\)/i })[1]);
+    await waitFor(() => expect(save).toHaveBeenCalledWith(blob, "certificate-loft.pdf"));
+    expect(blobOf).toHaveBeenCalledWith("/api/v1/investments/certificate/p2");
+    fireEvent.click(screen.getByRole("button", { name: /all my certificates \(zip\)/i }));
+    await waitFor(() => expect(blobOf).toHaveBeenCalledWith("/api/v1/investments/certificates.zip"));
+    const verify = screen.getByRole("link", { name: /verify at cim global financial/i });
+    expect(verify).toHaveAttribute("href", "https://www.cimglobalfinancial.com/capimax-verify");
+    expect(verify).toHaveAttribute("target", "_blank");
+  });
+
+  it("never downloads a path that is not one of the platform's own endpoints", () => {
+    render(
+      <MemoryRouter>
+        <AssistantCardView
+          card={{
+            ...certificates,
+            sections: [{ heading: "x", rows: [], files: [{ label: "Evil", path: "https://evil.example/x.pdf", filename: "x.pdf", format: "pdf" }] }],
+            files: [],
+          }}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /evil/i }));
+    expect(blobOf).not.toHaveBeenCalled();
+  });
+
+  it("a schedule offers the PDF and the Excel file side by side", () => {
+    render(
+      <MemoryRouter>
+        <AssistantCardView
+          card={{
+            kind: "document",
+            doc: "installment_schedule",
+            title: "Your installment schedule",
+            sections: [
+              {
+                heading: "Plan Tower",
+                rows: [["Next payment", "$85.09 due 2026-11-01"]],
+                files: [
+                  { label: "Schedule (PDF)", path: "/api/v1/installments/x/schedule.pdf", filename: "s.pdf", format: "pdf" },
+                  { label: "Schedule (Excel)", path: "/api/v1/installments/x/schedule.xlsx", filename: "s.xlsx", format: "xlsx" },
+                ],
+              },
+            ],
+            files: [],
+            links: [],
+            path: "/dashboard?tab=installments",
+            footnote: null,
+          }}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Schedule (PDF)", "Schedule (Excel)"]);
+    expect(screen.getByTestId("document-card")).toHaveTextContent("Next payment$85.09 due 2026-11-01");
   });
 });
 

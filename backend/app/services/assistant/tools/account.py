@@ -558,13 +558,25 @@ register(
 # --------------------------------------------------------------------------- #
 # holdings / secondary / liquidity
 # --------------------------------------------------------------------------- #
+class HeldBackOut(ToolOutput):
+    listed: int
+    lp_exit: int
+    family_pending: int
+    gift: int
+    installment_plan: int
+    pledged: int
+
+
 class HoldingOut(ToolOutput):
     property_id: str
     title: str | None
     location: str | None
     units: int
-    listed_units: int
     sellable_units: int
+    # why the other units cannot be sold right now, by reason
+    held_back: HeldBackOut
+    # the resale lock-up still running on this holding (ISO date), if any
+    lockup_until: str | None
     unit_price: str
     # printed on the investment certificate; the number to enter at Capimax Verify
     certificate_reference: str
@@ -572,30 +584,52 @@ class HoldingOut(ToolOutput):
 
 class HoldingsOut(ToolOutput):
     items: list[HoldingOut]
+    note: str
+
+
+_HELD_BACK_NOTE = (
+    "sellable_units can be listed on the secondary market or offered to a liquidity provider "
+    "now. held_back says why the rest cannot: listed = already on sale in an active listing; "
+    "lp_exit = in an open liquidity-provider exit request; family_pending = promised to a family "
+    "member who has not registered yet; gift = in a scheduled gift; installment_plan = vested "
+    "under an installment plan that is still running: they become sellable when the plan's last "
+    "payment is made, and the remaining installments can be paid early from the plan "
+    "(prepare_installment_payment); pledged = pledged to Nova Finance for a Nova Sukuk "
+    "certificate until staff release the pledge. lockup_until = the resale lock-up ends then."
+)
 
 
 async def _get_my_holdings(session: AsyncSession, ctx: AgentContext, args) -> dict:
     uid = _uid(ctx)
     rows = await secondary_service.my_holdings(session, uid)
-    keep = HoldingOut.model_fields.keys()
-    return {
-        "items": [
+    items = []
+    for r in rows[:50]:
+        lock = await secondary_service.lockup_until(session, uid, uuid.UUID(r["property_id"]))
+        items.append(
             {
-                **{k: r.get(k) for k in keep},
+                "property_id": r["property_id"],
+                "title": r["title"],
+                "location": r["location"],
+                "units": r["units"],
+                "sellable_units": r["sellable_units"],
+                "held_back": r["held_back"],
+                "lockup_until": lock.date().isoformat() if lock else None,
+                "unit_price": r["unit_price"],
                 "certificate_reference": certificate_service.certificate_reference(
                     r["property_id"], uid
                 ),
             }
-            for r in rows[:50]
-        ]
-    }
+        )
+    return {"items": items, "note": _HELD_BACK_NOTE}
 
 
 register(
     ToolSpec(
         "get_my_holdings",
-        "Units the signed-in user holds per property, how many can be sold, and the reference "
-        "printed on each property's investment certificate.",
+        "Units the signed-in user holds per property: how many can be sold now and, for the rest, "
+        "why not (already listed, in an exit request, an installment plan still running, a "
+        "pledge, a lock-up), plus the reference printed on each property's investment "
+        "certificate.",
         NoArgs,
         HoldingsOut,
         "read_own",
@@ -896,7 +930,9 @@ async def _list_my_tickets(session: AsyncSession, ctx: AgentContext, args) -> di
         (
             await session.execute(
                 select(SupportTicket)
-                .where(SupportTicket.user_id == _uid(ctx))
+                # only real support tickets: the assistant's own knowledge-gap records are the
+                # team's, and the user's ticket pages would not open them either
+                .where(SupportTicket.user_id == _uid(ctx), SupportTicket.kind == "support")
                 .order_by(SupportTicket.created_at.desc())
                 .limit(20)
             )
@@ -928,7 +964,9 @@ async def _get_my_ticket(session: AsyncSession, ctx: AgentContext, args) -> dict
     a: TicketIn = args
     t = await session.scalar(
         select(SupportTicket).where(
-            SupportTicket.ticket_no == a.ticket_no, SupportTicket.user_id == _uid(ctx)
+            SupportTicket.ticket_no == a.ticket_no,
+            SupportTicket.user_id == _uid(ctx),
+            SupportTicket.kind == "support",
         )
     )
     if t is None:

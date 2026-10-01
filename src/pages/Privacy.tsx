@@ -163,15 +163,18 @@ const Privacy = () => {
             </p>
             <ul className="list-disc pl-6 space-y-2">
               <li>
-                <strong className="text-foreground">What is sent:</strong> the messages you type and,
-                for signed-in users, the account details needed to answer (such as your name, role,
-                verification status, and the balances or holdings you ask about) are sent to OpenAI,
-                our AI provider, to produce the reply. Visitors&apos; messages are sent without any
-                account details.
+                <strong className="text-foreground">What is sent:</strong> the messages you type,
+                any pictures or files you attach (such as a screenshot of a problem or a receipt;
+                signed-in users only) and, for signed-in users, the account details needed to
+                answer (such as your name, role, verification status, and the balances or holdings
+                you ask about) are sent to OpenAI, our AI provider, to produce the reply. Pictures
+                are resized and stripped of their hidden data (such as location) before they are
+                stored or sent. Visitors&apos; messages are sent without any account details.
               </li>
               <li>
-                <strong className="text-foreground">Storage:</strong> conversations are stored
-                encrypted on our servers and deleted automatically 180 days after their last message.
+                <strong className="text-foreground">Storage:</strong> conversations, and the
+                pictures and files sent in them, are stored encrypted on our servers and deleted
+                automatically 180 days after their last message.
                 OpenAI does not use this data to train its models. It may keep request logs for up to
                 30 days to detect abuse, even though we ask it not to store the replies.
               </li>

@@ -27,3 +27,6 @@ RESEND_VERIFY_LIMIT = "3/minute"
 # second sign-in step + 2FA management; the per-account lockout is the real brute-force guard
 MFA_LIMIT = "10/minute"
 STATEMENT_LIMIT = "10/minute"  # statement downloads (PDF/Excel rendering), per IP
+EMAIL_CHANGE_LIMIT = "5/hour"  # starting an email change sends a mail; the service caps per day
+EMAIL_LINK_LIMIT = "20/minute"  # following an email-change link (tokens are unguessable anyway)
+ATTACHMENT_LIMIT = "20/minute"  # pictures uploaded to the assistant chat, per IP

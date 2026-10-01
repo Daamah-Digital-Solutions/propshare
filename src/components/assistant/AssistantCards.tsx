@@ -8,6 +8,7 @@ import {
   CalendarClock,
   Check,
   ExternalLink,
+  FileArchive,
   FileSpreadsheet,
   FileText,
   Loader2,
@@ -26,6 +27,8 @@ import type {
   ComparisonCard,
   ConfirmActionCard,
   DepositCard,
+  DocumentCard,
+  DocumentFile,
   InstallmentCard,
   LinkCard,
   Proposal,
@@ -34,7 +37,7 @@ import type {
   WithdrawalCard,
 } from "@/lib/assistantApi";
 import { assistantApi } from "@/lib/assistantApi";
-import { ApiError, assetUrl, walletApi, type StatementFormat } from "@/lib/api";
+import { ApiError, assetUrl, fetchBlob, walletApi, type StatementFormat } from "@/lib/api";
 import { saveBlob } from "@/lib/certificates";
 import { cn } from "@/lib/utils";
 import { linkIcon } from "@/components/assistant/assistantUi";
@@ -53,14 +56,17 @@ function fmtMoney(v: number | null | undefined): string {
 export function ConfirmCard({
   card,
   onDecided,
+  onClose,
 }: {
   card: ConfirmActionCard;
   onDecided?: (proposal: Proposal) => void;
+  onClose?: () => void;
 }) {
   const [state, setState] = useState<"idle" | "busy" | "executed" | "failed" | "cancelled">(
     "idle",
   );
   const [note, setNote] = useState<string>("");
+  const [ticketId, setTicketId] = useState<string | null>(null);
 
   const decide = async (confirm: boolean) => {
     setState("busy");
@@ -70,13 +76,14 @@ export function ConfirmCard({
         : await assistantApi.cancel(card.proposal_id);
       const ok = p.status === "executed";
       setState(confirm ? (ok ? "executed" : "failed") : "cancelled");
-      const result = (p.result ?? {}) as { message?: string; ticket_no?: string };
+      const result = (p.result ?? {}) as { message?: string; ticket_no?: string; ticket_id?: string };
+      setTicketId(ok && result.ticket_id ? result.ticket_id : null);
       setNote(
         confirm
           ? ok
             ? result.ticket_no
-              ? `Done — ticket ${result.ticket_no} opened.`
-              : "Done."
+              ? `Done — customer service ticket ${result.ticket_no} is open. We'll reply there and by email.`
+              : result.message || "Done."
             : result.message || "Could not complete this action."
           : "Cancelled.",
       );
@@ -98,6 +105,16 @@ export function ConfirmCard({
       </div>
       <div className="p-3 text-sm">
         <div className="font-medium text-foreground">{card.summary}</div>
+        {card.details?.length ? (
+          <dl className="mt-2 space-y-1.5 rounded-xl bg-muted/50 p-2.5 text-xs" data-testid="confirm-details">
+            {card.details.map(([label, value]) => (
+              <div key={label}>
+                <dt className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</dt>
+                <dd className="whitespace-pre-line break-words text-foreground">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
         {state === "idle" || state === "busy" ? (
           <div className="mt-3 flex gap-2">
             <button
@@ -130,10 +147,19 @@ export function ConfirmCard({
               state === "executed" ? "font-medium text-primary" : "text-muted-foreground",
             )}
           >
-            {state === "executed" ? <Check className="h-3.5 w-3.5" /> : null}
+            {state === "executed" ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
             {note}
           </div>
         )}
+        {ticketId ? (
+          <div className="mt-2">
+            <LinkButton
+              card={{ kind: "link", path: `/support/tickets/${ticketId}`, label: "View your ticket" }}
+              primary
+              onClose={onClose}
+            />
+          </div>
+        ) : null}
         {!card.token && state === "idle" && (
           <div className="mt-1 text-[11px] text-muted-foreground">
             This confirmation has expired. Ask again to get a new one.
@@ -400,6 +426,99 @@ export function StatementPreparedCard({ card }: { card: StatementCard }) {
         })}
       </div>
     </PreparedShell>
+  );
+}
+
+const FILE_ICON: Record<DocumentFile["format"], LucideIcon> = {
+  pdf: FileText,
+  xlsx: FileSpreadsheet,
+  zip: FileArchive,
+};
+
+/** The user's own certificates or installment schedules: each file downloads straight from the
+ * chat through the platform's owner-only endpoints (the server built every path). */
+export function DocumentPreparedCard({ card, onClose }: { card: DocumentCard; onClose?: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [problem, setProblem] = useState("");
+  const download = async (f: DocumentFile) => {
+    if (!f.path.startsWith("/api/v1/")) return; // only our own endpoints, never a model URL
+    setBusy(f.path);
+    setProblem("");
+    try {
+      saveBlob(await fetchBlob(f.path), f.filename);
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : "Could not download the file. Please try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const button = (f: DocumentFile, primary: boolean) => {
+    const Icon = FILE_ICON[f.format] ?? FileText;
+    return (
+      <button
+        key={f.path}
+        type="button"
+        disabled={busy !== null}
+        onClick={() => void download(f)}
+        className={cn(
+          primary
+            ? CTA
+            : "flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-background px-3 py-2.5 text-xs font-semibold text-foreground transition hover:border-primary/40 hover:bg-primary/5 disabled:opacity-60",
+        )}
+      >
+        {busy === f.path ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
+        {f.label}
+      </button>
+    );
+  };
+  return (
+    <div className="mt-2 overflow-hidden rounded-2xl border border-primary/30 bg-card shadow-sm" data-testid="document-card">
+      <div className="flex items-center gap-2 border-b border-primary/15 bg-primary/5 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-primary">
+        {card.doc === "certificate" ? <ShieldCheck className="h-3.5 w-3.5" /> : <CalendarClock className="h-3.5 w-3.5" />}
+        {card.title}
+      </div>
+      <div className="divide-y divide-border/70">
+        {card.sections.map((s, i) => (
+          <div key={`${s.heading ?? ""}-${i}`} className="space-y-2 px-3 py-3 text-xs">
+            {s.heading ? <div className="text-sm font-semibold text-foreground">{s.heading}</div> : null}
+            <div className="space-y-1.5">
+              {s.rows.map(([k, v]) => (
+                <div key={k} className="flex items-baseline justify-between gap-3">
+                  <span className="shrink-0 text-muted-foreground">{k}</span>
+                  <span className="break-all text-right font-medium text-foreground">{v}</span>
+                </div>
+              ))}
+            </div>
+            <div className={cn("grid gap-2", s.files.length > 1 ? "grid-cols-2" : "grid-cols-1")}>
+              {s.files.map((f, j) => button(f, j === 0 && card.sections.length === 1))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {problem && (
+        <div className="mx-3 mb-2 flex gap-1.5 rounded-xl bg-accent/10 px-3 py-2 text-[11px] text-foreground/80">
+          <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-accent" />
+          {problem}
+        </div>
+      )}
+      {card.files.length > 0 || card.links.length > 0 ? (
+        <div className="space-y-2 border-t border-border/70 p-3">
+          {card.files.map((f) => button(f, true))}
+          {card.links.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {card.links.map((l) => (
+                <LinkButton key={l.path} card={{ kind: "link", path: l.path, label: l.label }} onClose={onClose} />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {card.footnote ? (
+        <div className="border-t border-border/70 px-3 py-2 text-center text-[10.5px] text-muted-foreground">
+          {card.footnote}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -673,7 +792,8 @@ export function AssistantCardView({
       </div>
     );
   }
-  if (card.kind === "confirm_action") return <ConfirmCard card={card} onDecided={onDecided} />;
+  if (card.kind === "confirm_action")
+    return <ConfirmCard card={card} onDecided={onDecided} onClose={onClose} />;
   if (card.kind === "checkout") return <CheckoutOrderCard card={card} onClose={onClose} />;
   if (card.kind === "deposit") return <DepositPreparedCard card={card} onClose={onClose} />;
   if (card.kind === "withdrawal") return <WithdrawalPreparedCard card={card} onClose={onClose} />;
@@ -681,5 +801,6 @@ export function AssistantCardView({
   if (card.kind === "sale") return <SalePreparedCard card={card} onClose={onClose} />;
   if (card.kind === "installment") return <InstallmentPreparedCard card={card} onClose={onClose} />;
   if (card.kind === "comparison") return <ComparisonCardView card={card} onClose={onClose} />;
+  if (card.kind === "document") return <DocumentPreparedCard card={card} onClose={onClose} />;
   return null;
 }

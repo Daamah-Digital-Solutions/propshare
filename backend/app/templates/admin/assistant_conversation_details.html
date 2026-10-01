@@ -28,6 +28,20 @@
             {% if m.key %} · key {{ m.key }}{% endif %}
           </div>
           <div style="white-space: pre-wrap;">{{ m.text }}</div>
+          {% if m.pictures %}
+            <div class="mt-2 d-flex flex-wrap gap-2">
+              {% for src in m.pictures %}
+                <img src="{{ src }}" alt="Picture the user sent" style="max-width: 100%; max-height: 420px; border-radius: 6px; border: 1px solid #ddd;">
+              {% endfor %}
+            </div>
+          {% endif %}
+          {% if m.files %}
+            <div class="mt-2">
+              {% for f in m.files %}
+                <div><i class="fa-solid fa-paperclip me-1"></i><a href="{{ f.url }}">{{ f.name }}</a> <span class="text-muted small">({{ f.size }}; the download is written to the audit log)</span>{% if f.unreadable %} <span class="badge bg-warning text-dark">the AI could not open it</span>{% endif %}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
           {% if m.flags %}
             <div class="mt-2">{% for f in m.flags %}<span class="badge bg-warning text-dark me-1">{{ f }}</span>{% endfor %}</div>
           {% endif %}

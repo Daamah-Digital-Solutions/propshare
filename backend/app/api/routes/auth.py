@@ -17,6 +17,8 @@ from app.api.deps import PrincipalDep, SessionDep, current_principal
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.ratelimit import (
+    EMAIL_CHANGE_LIMIT,
+    EMAIL_LINK_LIMIT,
     FORGOT_LIMIT,
     LOGIN_LIMIT,
     MFA_LIMIT,
@@ -28,6 +30,12 @@ from app.models import KycVerification, Wallet
 from app.models.identity import User
 from app.schemas.auth import (
     ChangePasswordIn,
+    EmailChangeIn,
+    EmailChangeLinkIn,
+    EmailChangeLinkOut,
+    EmailChangeOut,
+    EmailChangeRejectOut,
+    EmailChangeStatusOut,
     ForgotPasswordIn,
     LoginIn,
     LoginOut,
@@ -47,7 +55,7 @@ from app.schemas.auth import (
     VerifyEmailIn,
     WalletSummary,
 )
-from app.services import auth_service, mfa_service
+from app.services import auth_service, email_change_service, mfa_service
 from app.services.integrations import oauth
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -313,6 +321,69 @@ async def resend_verification(request: Request, principal: PrincipalDep, session
     """A fresh verification link for the signed-in user (also the assistant's executor)."""
     await auth_service.resend_verification(session, user_id=principal.user_id)
     return Response(status_code=204)
+
+
+# --------------------------------------------------------------------------- #
+# Changing the sign-in email: approved from the current address, confirmed from the new one
+# --------------------------------------------------------------------------- #
+def _change_out(req) -> EmailChangeOut:
+    return EmailChangeOut(
+        status=req.status,
+        new_email=email_change_service.mask_email(req.new_email),
+        sent_to=email_change_service.mask_email(
+            req.old_email if req.status == "awaiting_approval" else req.new_email
+        ),
+        expires_at=req.expires_at,
+    )
+
+
+@router.get("/email-change", response_model=EmailChangeStatusOut)
+async def email_change_status(principal: PrincipalDep, session: SessionDep):
+    req = await email_change_service.pending_request(session, user_id=principal.user_id)
+    return EmailChangeStatusOut(pending=_change_out(req) if req else None)
+
+
+@router.post("/email-change", response_model=EmailChangeOut, status_code=202)
+@limiter.limit(EMAIL_CHANGE_LIMIT)
+async def start_email_change(
+    body: EmailChangeIn, request: Request, principal: PrincipalDep, session: SessionDep
+):
+    """Start a change: the approval link goes to the CURRENT address; nothing changes yet."""
+    req = await email_change_service.request_change(
+        session, user_id=principal.user_id, new_email=body.new_email, source="settings"
+    )
+    return _change_out(req)
+
+
+@router.post("/email-change/cancel", status_code=204)
+async def cancel_email_change(principal: PrincipalDep, session: SessionDep):
+    await email_change_service.cancel_request(session, user_id=principal.user_id)
+    return Response(status_code=204)
+
+
+@router.post("/email-change/inspect", response_model=EmailChangeLinkOut)
+@limiter.limit(EMAIL_LINK_LIMIT)
+async def inspect_email_change_link(body: EmailChangeLinkIn, request: Request, session: SessionDep):
+    """What a link from the emails is about, changing nothing. Opening a link never acts (mail
+    scanners open links on their own): the page shows this and waits for a button."""
+    return EmailChangeLinkOut(**await email_change_service.inspect_link(session, raw=body.token))
+
+
+@router.post("/email-change/confirm", response_model=EmailChangeOut)
+@limiter.limit(EMAIL_LINK_LIMIT)
+async def follow_email_change_link(body: EmailChangeLinkIn, request: Request, session: SessionDep):
+    """The button on either link's page (no sign-in needed: the link is the proof). The
+    approval sends the confirmation link; the confirmation makes the change."""
+    out = await email_change_service.follow_link(session, raw=body.token)
+    return EmailChangeOut(status=out["status"], new_email=out["new_email"])
+
+
+@router.post("/email-change/reject", response_model=EmailChangeRejectOut)
+@limiter.limit(EMAIL_LINK_LIMIT)
+async def reject_email_change_link(body: EmailChangeLinkIn, request: Request, session: SessionDep):
+    """ "This wasn't me" on either link's page: the change stops (and, from the current
+    address, every device is signed out)."""
+    return EmailChangeRejectOut(**await email_change_service.reject_link(session, raw=body.token))
 
 
 @router.post("/password/forgot", status_code=202)

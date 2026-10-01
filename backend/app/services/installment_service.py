@@ -922,16 +922,15 @@ def _payment_label(p: InstallmentPayment) -> str:
     return f"Month {p.seq}"
 
 
-async def build_schedule_pdf(
+async def _schedule_facts(
     session: AsyncSession, *, investor_id: uuid.UUID, plan_id: uuid.UUID
-) -> tuple[str, bytes]:
-    """Return (filename, pdf_bytes) — the caller's own installment plan as a branded PDF
-    (official design + logo). All figures are server-authoritative, summed from the real
-    schedule rows; 404 if the plan isn't the caller's."""
+) -> dict:
+    """What the schedule PDF and spreadsheet show, summed from the real schedule rows (so the
+    two files always agree); 404 if the plan isn't the caller's."""
     plan = await session.get(InstallmentPlan, plan_id)
     if plan is None or plan.investor_id != investor_id:
         raise AppError("NOT_FOUND", "Installment plan not found.", status_code=404)
-    payments = await _payments_for(session, plan.id)
+    payments = sorted(await _payments_for(session, plan.id), key=lambda x: x.seq)
     prop = await session.get(Property, plan.property_id)
     if prop is None:
         raise AppError("PROPERTY_NOT_FOUND", "Property not found.", status_code=404)
@@ -940,14 +939,37 @@ async def build_schedule_pdf(
 
     contract = sum((p.base_amount for p in payments), decimal.Decimal("0"))
     fees = sum((p.fee_amount for p in payments), decimal.Decimal("0"))
-    grand = contract + fees
     paid = sum((p.total_amount for p in payments if p.status == "paid"), decimal.Decimal("0"))
-    remaining = grand - paid
     unpaid = sorted((p for p in payments if p.status != "paid"), key=lambda x: x.due_date)
     if unpaid:
         next_due = unpaid[0].due_date.strftime("%b %d, %Y")
     else:
         next_due = "Completed" if plan.status == "completed" else "-"
+    return {
+        "plan": plan,
+        "prop": prop,
+        "holder": holder,
+        "payments": payments,
+        "contract": contract,
+        "fees": fees,
+        "grand": contract + fees,
+        "paid": paid,
+        "remaining": contract + fees - paid,
+        "next_due": next_due,
+        "plan_ref": ("CMX-INS-" + str(plan.id)[:8]).upper(),
+        "issued": _utcnow(),
+        "slug": prop.slug or str(prop.id),
+    }
+
+
+async def build_schedule_pdf(
+    session: AsyncSession, *, investor_id: uuid.UUID, plan_id: uuid.UUID
+) -> tuple[str, bytes]:
+    """Return (filename, pdf_bytes) — the caller's own installment plan as a branded PDF
+    (official design + logo). All figures are server-authoritative, summed from the real
+    schedule rows; 404 if the plan isn't the caller's."""
+    f = await _schedule_facts(session, investor_id=investor_id, plan_id=plan_id)
+    plan, prop = f["plan"], f["prop"]
 
     def money(d: decimal.Decimal) -> str:
         return f"${d:,.2f}"
@@ -961,11 +983,11 @@ async def build_schedule_pdf(
             "total": money(p.total_amount),
             "status": p.status.capitalize(),
         }
-        for p in sorted(payments, key=lambda x: x.seq)
+        for p in f["payments"]
     ]
 
     pdf = installment_pdf.render_schedule_pdf(
-        holder=holder,
+        holder=f["holder"],
         property_title=prop.title,
         location=prop.location or "-",
         spv=prop.spv_name or f"{prop.title} SPV",
@@ -976,18 +998,93 @@ async def build_schedule_pdf(
         down_payment_pct=plan.down_payment_pct,
         duration_months=plan.duration_months,
         fee_rate=str(plan.fee_rate),
-        contract_value=money(contract),
-        total_fees=money(fees),
-        grand_total=money(grand),
-        total_paid=money(paid),
-        remaining_balance=money(remaining),
-        next_due=next_due,
-        plan_ref=("CMX-INS-" + str(plan.id)[:8]).upper(),
-        issued=_utcnow().strftime("%b %d, %Y"),
+        contract_value=money(f["contract"]),
+        total_fees=money(f["fees"]),
+        grand_total=money(f["grand"]),
+        total_paid=money(f["paid"]),
+        remaining_balance=money(f["remaining"]),
+        next_due=f["next_due"],
+        plan_ref=f["plan_ref"],
+        issued=f["issued"].strftime("%b %d, %Y"),
         rows=rows,
     )
-    slug = prop.slug or str(prop.id)
-    return f"installment-schedule-{slug}.pdf", pdf
+    return f"installment-schedule-{f['slug']}.pdf", pdf
+
+
+async def build_schedule_xlsx(
+    session: AsyncSession, *, investor_id: uuid.UUID, plan_id: uuid.UUID
+) -> tuple[str, bytes]:
+    """The same plan as the PDF, as an Excel workbook (figures as numbers, dates as dates), for
+    an investor who wants to work with their schedule; 404 if the plan isn't the caller's."""
+    import io
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    f = await _schedule_facts(session, investor_id=investor_id, plan_id=plan_id)
+    plan, prop = f["plan"], f["prop"]
+    money = "#,##0.00"
+    head_fill = PatternFill("solid", fgColor="0F6E4C")
+    head_font = Font(bold=True, color="FFFFFF")
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Installment schedule"
+    meta = [
+        ("Capimax PropShare — Installment schedule", None, None),
+        ("Holder", f["holder"], None),
+        ("Property", prop.title, None),
+        ("Location", prop.location or "-", None),
+        ("Plan reference", f["plan_ref"], None),
+        ("Status", plan.status.capitalize(), None),
+        ("Units", plan.units_total, None),
+        ("Units vested", plan.vested_units, None),
+        ("Unit price (USD)", plan.unit_price, money),
+        ("Down payment (%)", plan.down_payment_pct, None),
+        ("Duration (months)", plan.duration_months, None),
+        ("Installment fee (% per payment)", plan.fee_rate, None),
+        ("Contract value (USD)", f["contract"], money),
+        ("Total fees (USD)", f["fees"], money),
+        ("Grand total (USD)", f["grand"], money),
+        ("Paid so far (USD)", f["paid"], money),
+        ("Remaining (USD)", f["remaining"], money),
+        ("Next due", f["next_due"], None),
+        ("Issued (UTC)", f["issued"].strftime("%Y-%m-%d %H:%M"), None),
+    ]
+    for label, value, fmt in meta:
+        ws.append([label, value])
+        if fmt:
+            ws.cell(row=ws.max_row, column=2).number_format = fmt
+    ws["A1"].font = Font(bold=True, size=14, color="0F6E4C")
+    for row in ws.iter_rows(min_row=2, max_row=len(meta), max_col=1):
+        row[0].font = Font(bold=True)
+    ws.append([])
+
+    ws.append(["Payment", "Due date", "Principal (USD)", "Fee (USD)", "Total (USD)", "Status"])
+    head_row = ws.max_row
+    for cell in ws[head_row]:
+        cell.font, cell.fill = head_font, head_fill
+    for p in f["payments"]:
+        ws.append(
+            [
+                _payment_label(p),
+                p.due_date,
+                p.base_amount,
+                p.fee_amount,
+                p.total_amount,
+                p.status.capitalize(),
+            ]
+        )
+        ws.cell(row=ws.max_row, column=2).number_format = "yyyy-mm-dd"
+        for col in (3, 4, 5):
+            ws.cell(row=ws.max_row, column=col).number_format = money
+    ws.freeze_panes = ws.cell(row=head_row + 1, column=1)
+    for col, width in zip("ABCDEF", (34, 22, 16, 13, 15, 12), strict=True):
+        ws.column_dimensions[col].width = width
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return f"installment-schedule-{f['slug']}.xlsx", buf.getvalue()
 
 
 # --- due-payment cron (admin OR X-Cron-Secret) ------------------------------ #

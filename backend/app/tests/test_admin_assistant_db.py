@@ -135,6 +135,54 @@ async def test_transcript_page_decrypts_and_is_audited(client, db, asession, key
 
 
 @pytest.mark.asyncio
+async def test_attached_files_open_from_the_transcript_and_each_download_is_audited(
+    client, db, asession, keys
+):
+    import io
+
+    from PIL import Image
+    from pypdf import PdfWriter
+
+    from app.services.assistant import attachments
+
+    admin = await _panel_user(client, db, "admin.files@x.com", "admin")
+    uid, cid, _ticket = await _conversation_with_ticket(client, db, asession, "files@x.com")
+    writer = PdfWriter()
+    writer.add_blank_page(width=100, height=100)
+    pdf = io.BytesIO()
+    writer.write(pdf)
+    png = io.BytesIO()
+    Image.new("RGB", (20, 10), (1, 2, 3)).save(png, "PNG")
+    msg = db("SELECT id FROM assistant_messages WHERE conversation_id=:c AND role='user'", c=cid)[
+        0
+    ][0]
+    for data, name in ((pdf.getvalue(), "receipt.pdf"), (png.getvalue(), "shot.png")):
+        row = await attachments.store_upload(
+            asession,
+            user_id=uid,
+            conversation_id=cid,
+            data=data,
+            filename=name,
+            max_mb=10,
+            daily_cap=30,
+        )
+        row.message_id = msg
+    await asession.commit()
+    file_id = db("SELECT id FROM assistant_attachments WHERE kind='file'")[0][0]
+
+    await _panel_login(client, "admin.files@x.com")
+    r = await client.get(f"/admin/assistant-conversation/details/{cid}")
+    assert r.status_code == 200
+    assert f"/admin/assistant-attachment?id={file_id}" in r.text and "receipt.pdf" in r.text
+    assert "data:image/png;base64," in r.text  # the picture shows inline
+    r = await client.get(f"/admin/assistant-attachment?id={file_id}")
+    assert r.status_code == 200 and r.content == pdf.getvalue()
+    assert r.headers["content-disposition"] == 'attachment; filename="receipt.pdf"'
+    audit = db("SELECT actor_id, after FROM audit_log WHERE action='assistant.attachment_viewed'")
+    assert audit == [(admin, {"attachment_id": str(file_id), "filename": "receipt.pdf"})]
+
+
+@pytest.mark.asyncio
 async def test_content_editor_is_locked_out_of_every_assistant_page(client, db, asession, keys):
     _uid, cid, ticket = await _conversation_with_ticket(client, db, asession)
     await _panel_user(client, db, "editor@x.com", "content_editor")
@@ -149,6 +197,7 @@ async def test_content_editor_is_locked_out_of_every_assistant_page(client, db, 
         "/admin/kb-article/create",
         "/admin/assistant-action-proposal/list",
         "/admin/assistant-status",
+        f"/admin/assistant-attachment?id={uuid.uuid4()}",
     ):
         r = await client.get(path)
         assert r.status_code == 403, (path, r.status_code)

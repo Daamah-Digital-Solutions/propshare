@@ -15,6 +15,7 @@ import { profileApi, authApi, notificationApi, ApiError } from "@/lib/api";
 import type { NotificationPreferences as ApiNotificationPreferences } from "@/lib/api";
 import { RoleAccessCard } from "@/components/account/RoleAccessCard";
 import { TwoFactorSettings } from "@/components/account/TwoFactorSettings";
+import { EmailChangeControl } from "@/components/account/EmailChangeControl";
 import {
   Settings,
   User,
@@ -342,7 +343,7 @@ const AccountSettings = () => {
                       className="pl-10 bg-muted"
                     />
                   </div>
-                  <p className="text-xs text-muted-foreground">Email cannot be changed</p>
+                  <EmailChangeControl />
                 </div>
 
                 <div className="space-y-2">

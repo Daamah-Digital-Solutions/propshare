@@ -9,10 +9,10 @@ What each test protects:
   * a proposed action executes exactly once, only for its owner, with audit + system note;
     the three executors do what they say (email token + verification cap, notifications,
     structured ticket) and a failing executor is recorded, not hidden;
-  * a ticket handed off from a conversation carries NO chat text (sentinel test) — not in
-    the ticket, not in its context, not in the support email — but does carry the audited
-    transcript link; the LLM-free form works for members and visitors; internal notes stay
-    internal; other users get 404;
+  * a ticket handed off from a conversation carries the subject and description the user
+    confirmed on the card and NO other chat text (sentinel test) — not in the ticket, not in
+    its context, not in the support email — plus the audited transcript link; the LLM-free
+    form works for members and visitors; internal notes stay internal; other users get 404;
   * retention purge deletes old conversations only; key rotation re-encrypts every row with
     the active key and old rows stay readable.
 """
@@ -322,7 +322,14 @@ async def test_ticket_handoff_carries_no_chat_text_and_executes_once(
             tool_calls=[
                 FakeToolCall(
                     "propose_action",
-                    {"action": "create_support_ticket", "category": "payments", "priority": "high"},
+                    {
+                        "action": "create_support_ticket",
+                        "category": "payments",
+                        "priority": "high",
+                        "subject": "Card deposit not in the wallet",
+                        "description": "I paid a deposit by card today and it is not in my "
+                        "wallet yet. Please check it.",
+                    },
                 )
             ],
         ),
@@ -334,6 +341,14 @@ async def test_ticket_handoff_carries_no_chat_text_and_executes_once(
         e["data"] for e in events if e["event"] == "card" and e["data"]["kind"] == "confirm_action"
     )
     pid, token = card["proposal_id"], card["token"]
+    # the user reads exactly what will be sent before confirming
+    assert card["details"] == [
+        ["Subject", "Card deposit not in the wallet"],
+        [
+            "What happened",
+            "I paid a deposit by card today and it is not in my wallet yet. Please check it.",
+        ],
+    ]
 
     # wrong user, wrong token, then the real confirmation, then a replay
     r = await client.post(
@@ -355,20 +370,32 @@ async def test_ticket_handoff_carries_no_chat_text_and_executes_once(
     assert r.status_code == 409 and r.json()["error"]["code"] == "PROPOSAL_USED"
     assert db("SELECT count(*) FROM support_tickets")[0][0] == 1
 
-    # the ticket: structured summary, transcript link, refs, tool names — and NO chat text
+    # the ticket: the confirmed subject + description, the structured summary, the transcript
+    # link, refs, tool names, and NOTHING else from the chat
     t = db(
         "SELECT ticket_no, kind, category, priority, subject, summary, context::text, source, user_id, conversation_id FROM support_tickets"
     )[0]
     assert t[1] == "support" and t[2] == "payments" and t[3] == "high" and t[7] == "assistant"
     assert t[8] == uid and str(t[9]) == cid
+    assert t[4] == "Card deposit not in the wallet"
     assert SENTINEL not in (t[4] or "") and SENTINEL not in (t[5] or "") and SENTINEL not in t[6]
     assert f"/admin/assistant-conversation/details/{cid}" in t[5]
     assert "get_my_wallet, propose_action" in t[5] and "Conversation turns: 1" in t[5]
     assert "KYC status: verified" in t[5]
-    assert db("SELECT count(*) FROM support_ticket_messages")[0][0] == 0
-    # the support inbox email: same summary, no chat text
+    # the description is the ticket's first message, in the user's name
+    msgs = db("SELECT author_type, author_id, body, internal FROM support_ticket_messages")
+    assert msgs == [
+        (
+            "user",
+            uid,
+            "I paid a deposit by card today and it is not in my wallet yet. Please check it.",
+            False,
+        )
+    ]
+    # the support inbox email: the confirmed description + summary, no other chat text
     mail = db("SELECT to_email, subject, body FROM email_outbox WHERE category='support'")
     assert len(mail) == 1 and mail[0][0] == "support@test.io" and t[0] in mail[0][1]
+    assert "it is not in my wallet yet" in mail[0][2]
     assert (
         SENTINEL not in mail[0][2] and f"/admin/assistant-conversation/details/{cid}" in mail[0][2]
     )

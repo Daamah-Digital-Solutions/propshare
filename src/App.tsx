@@ -57,6 +57,7 @@ const DeveloperProfile = lazy(() => import("./pages/DeveloperProfile"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
+const ConfirmEmailChange = lazy(() => import("./pages/ConfirmEmailChange"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
@@ -148,6 +149,7 @@ const App = () => (
                   <Route path="/auth/callback/:provider" element={<AuthCallback />} />
                   <Route path="/reset-password" element={<ResetPassword />} />
                   <Route path="/verify-email" element={<VerifyEmail />} />
+                  <Route path="/confirm-email-change" element={<ConfirmEmailChange />} />
                   <Route path="/install" element={<InstallApp />} />
                   <Route path="/support" element={<Support />} />
                   <Route

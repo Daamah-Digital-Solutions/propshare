@@ -63,12 +63,19 @@ _SETTING_SPECS: dict[str, str] = {
     "assistant_max_output_tokens": "int",
     "assistant_daily_message_cap": "int",
     "assistant_daily_token_budget": "int",
+    "assistant_user_daily_token_cap": "int",
     "assistant_visitor_daily_cap": "int",
     "assistant_consent_required": "bool",
     "assistant_retention_days": "int",
     "assistant_model_pricing": "json_object",
     "assistant_cache_warm_minutes": "int",
     "assistant_reply_language": "enum:auto,en",
+    "assistant_attachments_enabled": "bool",
+    "assistant_attachments_per_message": "int",
+    "assistant_attachment_max_mb": "int",
+    "assistant_attachments_daily_cap": "int",
+    "assistant_file_max_pages": "int",
+    "assistant_image_detail": "enum:auto,low,high",
     "support_sla_hours_normal": "int",
     "support_sla_hours_high": "int",
     "ops_stale_hours": "int",
@@ -200,6 +207,9 @@ DEFAULTS: dict[str, str] = {
     "assistant_disabled_tools": "",
     "assistant_daily_message_cap": "200",
     "assistant_daily_token_budget": "20000000",
+    # one member's share of it per UTC day (files make turns heavy): one person cannot use
+    # up the day's budget for everyone; 0 = no cap
+    "assistant_user_daily_token_cap": "2000000",
     # all visitors together, per UTC day (visitors are anonymous: a new browser key is free)
     "assistant_visitor_daily_cap": "1000",
     # a notice to accept before the first message (members) / read (visitors). Off by owner
@@ -212,6 +222,15 @@ DEFAULTS: dict[str, str] = {
     "assistant_cache_warm_minutes": "20",
     # "en": always answer in English (owner decision 2026-09-24); "auto": the user's language
     "assistant_reply_language": "en",
+    # pictures and files in the chat (client, 2026-10-01: "send a screenshot or a file about
+    # the problem"): signed-in users only, checked by content and encrypted on upload. The
+    # model must read images and files (the Responses API reads PDF, Office, CSV and text).
+    "assistant_attachments_enabled": "true",
+    "assistant_attachments_per_message": "3",
+    "assistant_attachment_max_mb": "10",  # per picture or file, as uploaded
+    "assistant_attachments_daily_cap": "30",  # per user per UTC day
+    "assistant_file_max_pages": "30",  # a PDF's pages (each page is read as text and image)
+    "assistant_image_detail": "auto",  # the provider's detail level for each picture
     # Support SLA (Batch C): hours without a public staff reply before escalation
     "support_sla_hours_normal": "24",
     "support_sla_hours_high": "8",

@@ -14,6 +14,8 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+import pytest
+
 PW = "Passw0rd!23"
 
 
@@ -459,6 +461,41 @@ async def test_plan_carries_property_and_schedule_pdf(client, db):
         f"/api/v1/installments/{plan['id']}/schedule.pdf", headers=_h(b_tok)
     )
     assert forbidden.status_code == 404
+
+
+async def test_schedule_downloads_as_excel_with_the_same_figures(client, db):
+    import io
+
+    from openpyxl import load_workbook
+
+    tok, uid = await _user(client, db, "in-xlsx@x.com")
+    _kyc_verify(db, uid)
+    _set_balance(db, uid, 100000)
+    pid = _seed_property(db)
+    plan = (await _create(client, tok, pid, amount=1200, duration=12)).json()
+    r = await client.get(f"/api/v1/installments/{plan['id']}/schedule.xlsx", headers=_h(tok))
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert 'filename="installment-schedule-' in r.headers["content-disposition"]
+    ws = load_workbook(io.BytesIO(r.content)).active
+    facts = {row[0].value: row[1].value for row in ws.iter_rows(max_col=2) if row[0].value}
+    assert facts["Property"] == "Tower"
+    assert facts["Duration (months)"] == 12
+    rows = [
+        row
+        for row in ws.iter_rows(values_only=True)
+        if row[0] and str(row[0]).startswith(("Month", "Final"))
+    ]
+    assert len(rows) == len([p for p in plan["payments"] if p["kind"] != "downpayment"])
+    # the workbook's total is the plan's own (numbers, not text)
+    total = sum(float(p["total_amount"]) for p in plan["payments"])
+    assert float(facts["Grand total (USD)"]) == pytest.approx(total)
+    # owner-scoped, like the PDF
+    b_tok, _b = await _user(client, db, "in-xlsx-b@x.com")
+    other = await client.get(f"/api/v1/installments/{plan['id']}/schedule.xlsx", headers=_h(b_tok))
+    assert other.status_code == 404
 
 
 # --- the installment fee reaches the property detail (server-driven) -------- #

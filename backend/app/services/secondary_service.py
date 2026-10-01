@@ -76,6 +76,17 @@ async def reserved_units(session: AsyncSession, user_id: uuid.UUID, property_id:
     secondary listings AND open LP exit requests. The single shared reservation rule
     (Phase 9 fix): a unit can never sit on both markets at once, in either order.
     Callers must hold the property row ``FOR UPDATE`` while using this."""
+    return sum((await reservation_breakdown(session, user_id, property_id)).values())
+
+
+async def reservation_breakdown(
+    session: AsyncSession, user_id: uuid.UUID, property_id: uuid.UUID
+) -> dict[str, int]:
+    """The parts of ``reserved_units``, by reason, so a holder can be told WHY units cannot be
+    sold: ``listed`` (active secondary listings), ``lp_exit`` (open liquidity-provider exit
+    requests), ``family_pending`` (promised to family members not registered yet), ``gift``
+    (scheduled gifts), ``installment_plan`` (vested under a plan that is still running) and
+    ``pledged`` (an approved Nova Sukuk certificate's pledge)."""
     secondary = await session.scalar(
         select(func.coalesce(func.sum(SecondaryListing.units_remaining), 0)).where(
             SecondaryListing.seller_id == user_id,
@@ -124,14 +135,32 @@ async def reserved_units(session: AsyncSession, user_id: uuid.UUID, property_id:
         )
     )
     nova_pledged = await pledged_units(session, user_id, property_id)
-    return (
-        int(secondary or 0)
-        + int(lp_open or 0)
-        + int(family_pending or 0)
-        + int(gift_reserved or 0)
-        + int(installment_vested or 0)
-        + int(nova_pledged or 0)
-    )
+    return {
+        "listed": int(secondary or 0),
+        "lp_exit": int(lp_open or 0),
+        "family_pending": int(family_pending or 0),
+        "gift": int(gift_reserved or 0),
+        "installment_plan": int(installment_vested or 0),
+        "pledged": int(nova_pledged or 0),
+    }
+
+
+async def lockup_until(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    property_id: uuid.UUID,
+    now: dt.datetime | None = None,
+) -> dt.datetime | None:
+    """When the resale lock-up on this holding ends, if it is still running (None when there
+    is no lock-up or it is over)."""
+    days = int((await settings_service.get_secondary_settings(session))["lockup_days"] or 0)
+    if days <= 0:
+        return None
+    first = await _earliest_acquisition(session, user_id, property_id)
+    if first is None:
+        return None
+    unlock = first + dt.timedelta(days=days)
+    return unlock if (now or _utcnow()) < unlock else None
 
 
 async def pledged_units(session: AsyncSession, user_id: uuid.UUID, property_id: uuid.UUID) -> int:
@@ -508,8 +537,9 @@ async def my_holdings(session: AsyncSession, user_id: uuid.UUID) -> list[dict]:
         held = int(units or 0)
         if held <= 0:
             continue
-        reserved = await reserved_units(session, user_id, pid)
-        pledged = await pledged_units(session, user_id, pid)
+        held_back = await reservation_breakdown(session, user_id, pid)
+        reserved = sum(held_back.values())
+        pledged = held_back["pledged"]
         out.append(
             {
                 "property_id": str(pid),
@@ -520,6 +550,7 @@ async def my_holdings(session: AsyncSession, user_id: uuid.UUID) -> list[dict]:
                 "pledged_units": pledged,
                 "sellable_units": max(0, held - reserved),
                 "unit_price": str(unit_price),
+                "held_back": held_back,
             }
         )
     return out

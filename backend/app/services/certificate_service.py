@@ -399,6 +399,17 @@ async def _held_property_ids(session: AsyncSession, user_id: uuid.UUID) -> list[
     return [r[0] for r in res.all()]
 
 
+def ownership_pct(units: int, total_units: int) -> str:
+    """A holder's share of the property as a percentage, precise enough that a small holding
+    never reads 0.00%: two decimals from 1% up, else four significant figures (1 unit of
+    42,000 is 0.002381%). "-" when the property has no unit count."""
+    if total_units <= 0 or units <= 0:
+        return "-"
+    pct = decimal.Decimal(units) / decimal.Decimal(total_units) * 100
+    step = decimal.Decimal("0.01") if pct >= 1 else decimal.Decimal(1).scaleb(pct.adjusted() - 3)
+    return f"{format(pct.quantize(step).normalize(), 'f')}%"
+
+
 def certificate_reference(property_id: uuid.UUID | str, user_id: uuid.UUID | str) -> str:
     """The reference printed on a holder's certificate for one property: derived from the
     property and the holder, so it is stable and never random. The investor's Verification tab
@@ -430,12 +441,7 @@ async def build_for_holding(
 
     unit_price = decimal.Decimal(str(prop.unit_price or 0))
     value = (unit_price * units).quantize(decimal.Decimal("0.01"))
-    total_units = int(prop.total_units or 0)
-    ownership = (
-        f"{(decimal.Decimal(units) / total_units * 100).quantize(decimal.Decimal('0.01'))}%"
-        if total_units > 0
-        else "-"
-    )
+    ownership = ownership_pct(units, int(prop.total_units or 0))
     jurisdiction = prop.country or getattr(prop, "city", None) or prop.location or "-"
     cert_ref = certificate_reference(property_id, user_id)
     issued = (now or dt.datetime.now(dt.UTC)).strftime("%b %d, %Y")

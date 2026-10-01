@@ -6,7 +6,15 @@ import datetime as dt
 import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+
+
+class AttachmentsOut(BaseModel):
+    """What this caller may attach to a message (signed-in users only)."""
+
+    per_message: int
+    max_mb: int
+    max_pages: int
 
 
 class StatusOut(BaseModel):
@@ -22,6 +30,8 @@ class StatusOut(BaseModel):
     rollout: str
     reply_language: str = "auto"  # "en": the widget stays in English
     privacy_notice: bool = False  # show the notice before the first message (setting)
+    # pictures and files in the chat for THIS caller (signed-in users only)
+    attachments: AttachmentsOut | None = None
 
 
 class ConsentIn(BaseModel):
@@ -46,10 +56,30 @@ class ConversationOut(BaseModel):
 
 class MessageIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    text: str = Field(min_length=1, max_length=4000)
+    # may be empty when something is attached ("what is this?" can be the file alone)
+    text: str = Field(default="", max_length=4000)
     lang: Literal["en", "ar"] = "en"
     # the SPA path the user has open ("this property"); validated against our routes
     page: str | None = Field(default=None, max_length=300)
+    # pictures and files uploaded to this conversation for this message (POST .../attachments)
+    attachment_ids: list[uuid.UUID] = Field(default_factory=list, max_length=6)
+
+    @model_validator(mode="after")
+    def _something_to_send(self) -> MessageIn:
+        if not self.text.strip() and not self.attachment_ids:
+            raise ValueError("Write a message or attach a file.")
+        return self
+
+
+class AttachmentOut(BaseModel):
+    id: uuid.UUID
+    kind: Literal["image", "file"]
+    filename: str
+    mime: str
+    size_bytes: int
+    width: int | None = None
+    height: int | None = None
+    pages: int | None = None
 
 
 class MessageOut(BaseModel):
@@ -60,6 +90,7 @@ class MessageOut(BaseModel):
     confidence: str | None
     feedback: str | None
     created_at: dt.datetime
+    attachments: list[AttachmentOut] = Field(default_factory=list)
 
 
 class ConfirmIn(BaseModel):

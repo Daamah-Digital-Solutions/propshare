@@ -47,7 +47,28 @@ INCLUDE = ["reasoning.encrypted_content"]
 def to_input_items(items: tuple) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for it in items:
-        if isinstance(it, UserMessage):
+        if isinstance(it, UserMessage) and (it.images or it.files):
+            # text first, then each picture and document inline as a data URL (the provider
+            # never fetches a URL of ours)
+            parts: list[dict[str, Any]] = [{"type": "input_text", "text": it.text}]
+            parts += [
+                {
+                    "type": "input_image",
+                    "image_url": f"data:{im.mime};base64,{im.data_b64}",
+                    "detail": im.detail,
+                }
+                for im in it.images
+            ]
+            parts += [
+                {
+                    "type": "input_file",
+                    "filename": f.filename,
+                    "file_data": f"data:{f.mime};base64,{f.data_b64}",
+                }
+                for f in it.files
+            ]
+            out.append({"role": "user", "content": parts})
+        elif isinstance(it, UserMessage):
             out.append({"role": "user", "content": it.text})
         elif isinstance(it, AssistantMessage):
             out.append({"role": "assistant", "content": it.text})

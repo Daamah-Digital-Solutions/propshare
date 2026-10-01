@@ -522,6 +522,7 @@ class FamilyReturnAllocation(Base):
 # Phase 2 compliance tables (audit log + webhook idempotency). DDL owned by 0003.
 from app.models.assistant import (  # noqa: E402
     AssistantActionProposal,
+    AssistantAttachment,
     AssistantConsent,
     AssistantConversation,
     AssistantMessage,
@@ -546,6 +547,7 @@ from app.models.estate import (  # noqa: E402
 )
 from app.models.gifting import ScheduledGift  # noqa: E402
 from app.models.identity import (  # noqa: E402
+    EmailChangeRequest,
     EmailToken,
     OAuthIdentity,
     RefreshToken,
@@ -593,6 +595,7 @@ __all__ = [
     "OAuthIdentity",
     "RefreshToken",
     "EmailToken",
+    "EmailChangeRequest",
     "RoleGrantRequest",
     # compliance (Phase 2)
     "AuditLog",
@@ -650,6 +653,7 @@ __all__ = [
     "AssistantConversation",
     "AssistantMessage",
     "AssistantActionProposal",
+    "AssistantAttachment",
     "AssistantConsent",
     "SupportTicket",
     "SupportTicketMessage",

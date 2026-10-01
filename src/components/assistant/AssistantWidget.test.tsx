@@ -20,6 +20,9 @@ const { authState, api, stream } = vi.hoisted(() => ({
     confirm: vi.fn(),
     cancel: vi.fn(),
     feedback: vi.fn(),
+    uploadAttachment: vi.fn(),
+    attachmentBlob: vi.fn(),
+    deleteAttachment: vi.fn(),
   },
   stream: { events: [] as unknown[], calls: [] as unknown[][] },
 }));
@@ -65,10 +68,155 @@ describe("AssistantWidget", () => {
     api.createConversation.mockResolvedValue({ id: "conv-1" });
     api.messages.mockResolvedValue([]);
     api.feedback.mockResolvedValue(null);
+    api.deleteAttachment.mockResolvedValue(undefined);
     stream.events = [];
     stream.calls = [];
+    // jsdom has no object URLs: previews of picked pictures need them
+    URL.createObjectURL = vi.fn(() => "blob:preview");
+    URL.revokeObjectURL = vi.fn();
   });
   afterEach(() => vi.restoreAllMocks());
+
+  const withAttachments = { ...enabled, attachments: { per_message: 3, max_mb: 10, max_pages: 30 } };
+  const done = { event: "done", data: { message_id: "m1", confidence: "normal", flags: [], usage: {}, latency_ms: 1, first_token_ms: 1, safe_mode: null } };
+
+  it("sends a picture with the message: picked, uploaded, shown, its id sent", async () => {
+    api.status.mockResolvedValue(withAttachments);
+    api.uploadAttachment.mockResolvedValue({ id: "att-1", kind: "image", filename: "shot.png", mime: "image/png", size_bytes: 3, width: 800, height: 600 });
+    stream.events = [{ event: "delta", data: { text: "That is the wallet page." } }, done];
+    renderIt(withAttachments);
+    open();
+    await waitFor(() => expect(screen.getByRole("button", { name: /attach a file or picture/i })).toBeInTheDocument());
+    const file = new File(["png"], "shot.png", { type: "image/png" });
+    fireEvent.change(screen.getByTestId("attachment-input"), { target: { files: [file] } });
+    await waitFor(() => expect(api.uploadAttachment).toHaveBeenCalledWith("conv-1", file));
+    expect(screen.getByTestId("pending-attachments")).toBeInTheDocument();
+    // a picture alone can be sent: no text needed
+    await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await waitFor(() => expect(screen.getByText("That is the wallet page.")).toBeInTheDocument());
+    expect(stream.calls[0][5]).toEqual(["att-1"]);
+    expect(screen.getByTestId("chat-picture")).toHaveAttribute("src", "blob:preview");
+    expect(screen.queryByTestId("pending-attachments")).toBeNull();
+  });
+
+  it("sends a PDF with the message and shows it as a file the user can download again", async () => {
+    api.status.mockResolvedValue(withAttachments);
+    api.uploadAttachment.mockResolvedValue({ id: "att-2", kind: "file", filename: "receipt.pdf", mime: "application/pdf", size_bytes: 52000, pages: 1 });
+    api.attachmentBlob.mockResolvedValue(new Blob(["%PDF"], { type: "application/pdf" }));
+    stream.events = [{ event: "delta", data: { text: "The receipt shows a transfer of $900." } }, done];
+    renderIt(withAttachments);
+    open();
+    await waitFor(() => expect(screen.getByTestId("attachment-input")).toBeInTheDocument());
+    const pdf = new File(["%PDF-1.7"], "receipt.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByTestId("attachment-input"), { target: { files: [pdf] } });
+    await waitFor(() => expect(api.uploadAttachment).toHaveBeenCalledWith("conv-1", pdf));
+    expect(screen.getByTestId("pending-attachments")).toHaveTextContent("receipt.pdf");
+    fireEvent.change(screen.getByPlaceholderText(/type your message/i), { target: { value: "Is my transfer here?" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await waitFor(() => expect(screen.getByText("The receipt shows a transfer of $900.")).toBeInTheDocument());
+    expect(stream.calls[0][5]).toEqual(["att-2"]);
+    const chip = screen.getByTestId("chat-file");
+    expect(chip).toHaveTextContent("receipt.pdf");
+    fireEvent.click(chip);
+    await waitFor(() => expect(api.attachmentBlob).toHaveBeenCalledWith("att-2"));
+  });
+
+  it("takes a file off before sending: gone from the server too, so its slot frees up", async () => {
+    api.status.mockResolvedValue(withAttachments);
+    api.uploadAttachment.mockResolvedValue({ id: "att-3", kind: "file", filename: "old.pdf", mime: "application/pdf", size_bytes: 900, pages: 1 });
+    renderIt(withAttachments);
+    open();
+    await waitFor(() => expect(screen.getByTestId("attachment-input")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("attachment-input"), {
+      target: { files: [new File(["%PDF"], "old.pdf", { type: "application/pdf" })] },
+    });
+    await waitFor(() => expect(screen.getByTestId("pending-attachments")).toHaveTextContent("old.pdf"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: /remove old\.pdf/i }));
+    expect(api.deleteAttachment).toHaveBeenCalledWith("att-3");
+    expect(screen.queryByTestId("pending-attachments")).toBeNull();
+  });
+
+  it("gives the attachments back when the message is not taken, instead of losing them", async () => {
+    api.status.mockResolvedValue(withAttachments);
+    api.uploadAttachment.mockResolvedValue({ id: "att-4", kind: "image", filename: "shot.png", mime: "image/png", size_bytes: 3, width: 8, height: 8 });
+    stream.events = [{ event: "error", data: { code: "DAILY_CAP", message: "You have reached today's message limit." } }];
+    renderIt(withAttachments);
+    open();
+    await waitFor(() => expect(screen.getByTestId("attachment-input")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("attachment-input"), {
+      target: { files: [new File(["png"], "shot.png", { type: "image/png" })] },
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: /send message/i })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: /send message/i }));
+    expect(await screen.findByText("You have reached today's message limit.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("pending-attachments")).toBeInTheDocument());
+    expect(screen.queryByTestId("chat-picture")).toBeNull(); // it was not sent: back in the box
+    expect(api.deleteAttachment).not.toHaveBeenCalled();
+  });
+
+  it("puts pictures picked one right after the other in one new conversation", async () => {
+    api.status.mockResolvedValue(withAttachments);
+    let created: (v: { id: string }) => void = () => undefined;
+    api.createConversation.mockReturnValue(new Promise((resolve) => (created = resolve)));
+    api.uploadAttachment.mockImplementation(async (_cid: string, file: File) => ({
+      id: `att-${file.name}`, kind: "image", filename: file.name, mime: "image/png", size_bytes: 3, width: 8, height: 8,
+    }));
+    renderIt(withAttachments);
+    open();
+    await waitFor(() => expect(screen.getByTestId("attachment-input")).toBeInTheDocument());
+    const input = screen.getByTestId("attachment-input");
+    fireEvent.change(input, { target: { files: [new File(["a"], "a.png", { type: "image/png" })] } });
+    fireEvent.change(input, { target: { files: [new File(["b"], "b.png", { type: "image/png" })] } });
+    created({ id: "conv-7" });
+    await waitFor(() => expect(api.uploadAttachment).toHaveBeenCalledTimes(2));
+    expect(api.createConversation).toHaveBeenCalledTimes(1);
+    expect(api.uploadAttachment.mock.calls.map((c) => c[0])).toEqual(["conv-7", "conv-7"]);
+  });
+
+  it("refuses a kind of file the platform does not take before uploading it", async () => {
+    api.status.mockResolvedValue(withAttachments);
+    renderIt(withAttachments);
+    open();
+    await waitFor(() => expect(screen.getByTestId("attachment-input")).toBeInTheDocument());
+    fireEvent.change(screen.getByTestId("attachment-input"), {
+      target: { files: [new File(["MZ"], "setup.exe", { type: "application/x-msdownload" })] },
+    });
+    expect(await screen.findByText(/send a picture, a pdf, a word, excel/i)).toBeInTheDocument();
+    expect(api.uploadAttachment).not.toHaveBeenCalled();
+  });
+
+  it("offers no attach button to visitors or when the platform does not offer attachments", async () => {
+    api.status.mockResolvedValue(enabled);
+    renderIt(enabled);
+    open();
+    await waitFor(() => expect(screen.getByPlaceholderText(/type your message/i)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /attach a file or picture/i })).toBeNull();
+  });
+
+  it("shows the pictures and files of a reopened chat, fetched back from the server", async () => {
+    api.status.mockResolvedValue(withAttachments);
+    localStorage.setItem("capimax_assistant_conversation:u1", "conv-9");
+    api.messages.mockResolvedValue([
+      {
+        id: "u1m", role: "user", text: "", cards: [], confidence: null, feedback: null, created_at: "now",
+        attachments: [
+          { id: "att-9", kind: "image", filename: "shot.png", mime: "image/png", size_bytes: 10, width: 10, height: 10 },
+          { id: "att-10", kind: "file", filename: "statement.xlsx", mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size_bytes: 2048 },
+        ],
+      },
+      { id: "a1m", role: "assistant", text: "I see the error.", cards: [], confidence: "normal", feedback: null, created_at: "now" },
+    ]);
+    api.attachmentBlob.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+    renderIt(withAttachments);
+    open();
+    await waitFor(() => expect(api.attachmentBlob).toHaveBeenCalledWith("att-9"));
+    await waitFor(() => expect(screen.getByTestId("chat-picture")).toHaveAttribute("src", "blob:preview"));
+    expect(screen.getByTestId("chat-file")).toHaveTextContent("statement.xlsx");
+    expect(api.attachmentBlob).not.toHaveBeenCalledWith("att-10"); // a file downloads only on a click
+  });
 
   it("shows the consent gate first and enables the composer after consent", async () => {
     const gated = { ...enabled, enabled: false, reason: "CONSENT_REQUIRED", consent_required: true, consent_given: false };
@@ -87,7 +235,7 @@ describe("AssistantWidget", () => {
 
   it("streams the answer, renders server cards, and confirms an action with the token", async () => {
     api.status.mockResolvedValue(enabled);
-    api.confirm.mockResolvedValue({ id: "p1", action: "create_support_ticket", status: "executed", summary: "x", result: { ticket_no: "CPX-001001" }, decided_at: "now" });
+    api.confirm.mockResolvedValue({ id: "p1", action: "create_support_ticket", status: "executed", summary: "x", result: { ticket_no: "CPX-001001", ticket_id: "t-1" }, decided_at: "now" });
     stream.events = [
       { event: "started", data: { conversation_id: "conv-1", user_message_id: "um" } },
       { event: "tool", data: { name: "get_my_wallet", status: "running" } },
@@ -95,7 +243,7 @@ describe("AssistantWidget", () => {
       { event: "delta", data: { text: "Your balance is " } },
       { event: "delta", data: { text: "$5,000.00." } },
       { event: "card", data: { kind: "link", path: "/wallet", label: "Open your wallet" } },
-      { event: "card", data: { kind: "confirm_action", proposal_id: "p1", action: "create_support_ticket", summary: "Open a high priority support ticket about payments.", token: "tok-secret", expires_at: "later" } },
+      { event: "card", data: { kind: "confirm_action", proposal_id: "p1", action: "create_support_ticket", summary: "Open a customer service ticket (payments).", details: [["Subject", "Deposit missing"], ["What happened", "I paid by card and it is not in my wallet."]], token: "tok-secret", expires_at: "later" } },
       { event: "done", data: { message_id: "m1", confidence: "normal", flags: [], usage: {}, latency_ms: 10, first_token_ms: 2, safe_mode: null } },
     ];
     renderIt(enabled);
@@ -109,10 +257,15 @@ describe("AssistantWidget", () => {
     expect(screen.getByText("Checked your wallet")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /open your wallet/i })).toHaveAttribute("href", "/wallet");
     expect(screen.getByTestId("confirm-card")).toBeInTheDocument();
+    // the user reads exactly what the ticket will say before confirming
+    expect(screen.getByTestId("confirm-details")).toHaveTextContent("I paid by card and it is not in my wallet.");
     expect(screen.queryByText("tok-secret")).toBeNull(); // the token is never rendered
     fireEvent.click(screen.getByRole("button", { name: /^confirm$/i }));
     await waitFor(() => expect(api.confirm).toHaveBeenCalledWith("p1", "tok-secret"));
-    await waitFor(() => expect(screen.getByText(/ticket CPX-001001 opened/i)).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(/customer service ticket CPX-001001 is open/i)).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("link", { name: /view your ticket/i })).toHaveAttribute("href", "/support/tickets/t-1");
     fireEvent.click(screen.getByRole("button", { name: /^helpful$/i }));
     await waitFor(() => expect(api.feedback).toHaveBeenCalledWith("m1", "up"));
   });

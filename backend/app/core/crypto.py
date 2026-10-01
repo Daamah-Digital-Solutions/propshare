@@ -154,6 +154,23 @@ class EncryptedText(TypeDecorator):
         return decrypt(value).decode("utf-8")
 
 
+class EncryptedBytes(TypeDecorator):
+    """``bytes`` in Python (a picture, a file), AES-GCM ciphertext (BYTEA) in the database."""
+
+    impl = LargeBinary
+    cache_ok = True
+
+    def process_bind_param(self, value: bytes | None, dialect) -> bytes | None:  # noqa: ANN001
+        if value is None:
+            return None
+        return encrypt(bytes(value))
+
+    def process_result_value(self, value: bytes | None, dialect) -> bytes | None:  # noqa: ANN001
+        if value is None:
+            return None
+        return decrypt(value)
+
+
 class EncryptedJSON(TypeDecorator):
     """Any JSON-serialisable value in Python, AES-GCM ciphertext (BYTEA) in the database."""
 

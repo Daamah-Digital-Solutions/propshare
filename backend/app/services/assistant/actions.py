@@ -4,9 +4,8 @@
     user   -> POST .../actions/{id}/confirm {token}  -> verify -> executor -> audit
     server -> system note in the conversation so the next turn knows the real outcome
 
-Executors reuse the platform's own services; nothing here bypasses their rules. Phase 1 has
-three executors; adding one is a new entry in ``EXECUTORS`` plus an entry in the tool's
-``ACTIONS`` list (and a test).
+Executors reuse the platform's own services; nothing here bypasses their rules. Adding one is
+a new entry in ``EXECUTORS`` plus an entry in the tool's ``ACTIONS`` list (and a test).
 """
 
 from __future__ import annotations
@@ -21,9 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.core.errors import AppError
-from app.models import AssistantActionProposal
+from app.core.phone import mask_phone, normalise_phone
+from app.models import AssistantActionProposal, Profile
+from app.models.identity import User
 from app.services import (
     auth_service,
+    email_change_service,
     gift_service,
     liquidity_service,
     notification_service,
@@ -63,8 +65,76 @@ async def _create_support_ticket(
         priority=str(params.get("priority") or "normal"),
         refs=params.get("refs") or {},
     )
-    ticket = await ticket_service.create_from_handoff(session, user_id=user_id, handoff=handoff)
+    ticket = await ticket_service.create_from_handoff(
+        session,
+        user_id=user_id,
+        handoff=handoff,
+        subject=params.get("subject"),
+        description=params.get("description"),
+    )
     return {"ticket_no": ticket.ticket_no, "ticket_id": str(ticket.id)}
+
+
+async def _update_phone(
+    session: AsyncSession, user_id: uuid.UUID, proposal: AssistantActionProposal
+) -> dict[str, Any]:
+    """The number on the account (users + profiles, the same pair Settings writes). There is no
+    SMS on the platform, so it is not "verified"; the user is told the change happened."""
+    phone = normalise_phone(str((proposal.params or {}).get("phone") or ""))
+    user = await session.get(User, user_id)
+    if user is None:
+        raise AppError("NOT_FOUND", "User not found", status_code=404)
+    old = user.phone
+    user.phone = phone
+    profile = await session.get(Profile, user_id)
+    if profile is not None:
+        profile.phone = phone
+    await write_audit(
+        session,
+        action="profile.phone_changed",
+        entity_type="user",
+        entity_id=str(user_id),
+        actor_id=user_id,
+        before={"phone": mask_phone(old)},
+        after={"phone": mask_phone(phone), "source": "assistant"},
+    )
+    await notification_service.notify(
+        session,
+        user_id=user_id,
+        type="security",
+        title="Your phone number was changed",
+        message=(
+            f"The phone number on your account is now {mask_phone(phone)}. If you did not do "
+            "this, contact support right away."
+        ),
+        email_category="security",
+        force_email=True,
+    )
+    masked = mask_phone(phone)
+    return {"phone": masked, "message": f"Done. Your phone number is now {masked}."}
+
+
+async def _change_email(
+    session: AsyncSession, user_id: uuid.UUID, proposal: AssistantActionProposal
+) -> dict[str, Any]:
+    """Starts the change; the address itself changes only after the user approves from the
+    current inbox and confirms from the new one (email_change_service)."""
+    req = await email_change_service.request_change(
+        session,
+        user_id=user_id,
+        new_email=str((proposal.params or {}).get("new_email") or ""),
+        source="assistant",
+    )
+    sent_to = email_change_service.mask_email(req.old_email)
+    return {
+        "status": req.status,
+        "sent_to": sent_to,
+        "new_email": email_change_service.mask_email(req.new_email),
+        "message": (
+            f"Approval link sent to your current address ({sent_to}). Open it, then confirm "
+            "from the new address: the change is made then."
+        ),
+    }
 
 
 async def _cancel_secondary_listing(
@@ -112,6 +182,8 @@ EXECUTORS: dict[str, Executor] = {
     "cancel_liquidity_exit_request": _cancel_liquidity_exit_request,
     "cancel_scheduled_gift": _cancel_scheduled_gift,
     "update_notification_preferences": _update_notification_preferences,
+    "update_phone": _update_phone,
+    "change_email": _change_email,
 }
 
 
@@ -119,9 +191,21 @@ def _note(action: str, ok: bool, result: dict[str, Any]) -> str:
     if not ok:
         return f"Action {action} FAILED: {result.get('message', 'unknown error')}"
     if action == "create_support_ticket":
-        return f"Action {action} executed: ticket {result.get('ticket_no')} was opened."
+        return (
+            f"Action {action} executed: customer service ticket {result.get('ticket_no')} was "
+            "opened with the subject and description the user confirmed; the team replies on "
+            "the ticket (Your support tickets: /support/tickets) and by email."
+        )
     if action == "mark_all_notifications_read":
         return f"Action {action} executed: {result.get('marked', 0)} notifications marked read."
+    if action == "update_phone":
+        return f"Action {action} executed: the phone number is now {result.get('phone')}."
+    if action == "change_email":
+        return (
+            f"Action {action} started: an approval link was sent to the current address "
+            f"({result.get('sent_to')}); after approval a confirmation link goes to the new "
+            f"address ({result.get('new_email')}). The email changes only when both are opened."
+        )
     return f"Action {action} executed successfully."
 
 

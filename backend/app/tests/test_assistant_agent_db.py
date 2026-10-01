@@ -360,6 +360,8 @@ async def test_cards_and_confirmation_token_reach_the_user_not_the_model_or_db(
                             "action": "create_support_ticket",
                             "category": "payments",
                             "priority": "high",
+                            "subject": "Payment problem",
+                            "description": "My card payment did not reach my wallet.",
                         },
                     ),
                 ]

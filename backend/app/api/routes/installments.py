@@ -7,6 +7,8 @@
   (manual catch-up). Idempotency-Key required.
 - POST /api/v1/installments/sukuk         create a plan whose down payment a Nova Sukuk
   certificate covers (multipart; staff review it). Idempotency-Key required.
+- GET  /api/v1/installments/{id}/schedule.pdf | .xlsx   the caller's plan as a branded PDF or
+  an Excel workbook.
 
 The down payment is paid from the wallet (method=wallet: the plan starts at once), or through a
 hosted checkout — card (Apple / Google Pay), crypto or Pronova — whose webhook starts the plan.
@@ -121,4 +123,21 @@ async def schedule_pdf(plan_id: uuid.UUID, session: SessionDep, principal: Princ
         content=pdf,
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.get("/{plan_id}/schedule.xlsx")
+async def schedule_xlsx(plan_id: uuid.UUID, session: SessionDep, principal: PrincipalDep):
+    """The same plan as an Excel workbook (amounts as numbers, due dates as dates); 404 if not
+    the caller's plan."""
+    filename, data = await installment_service.build_schedule_xlsx(
+        session, investor_id=principal.user_id, plan_id=plan_id
+    )
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
     )

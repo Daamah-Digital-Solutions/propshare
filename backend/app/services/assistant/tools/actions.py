@@ -8,6 +8,7 @@ model can neither see nor replay it.
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Literal
 
@@ -15,8 +16,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
+from app.core.phone import normalise_phone
 from app.models import SupportTicket
-from app.services import gift_service, liquidity_service, secondary_service
+from app.models.identity import User
+from app.services import (
+    auth_service,
+    email_change_service,
+    gift_service,
+    liquidity_service,
+    secondary_service,
+)
 from app.services.assistant import guard
 from app.services.assistant.context import AgentContext
 from app.services.assistant.tools.base import ToolOutput, ToolSpec, register
@@ -24,11 +33,13 @@ from app.services.assistant.tools.base import ToolOutput, ToolSpec, register
 ACTIONS: dict[str, str] = {
     "resend_verification_email": "Send the email-verification link again.",
     "mark_all_notifications_read": "Mark all notifications as read.",
-    "create_support_ticket": "Open a support ticket for a person to follow up.",
+    "create_support_ticket": "Open a customer service ticket that a person answers.",
     "cancel_secondary_listing": "Cancel one of your active secondary-market listings.",
     "cancel_liquidity_exit_request": "Cancel one of your open liquidity exit requests.",
     "cancel_scheduled_gift": "Cancel one of your scheduled gifts.",
     "update_notification_preferences": "Change which email notifications you receive.",
+    "update_phone": "Change the phone number on your account.",
+    "change_email": "Change the email address you sign in with (approved from your inbox).",
 }
 PREF_KEYS = (
     "email_investment_updates",
@@ -61,10 +72,33 @@ class ProposeActionIn(BaseModel):
         "cancel_liquidity_exit_request",
         "cancel_scheduled_gift",
         "update_notification_preferences",
+        "update_phone",
+        "change_email",
     ]
-    # ticket params: enums + ids only, never free text (the handoff summary is built server-side)
+    # ticket: the category and references, plus the problem as the user told it in this chat
+    # (the user reads both on the confirmation card before anything is sent)
     category: str | None = Field(default=None, description="Ticket category (enum)")
     priority: str | None = Field(default=None, description="normal | high")
+    subject: str | None = Field(
+        default=None,
+        max_length=120,
+        description="create_support_ticket: a short title of the problem, in the user's words",
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="create_support_ticket: what happened and what the user needs, from this "
+        "chat, with the facts you know (amounts, dates, property, references). Never include "
+        "passwords, card numbers or codes.",
+    )
+    phone: str | None = Field(
+        default=None,
+        max_length=40,
+        description="update_phone: the new number exactly as the user gave it, with country code",
+    )
+    new_email: str | None = Field(
+        default=None, max_length=320, description="change_email: the new address the user gave"
+    )
     payment_id: str | None = None
     investment_id: str | None = None
     listing_id: str | None = Field(
@@ -89,7 +123,21 @@ class ProposeActionOut(ToolOutput):
     proposal_id: str
     action: str
     summary: str
+    # what the confirmation card shows under the summary, as [label, value] rows
+    details: list[list[str]] = []
     status: str
+
+
+# long digit runs (a card or account number) never reach a ticket
+_NUMBER_RUN = re.compile(r"(?:\d[ \-]?){12,}\d")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def scrub(text: str | None, limit: int) -> str:
+    """Free text the model wrote for a ticket: control characters out, card-like numbers
+    masked, length capped."""
+    clean = _CONTROL.sub("", text or "").strip()
+    return _NUMBER_RUN.sub("[number removed]", clean)[:limit]
 
 
 def _uuid_or_none(value: str | None, field: str) -> str | None:
@@ -104,6 +152,7 @@ def _uuid_or_none(value: str | None, field: str) -> str | None:
 async def _propose_action(session: AsyncSession, ctx: AgentContext, args) -> dict:
     a: ProposeActionIn = args
     params: dict = {}
+    details: list[list[str]] = []
     if a.action == "create_support_ticket":
         category = a.category or "other"
         if category not in TICKET_CATEGORIES:
@@ -119,12 +168,63 @@ async def _propose_action(session: AsyncSession, ctx: AgentContext, args) -> dic
             k: _uuid_or_none(getattr(a, k), k)
             for k in ("payment_id", "investment_id", "listing_id", "plan_id", "withdrawal_id")
         }
+        subject = scrub(" ".join((a.subject or "").split()), 120)  # one line: an email header
+        description = scrub(a.description, 2000)
+        if not description:
+            raise AppError(
+                "INVALID_INPUT",
+                "description is required: write what happened and what the user needs, from "
+                "this chat, so the team does not have to ask again. If you do not know the "
+                "problem yet, ask the user first.",
+                status_code=422,
+            )
         params = {
             "category": category,
             "priority": priority,
             "refs": {k: v for k, v in refs.items() if v},
+            "subject": subject,
+            "description": description,
         }
-        summary = f"Open a {priority} priority support ticket about {category.replace('_', ' ')}."
+        label = category.replace("_", " ")
+        urgent = ", high priority" if priority == "high" else ""
+        summary = f"Open a customer service ticket ({label}{urgent})."
+        details = [
+            ["Subject", subject or f"Support request: {label}"],
+            ["What happened", description],
+        ]
+    elif a.action == "update_phone":
+        phone = normalise_phone(a.phone or "")
+        user = await session.get(User, ctx.user_id)
+        if user is not None and (user.phone or "") == phone:
+            raise AppError(
+                "ALREADY_DONE", "That is already the phone number on the account.", status_code=409
+            )
+        params = {"phone": phone}
+        summary = "Change the phone number on your account."
+        details = [["New phone number", phone]]
+    elif a.action == "change_email":
+        new_email = email_change_service.normalise(a.new_email or "")
+        user = await session.get(User, ctx.user_id)
+        if user is not None and user.email.lower() == new_email.lower():
+            raise AppError(
+                "SAME_EMAIL", "That is already the email address of the account.", status_code=409
+            )
+        if await auth_service.get_user_by_email(session, new_email) is not None:
+            raise AppError(
+                "EMAIL_EXISTS",
+                "That email address is already used by another account.",
+                status_code=409,
+            )
+        params = {"new_email": new_email}
+        summary = "Change the email address you sign in with."
+        details = [
+            ["New email", new_email],
+            [
+                "How it works",
+                "We email an approval link to your current address. Once you approve, we send a "
+                "confirmation link to the new one, and the change is made when you open it.",
+            ],
+        ]
     elif a.action == "resend_verification_email":
         if ctx.email_verified:
             raise AppError(
@@ -190,6 +290,7 @@ async def _propose_action(session: AsyncSession, ctx: AgentContext, args) -> dic
         "proposal_id": str(proposal.id),
         "action": a.action,
         "summary": summary,
+        "details": details,
         "status": "awaiting_user_confirmation",
     }
 
@@ -197,9 +298,13 @@ async def _propose_action(session: AsyncSession, ctx: AgentContext, args) -> dic
 register(
     ToolSpec(
         "propose_action",
-        "Propose an action for the user to confirm with a button: resend the verification "
-        "email, mark all notifications read, or open a support ticket (category from the "
-        "list, optional reference ids). Nothing happens until the user confirms.",
+        "Propose an action for the user to confirm with a button; nothing happens until they "
+        "confirm. Actions: open a customer service ticket (category, a subject and a "
+        "description of the problem from this chat, optional reference ids); change the "
+        "account's phone number (phone); change the sign-in email (new_email: approved from "
+        "the current inbox, then confirmed from the new one); resend the verification email; "
+        "mark all notifications read; change email notification preferences; cancel a "
+        "secondary listing, a liquidity exit request or a scheduled gift.",
         ProposeActionIn,
         ProposeActionOut,
         "confirmed_action",

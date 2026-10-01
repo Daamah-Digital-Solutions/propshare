@@ -124,6 +124,33 @@ class EmailToken(Base):
     )
 
 
+class EmailChangeRequest(Base):
+    """A change of the sign-in address (DDL: alembic 0033): approved from the current address,
+    then confirmed from the new one; only the token hashes are stored."""
+
+    __tablename__ = "email_change_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    old_email: Mapped[str] = mapped_column(Text, nullable=False)
+    new_email: Mapped[str] = mapped_column(Text, nullable=False)
+    # awaiting_approval | awaiting_confirmation | completed | cancelled | expired
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="awaiting_approval")
+    approve_token_hash: Mapped[str | None] = mapped_column(Text, unique=True)
+    confirm_token_hash: Mapped[str | None] = mapped_column(Text, unique=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="settings")
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    approved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=_NOW
+    )
+
+
 class RoleGrantRequest(Base):
     __tablename__ = "role_grant_requests"
 

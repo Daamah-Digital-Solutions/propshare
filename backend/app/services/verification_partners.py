@@ -118,3 +118,6 @@ SERVICES: tuple[VerificationService, ...] = (
 # url -> the label of the first service using it (two services share CIM's Capimax Verify)
 LINK_LABELS: dict[str, str] = {s.url: s.link_label for s in reversed(SERVICES)}
 URLS: frozenset[str] = frozenset(LINK_LABELS)
+BY_KEY: dict[str, VerificationService] = {s.key: s for s in SERVICES}
+# where a holder verifies the investment certificate PropShare issues (by its reference)
+CERTIFICATES: VerificationService = BY_KEY["capimax_documents"]

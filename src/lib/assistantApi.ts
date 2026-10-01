@@ -5,7 +5,7 @@
 // their conversations and nothing else. The feature is off unless VITE_ASSISTANT_V2=true AND
 // the backend reports `enabled` for this caller (kill switch, rollout, consent).
 
-import { ApiError, apiRequest, apiUrl, getAccessToken, refreshAccessToken } from "@/lib/api";
+import { ApiError, apiRequest, apiUrl, fetchBlob, getAccessToken, refreshAccessToken } from "@/lib/api";
 
 export const ASSISTANT_V2_FLAG = String(import.meta.env.VITE_ASSISTANT_V2 ?? "") === "true";
 
@@ -48,6 +48,20 @@ export interface AssistantStatus {
   reply_language?: "auto" | "en";
   /** show a notice before the first message (platform setting assistant_consent_required) */
   privacy_notice?: boolean;
+  /** pictures and files in the chat, for this caller (signed-in users only; null = not offered) */
+  attachments?: { per_message: number; max_mb: number; max_pages: number } | null;
+}
+
+/** A picture or a file uploaded for (or sent with) a message. */
+export interface AssistantAttachment {
+  id: string;
+  kind: "image" | "file";
+  filename: string;
+  mime: string;
+  size_bytes: number;
+  width?: number | null;
+  height?: number | null;
+  pages?: number | null;
 }
 
 export interface Conversation {
@@ -92,6 +106,8 @@ export interface ConfirmActionCard {
   proposal_id: string;
   action: string;
   summary: string;
+  /** What exactly will happen, as label/value rows (e.g. a ticket's subject and description). */
+  details?: [string, string][];
   token?: string;
   expires_at?: string;
 }
@@ -207,6 +223,24 @@ export interface ComparisonCard {
     path: string | null;
   }[];
 }
+/** A file of the user's own the card downloads (from one of our owner-only endpoints). */
+export interface DocumentFile {
+  label: string;
+  path: string;
+  filename: string;
+  format: "pdf" | "xlsx" | "zip";
+}
+/** The user's certificates or installment schedules, downloadable from the chat. */
+export interface DocumentCard {
+  kind: "document";
+  doc: "certificate" | "installment_schedule";
+  title: string;
+  sections: { heading: string | null; rows: [string, string][]; files: DocumentFile[] }[];
+  files: DocumentFile[];
+  links: { label: string; path: string }[];
+  path: string;
+  footnote: string | null;
+}
 export type AssistantCard =
   | LinkCard
   | PropertyCard
@@ -218,7 +252,8 @@ export type AssistantCard =
   | StatementCard
   | SaleCard
   | InstallmentCard
-  | ComparisonCard;
+  | ComparisonCard
+  | DocumentCard;
 
 export interface AssistantMessage {
   id: string;
@@ -228,6 +263,8 @@ export interface AssistantMessage {
   confidence: string | null;
   feedback: string | null;
   created_at: string;
+  /** pictures and files the user sent with this message */
+  attachments?: AssistantAttachment[];
 }
 
 export interface TurnDone {
@@ -294,6 +331,20 @@ export const assistantApi = {
       body: { feedback },
       headers: identityHeaders(),
     }),
+  /** Upload a picture or a file for the next message (signed-in users); send its id with it. */
+  uploadAttachment: (conversationId: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return apiRequest<AssistantAttachment>(
+      `/api/v1/assistant/conversations/${conversationId}/attachments`,
+      { method: "POST", body: fd },
+    );
+  },
+  /** One of the user's own pictures or files, to show or download it again from the chat. */
+  attachmentBlob: (id: string) => fetchBlob(`/api/v1/assistant/attachments/${id}`),
+  /** Take off a picture or file before sending it: it goes, and its slot frees up. */
+  deleteAttachment: (id: string) =>
+    apiRequest<void>(`/api/v1/assistant/attachments/${id}`, { method: "DELETE" }),
 };
 
 // ---- SSE ----
@@ -325,6 +376,7 @@ export async function* sendMessage(
   lang: "en" | "ar",
   signal?: AbortSignal,
   page?: string,
+  attachmentIds?: string[],
   _retried = false,
 ): AsyncGenerator<TurnEvent, void, void> {
   const headers: Record<string, string> = {
@@ -334,15 +386,18 @@ export async function* sendMessage(
   };
   const token = getAccessToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  const body: Record<string, unknown> = { text, lang };
+  if (page) body.page = page.slice(0, 300);
+  if (attachmentIds?.length) body.attachment_ids = attachmentIds;
   const resp = await fetch(apiUrl(`/api/v1/assistant/conversations/${conversationId}/messages`), {
     method: "POST",
     headers,
     credentials: "include",
-    body: JSON.stringify(page ? { text, lang, page: page.slice(0, 300) } : { text, lang }),
+    body: JSON.stringify(body),
     signal,
   });
   if (resp.status === 401 && token && !_retried && (await refreshAccessToken())) {
-    yield* sendMessage(conversationId, text, lang, signal, page, true);
+    yield* sendMessage(conversationId, text, lang, signal, page, attachmentIds, true);
     return;
   }
   if (!resp.ok) {

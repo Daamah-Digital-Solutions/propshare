@@ -7,6 +7,7 @@ from app.services.assistant.tools import (  # noqa: F401
     account,
     actions,
     documents,
+    my_documents,
     platform,
     portfolio,
     roles,

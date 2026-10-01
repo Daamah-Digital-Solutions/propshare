@@ -12,15 +12,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core import crypto
-from app.models import AssistantConversation, AssistantMessage
+from app.models import AssistantAttachment, AssistantConversation, AssistantMessage
 
 ENCRYPTED_FIELDS = ("text", "content", "tool_calls", "cards")
+ATTACHMENT_BATCH = 20  # an attachment can be 10 MB: a few at a time, not hundreds
 
 
 async def purge_expired(session: AsyncSession, *, retention_days: int) -> int:
     """Delete conversations whose last activity is older than the retention window.
-    Messages and proposals cascade; tickets keep their (structured) summary and lose only
-    the transcript link target."""
+    Messages, attachments and proposals cascade; tickets keep their (structured) summary and
+    lose only the transcript link target. Pictures and files uploaded but never sent go after a
+    day."""
+    unsent = dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
+    await session.execute(
+        delete(AssistantAttachment).where(
+            AssistantAttachment.message_id.is_(None), AssistantAttachment.created_at < unsent
+        )
+    )
     if retention_days <= 0:
         return 0
     cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(days=retention_days)
@@ -53,10 +61,35 @@ async def reencrypt(session: AsyncSession, *, batch: int = 500) -> dict[str, int
             getattr(row, field)  # load (decrypt) so the value is present
             flag_modified(row, field)  # force a re-write even though the value is unchanged
         row.enc_key_id = active
+    # pictures and files attached to chat messages (0033), the same way
+    files = (
+        (
+            await session.execute(
+                select(AssistantAttachment)
+                .where(AssistantAttachment.enc_key_id != active)
+                .limit(min(batch, ATTACHMENT_BATCH))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for att in files:
+        att.data  # noqa: B018 - load (decrypt) so the value is present
+        flag_modified(att, "data")
+        att.enc_key_id = active
     await session.flush()
     remaining = await session.scalar(
         select(func.count())
         .select_from(AssistantMessage)
         .where((AssistantMessage.enc_key_id.is_(None)) | (AssistantMessage.enc_key_id != active))
     )
-    return {"reencrypted": len(rows), "remaining": int(remaining or 0), "active_key": active}
+    remaining_files = await session.scalar(
+        select(func.count())
+        .select_from(AssistantAttachment)
+        .where(AssistantAttachment.enc_key_id != active)
+    )
+    return {
+        "reencrypted": len(rows) + len(files),
+        "remaining": int(remaining or 0) + int(remaining_files or 0),
+        "active_key": active,
+    }

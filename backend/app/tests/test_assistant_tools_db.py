@@ -462,7 +462,16 @@ async def test_confirmation_tokens_are_one_time_user_bound_and_expiring(client, 
         asession,
         ctx,
         parse_args(
-            spec, '{"action":"create_support_ticket","category":"payments","priority":"high"}'
+            spec,
+            json.dumps(
+                {
+                    "action": "create_support_ticket",
+                    "category": "payments",
+                    "priority": "high",
+                    "subject": "Deposit missing",
+                    "description": "Card 4242 4242 4242 4242 was charged\x07 but no deposit.",
+                }
+            ),
         ),
     )
     assert out["status"] == "awaiting_user_confirmation" and "token" not in json.dumps(out)
@@ -471,10 +480,13 @@ async def test_confirmation_tokens_are_one_time_user_bound_and_expiring(client, 
     stored = db(
         "SELECT token_hash, params, expires_at FROM assistant_action_proposals WHERE id=:i", i=pid
     )[0]
+    # the description is kept for the ticket, scrubbed: no card number, no control characters
     assert len(stored[0]) == 64 and stored[1] == {
         "category": "payments",
         "priority": "high",
         "refs": {},
+        "subject": "Deposit missing",
+        "description": "Card [number removed] was charged but no deposit.",
     }
     # the real token lives only in the proposal returned by issue_confirmation
     proposal, token = await guard.issue_confirmation(
@@ -506,7 +518,8 @@ async def test_confirmation_tokens_are_one_time_user_bound_and_expiring(client, 
     with pytest.raises(AppError) as exc:
         await guard.verify_confirmation(asession, user_id=uid, proposal_id=expired.id, token=tok2)
     assert exc.value.code == "PROPOSAL_EXPIRED"
-    # invalid ticket params are refused before any proposal exists
+    # invalid ticket params are refused before any proposal exists: an unknown category, and a
+    # ticket without the problem written in (the team must not have to ask again)
     with pytest.raises(AppError):
         await call_tool(
             spec,
@@ -514,8 +527,16 @@ async def test_confirmation_tokens_are_one_time_user_bound_and_expiring(client, 
             ctx,
             parse_args(spec, '{"action":"create_support_ticket","category":"nonsense"}'),
         )
-    with pytest.raises(Exception):  # noqa: B017 — free text is not in the schema at all
-        parse_args(spec, '{"action":"create_support_ticket","subject":"free text"}')
+    with pytest.raises(AppError) as exc:
+        await call_tool(
+            spec,
+            asession,
+            ctx,
+            parse_args(spec, '{"action":"create_support_ticket","subject":"Help"}'),
+        )
+    assert exc.value.code == "INVALID_INPUT" and "description is required" in exc.value.message
+    with pytest.raises(Exception):  # noqa: B017 — a field outside the schema is refused
+        parse_args(spec, '{"action":"create_support_ticket","notes":"free text"}')
 
 
 @pytest.mark.asyncio

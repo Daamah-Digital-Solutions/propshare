@@ -165,7 +165,7 @@ async def test_sale_rules_block_the_listing_before_it_is_made(client, db, asessi
     )
     assert out["ready"] is False and out["sellable_units"] == 2
     notes = " ".join(out["notes"])
-    assert "up to 2 units of this property (8 are already listed or reserved)" in notes
+    assert "up to 2 units of this property (of your 10: 8 are already listed for sale)" in notes
     assert "365-day lock-up until" in notes
     assert "at most 105.00 (105% of the reference price)" in notes
     assert _card_for("prepare_sale", out, [])["ready"] is False

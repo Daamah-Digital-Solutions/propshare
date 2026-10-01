@@ -21,8 +21,32 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
+class ImageInput:
+    """A picture the user attached (base64 of the bytes and their type). ``detail`` follows
+    the provider's image detail levels (auto | low | high)."""
+
+    mime: str
+    data_b64: str
+    detail: str = "auto"
+
+
+@dataclass(frozen=True)
+class FileInput:
+    """A document the user attached (PDF, Word, Excel, PowerPoint, CSV, text): its name, type
+    and base64 bytes. The provider reads it (a PDF's text and pages, a document's text)."""
+
+    filename: str
+    mime: str
+    data_b64: str
+
+
+@dataclass(frozen=True)
 class UserMessage:
     text: str
+    # pictures and documents sent with this message; empty for a text-only message (the
+    # common case)
+    images: tuple[ImageInput, ...] = ()
+    files: tuple[FileInput, ...] = ()
 
 
 @dataclass(frozen=True)

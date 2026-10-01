@@ -7,8 +7,10 @@ import {
   Copy,
   FileText,
   HelpCircle,
+  ImagePlus,
   Lock,
   Loader2,
+  Paperclip,
   Maximize2,
   Minimize2,
   Receipt,
@@ -34,6 +36,7 @@ import {
   type TurnDone,
 } from "@/lib/assistantApi";
 import { AssistantCardView, LinkButton } from "@/components/assistant/AssistantCards";
+import { saveBlob } from "@/lib/certificates";
 import { coveredPaths, greeting, pageStarters, toolLabel } from "@/components/assistant/assistantUi";
 
 /**
@@ -54,15 +57,131 @@ const TEASER_KEY = "capimax_assistant_teaser_seen";
 const VISITOR_NOTICE_KEY = "capimax_assistant_visitor_notice";
 
 type Role = "user" | "assistant";
+/** A picture or a file in a user's message: a picture shows from the local file when just sent
+ * (src) or is fetched back from the server (id) when the chat is reopened; a file shows its
+ * name and downloads again on a click. */
+interface MsgAttachment {
+  kind: "image" | "file";
+  id?: string;
+  src?: string;
+  filename: string;
+  size?: number;
+}
 interface Msg {
   id: string;
   role: Role;
   text: string;
   cards: AssistantCard[];
   tools: { name: string; status: "running" | "ok" | "error" }[];
+  attachments?: MsgAttachment[];
   done?: TurnDone;
   feedback?: "up" | "down";
   streaming?: boolean;
+}
+
+/** Something chosen for the next message: uploading, ready (has the server id) or refused. */
+interface PendingAttachment {
+  key: string;
+  kind: "image" | "file";
+  src?: string; // pictures: a local preview
+  name: string;
+  size: number;
+  state: "uploading" | "ready" | "error";
+  id?: string;
+  error?: string;
+}
+
+const PICTURE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+// what the server accepts; it checks each file's real content again
+const FILE_EXTENSIONS = [".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".txt"];
+const ACCEPT = [...PICTURE_TYPES, ...FILE_EXTENSIONS].join(",");
+
+const isPicture = (file: File) => PICTURE_TYPES.includes(file.type);
+const hasFileExtension = (file: File) =>
+  FILE_EXTENSIONS.some((ext) => file.name.toLowerCase().endsWith(ext));
+
+/** A local preview of a picture, remembered so it can be released with its chat. */
+function previewUrl(urls: Set<string>, file: File) {
+  const url = URL.createObjectURL(file);
+  urls.add(url);
+  return url;
+}
+function dropUrl(urls: Set<string>, url?: string) {
+  if (url && urls.delete(url)) URL.revokeObjectURL(url);
+}
+
+const fileSize = (bytes?: number) =>
+  bytes === undefined
+    ? ""
+    : bytes < 1024 * 1024
+      ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+      : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
+/** A picture the user sent, shown in their message bubble. */
+function ChatPicture({ image }: { image: MsgAttachment }) {
+  const [src, setSrc] = useState<string | null>(image.src ?? null);
+  useEffect(() => {
+    if (image.src || !image.id) return;
+    let url: string | null = null;
+    let cancelled = false;
+    assistantApi
+      .attachmentBlob(image.id)
+      .then((blob) => {
+        if (cancelled) return;
+        url = URL.createObjectURL(blob);
+        setSrc(url);
+      })
+      .catch(() => {
+        /* gone (purged) or not reachable: the placeholder stays */
+      });
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [image.id, image.src]);
+  return src ? (
+    <img
+      src={src}
+      alt={image.filename || "Picture you sent"}
+      className="max-h-48 w-auto max-w-full rounded-xl border border-white/20 object-contain shadow-sm"
+      data-testid="chat-picture"
+    />
+  ) : (
+    <div className="flex h-24 w-32 items-center justify-center rounded-xl border border-border bg-muted text-muted-foreground">
+      <ImagePlus className="h-5 w-5" />
+    </div>
+  );
+}
+
+/** A file the user sent: its name and size; a click downloads it again (owner only). */
+function ChatFile({ file }: { file: MsgAttachment }) {
+  const [busy, setBusy] = useState(false);
+  const download = async () => {
+    if (!file.id || busy) return;
+    setBusy(true);
+    try {
+      saveBlob(await assistantApi.attachmentBlob(file.id), file.filename);
+    } catch {
+      /* gone (purged) or not reachable: nothing to download */
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={() => void download()}
+      disabled={!file.id}
+      data-testid="chat-file"
+      className="flex max-w-full items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-left text-xs text-foreground shadow-sm transition hover:border-primary/40 disabled:cursor-default"
+    >
+      {busy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" /> : <FileText className="h-4 w-4 shrink-0 text-primary" />}
+      <span className="min-w-0">
+        <span className="block truncate font-medium">{file.filename}</span>
+        {file.size !== undefined && <span className="block text-[10.5px] text-muted-foreground">{fileSize(file.size)}</span>}
+      </span>
+    </button>
+  );
 }
 
 const uid = () =>
@@ -210,9 +329,20 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
     }
   });
   const [error, setError] = useState<string>("");
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
+  const [dragging, setDragging] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // what is chosen right now, ahead of the next render: two picks in a row must see each other
+  const pendingRef = useRef<PendingAttachment[]>([]);
+  // the first message or attachment creates the conversation: everything at once shares it
+  const creatingRef = useRef<Promise<string> | null>(null);
+  // local previews of pictures (in the composer and in sent bubbles), released with the chat
+  const urlsRef = useRef<Set<string>>(new Set());
+  // pictures and files: signed-in users, when the platform offers them (status.attachments)
+  const attach = isAuthenticated ? (status.attachments ?? null) : null;
 
   const welcome = useCallback(
     (): Msg => ({
@@ -274,7 +404,10 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
           try {
             const history = await assistantApi.messages(key);
             if (cancelled) return;
+            creatingRef.current = null;
             setConversationId(key);
+            // the bubbles come back from the server: local previews only stay for the composer
+            releaseUrls(pendingRef.current.map((p) => p.src));
             setMessages(
               history.length
                 ? history.map((m) => ({
@@ -283,6 +416,12 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                     text: m.text ?? "",
                     cards: m.cards ?? [],
                     tools: [],
+                    attachments: (m.attachments ?? []).map((a) => ({
+                      kind: a.kind,
+                      id: a.id,
+                      filename: a.filename,
+                      size: a.size_bytes,
+                    })),
                     feedback: (m.feedback as "up" | "down" | null) ?? undefined,
                   }))
                 : [welcome()],
@@ -293,6 +432,7 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
           }
         }
         if (!cancelled) {
+          creatingRef.current = null;
           setConversationId(null);
           setMessages([welcome()]);
         }
@@ -307,26 +447,56 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
   }, [open, identity]);
 
   useEffect(() => {
-    if (open) {
-      scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-      inputRef.current?.focus();
-    }
+    if (open) scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [open, messages, busy]);
+
+  useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
+
+  /** Release the local previews nothing shows any more (the chat they were in is gone). */
+  const releaseUrls = useCallback((keep: (string | undefined)[] = []) => {
+    urlsRef.current.forEach((url) => {
+      if (!keep.includes(url)) {
+        URL.revokeObjectURL(url);
+        urlsRef.current.delete(url);
+      }
+    });
+  }, []);
+  useEffect(() => () => releaseUrls(), [releaseUrls]);
+
+  // Focus the box when the panel opens and when a reply has finished: not on every streamed
+  // word, and never on a touch screen, where focusing pops the keyboard over the reply.
+  useEffect(() => {
+    if (!open || busy) return;
+    const touch = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+    if (!touch) inputRef.current?.focus();
+  }, [open, busy]);
 
   const ensureConversation = useCallback(async (): Promise<string> => {
     if (conversationId) return conversationId;
-    const conv = await assistantApi.createConversation();
-    setConversationId(conv.id);
-    try {
-      localStorage.setItem(`${CONV_KEY}:${identity}`, conv.id);
-    } catch {
-      /* non-fatal */
-    }
-    return conv.id;
+    // several pictures picked at once (or a picture and the message) share ONE new conversation
+    creatingRef.current ??= assistantApi.createConversation().then(
+      (conv) => {
+        setConversationId(conv.id);
+        try {
+          localStorage.setItem(`${CONV_KEY}:${identity}`, conv.id);
+        } catch {
+          /* non-fatal */
+        }
+        return conv.id;
+      },
+      (err: unknown) => {
+        creatingRef.current = null;
+        throw err;
+      },
+    );
+    return creatingRef.current;
   }, [conversationId, identity]);
 
   const newChat = useCallback(() => {
     abortRef.current?.abort();
+    creatingRef.current = null;
     setConversationId(null);
     try {
       localStorage.removeItem(`${CONV_KEY}:${identity}`);
@@ -336,7 +506,98 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
     setMessages([welcome()]);
     setInput("");
     setError("");
-  }, [identity, welcome]);
+    // uploaded and never sent: off the server too, so nothing waits for the nightly purge
+    for (const p of pendingRef.current) {
+      if (p.id) void assistantApi.deleteAttachment(p.id).catch(() => undefined);
+    }
+    pendingRef.current = [];
+    setPending([]);
+    releaseUrls();
+  }, [identity, welcome, releaseUrls]);
+
+  /** Pictures and files picked, pasted or dropped: checked here first, then uploaded straight
+   * away so the message goes out as soon as the user presses send. */
+  const addAttachments = useCallback(
+    async (files: File[]) => {
+      if (!attach || !files.length) return;
+      setError("");
+      const room = attach.per_message - pendingRef.current.length;
+      if (room <= 0) {
+        setError(`You can send up to ${attach.per_message} files with a message.`);
+        return;
+      }
+      if (files.length > room) setError(`Only ${attach.per_message} files fit in one message.`);
+      const chosen = files.slice(0, room);
+      const fresh: PendingAttachment[] = chosen.map((file) => {
+        const picture = isPicture(file);
+        const problem =
+          !picture && !hasFileExtension(file)
+            ? "Send a picture, a PDF, a Word, Excel or PowerPoint file, or a CSV or text file."
+            : file.size > attach.max_mb * 1024 * 1024
+              ? `A file can be up to ${attach.max_mb} MB.`
+              : undefined;
+        return {
+          key: uid(),
+          kind: picture ? "image" : "file",
+          src: picture ? previewUrl(urlsRef.current, file) : undefined,
+          name: file.name || (picture ? "picture" : "file"),
+          size: file.size,
+          state: problem ? "error" : "uploading",
+          error: problem,
+        };
+      });
+      // taken now, not at the next render: a second pick right after must see these
+      pendingRef.current = [...pendingRef.current, ...fresh];
+      setPending((prev) => [...prev, ...fresh]);
+      const update = (key: string, patch: Partial<PendingAttachment>) =>
+        setPending((prev) => prev.map((p) => (p.key === key ? { ...p, ...patch } : p)));
+      let cid: string;
+      try {
+        cid = await ensureConversation();
+      } catch (err) {
+        fresh.forEach((p) => update(p.key, { state: "error", error: err instanceof ApiError ? err.message : "Upload failed." }));
+        return;
+      }
+      await Promise.all(
+        chosen.map(async (file, i) => {
+          const p = fresh[i];
+          if (p.state === "error") return;
+          try {
+            const att = await assistantApi.uploadAttachment(cid, file);
+            if (!pendingRef.current.some((x) => x.key === p.key)) {
+              // taken off while it was uploading: off the server too, so its slot frees up
+              void assistantApi.deleteAttachment(att.id).catch(() => undefined);
+              return;
+            }
+            // the server says what the file really is and the name it keeps
+            update(p.key, { state: "ready", id: att.id, kind: att.kind, name: att.filename });
+          } catch (err) {
+            update(p.key, { state: "error", error: err instanceof ApiError ? err.message : "Upload failed." });
+          }
+        }),
+      );
+    },
+    [attach, ensureConversation],
+  );
+
+  const removeAttachment = useCallback((key: string) => {
+    const gone = pendingRef.current.find((p) => p.key === key);
+    if (!gone) return;
+    pendingRef.current = pendingRef.current.filter((p) => p.key !== key);
+    setPending((prev) => prev.filter((p) => p.key !== key));
+    dropUrl(urlsRef.current, gone.src);
+    // already uploaded: off the server too, so its slot frees up for another file
+    if (gone.id) void assistantApi.deleteAttachment(gone.id).catch(() => undefined);
+  }, []);
+
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!attach) return;
+    const files = Array.from(e.clipboardData?.files ?? []);
+    if (files.length) {
+      e.preventDefault();
+      void addAttachments(files);
+    }
+  };
 
   const acknowledgeVisitorNotice = useCallback(() => {
     setVisitorNoticed(true);
@@ -362,21 +623,41 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
 
   const send = useCallback(async (preset?: string) => {
     const text = (preset ?? input).trim();
-    if (!text || busy) return;
+    // a starter chip sends its own text only; the box sends its text and the attachments with it
+    const attached = preset === undefined ? pending.filter((p) => p.state === "ready" && p.id) : [];
+    if ((!text && !attached.length) || busy) return;
+    if (preset === undefined && pending.some((p) => p.state === "uploading")) return;
     setError("");
     const turnLang: "en" | "ar" = englishOnly ? "en" : isArabic(text) ? "ar" : lang;
-    const userMsg: Msg = { id: uid(), role: "user", text, cards: [], tools: [] };
+    const userMsg: Msg = {
+      id: uid(),
+      role: "user",
+      text,
+      cards: [],
+      tools: [],
+      attachments: attached.map((p) => ({ kind: p.kind, id: p.id, src: p.src, filename: p.name, size: p.size })),
+    };
     const reply: Msg = { id: uid(), role: "assistant", text: "", cards: [], tools: [], streaming: true };
     setMessages((prev) => [...prev, userMsg, reply]);
     setInput("");
+    if (preset === undefined) {
+      // sent attachments live on in the message bubble (unless the server does not take them)
+      pendingRef.current = [];
+      setPending([]);
+    }
     setBusy(true);
     const controller = new AbortController();
     abortRef.current = controller;
     const patch = (fn: (m: Msg) => Msg) =>
       setMessages((prev) => prev.map((m) => (m.id === reply.id ? fn(m) : m)));
+    let accepted = false; // the server stored the message, and took its attachments with it
+    let refusal: string | undefined;
     try {
       const cid = await ensureConversation();
-      for await (const ev of sendMessage(cid, text, turnLang, controller.signal, page)) {
+      const ids = attached.flatMap((p) => (p.id ? [p.id] : []));
+      for await (const ev of sendMessage(cid, text, turnLang, controller.signal, page, ids)) {
+        // anything but an error comes only after the server stored the message
+        if (ev.event !== "error") accepted = true;
         if (ev.event === "delta") patch((m) => ({ ...m, text: m.text + ev.data.text }));
         else if (ev.event === "reset") patch((m) => ({ ...m, text: "" }));
         else if (ev.event === "tool")
@@ -386,11 +667,14 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
           });
         else if (ev.event === "card") patch((m) => ({ ...m, cards: [...m.cards, ev.data] }));
         else if (ev.event === "done") patch((m) => ({ ...m, done: ev.data, streaming: false }));
-        else if (ev.event === "error")
+        else if (ev.event === "error") {
+          refusal = ev.data.code;
           patch((m) => ({ ...m, text: m.text || ev.data.message, streaming: false }));
+        }
       }
       patch((m) => ({ ...m, streaming: false }));
     } catch (err) {
+      if (err instanceof ApiError) refusal = err.code;
       const aborted = err instanceof DOMException && err.name === "AbortError";
       const msg =
         err instanceof ApiError
@@ -407,8 +691,15 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
     } finally {
       setBusy(false);
       abortRef.current = null;
+      // not taken (a limit, the network): the attachments go back to the composer to send
+      // again, instead of being lost, unless the server no longer has them
+      if (!accepted && attached.length && refusal !== "ATTACHMENT_NOT_FOUND") {
+        setMessages((prev) => prev.map((m) => (m.id === userMsg.id ? { ...m, attachments: [] } : m)));
+        pendingRef.current = [...attached, ...pendingRef.current];
+        setPending((prev) => [...attached, ...prev]);
+      }
     }
-  }, [input, busy, lang, englishOnly, ensureConversation, page]);
+  }, [input, pending, busy, lang, englishOnly, ensureConversation, page]);
 
   const copyText = useCallback(async (m: Msg) => {
     try {
@@ -515,10 +806,25 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
           role="dialog"
           aria-label="PropShare assistant"
           dir={dir}
+          onDragOver={(e) => {
+            if (!attach || !Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget === e.target) setDragging(false);
+          }}
+          onDrop={(e) => {
+            if (!attach) return;
+            e.preventDefault();
+            setDragging(false);
+            void addAttachments(Array.from(e.dataTransfer?.files ?? []));
+          }}
           className={cn(
             "fixed inset-0 z-[60] flex animate-in fade-in slide-in-from-bottom-4 flex-col overflow-hidden bg-background duration-300",
             "sm:inset-auto sm:bottom-5 sm:right-5 sm:rounded-3xl sm:border sm:border-border sm:shadow-[0_30px_80px_-20px_rgba(0,0,0,0.35)]",
             expanded ? "sm:h-[88vh] sm:w-[min(720px,calc(100vw-2.5rem))]" : "sm:h-[min(720px,85vh)] sm:w-[420px]",
+            dragging && "ring-4 ring-primary/40",
           )}
         >
           {/* header */}
@@ -688,7 +994,18 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                       </div>
                     )}
                     <div className={cn("group min-w-0", m.role === "user" ? "max-w-[82%]" : "max-w-[calc(100%-2.5rem)] flex-1")}>
-                      {(m.text || !m.streaming) && (
+                      {m.attachments && m.attachments.length > 0 && (
+                        <div className="mb-1.5 flex flex-wrap justify-end gap-1.5">
+                          {m.attachments.map((a, i) =>
+                            a.kind === "image" ? (
+                              <ChatPicture key={a.id ?? a.src ?? i} image={a} />
+                            ) : (
+                              <ChatFile key={a.id ?? i} file={a} />
+                            ),
+                          )}
+                        </div>
+                      )}
+                      {(m.text || (!m.streaming && m.role === "assistant")) && (
                         <div
                           dir="auto"
                           className={cn(
@@ -767,12 +1084,92 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
 
           {/* composer */}
           <div className="border-t border-border/70 bg-background px-3 pb-[calc(0.75rem_+_env(safe-area-inset-bottom))] pt-3 sm:pb-3">
+            {pending.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-2" data-testid="pending-attachments">
+                {pending.map((p) => (
+                  <div key={p.key} className={cn("relative", p.kind === "file" && "max-w-[200px]")}>
+                    {p.kind === "image" ? (
+                      <img
+                        src={p.src}
+                        alt={p.name}
+                        className={cn(
+                          "h-16 w-16 rounded-xl border object-cover",
+                          p.state === "error" ? "border-destructive/60 opacity-60" : "border-border",
+                        )}
+                      />
+                    ) : (
+                      <div
+                        className={cn(
+                          "flex h-16 items-center gap-2 rounded-xl border bg-card px-3 pr-5 text-xs",
+                          p.state === "error" ? "border-destructive/60 opacity-60" : "border-border",
+                        )}
+                      >
+                        <FileText className="h-5 w-5 shrink-0 text-primary" />
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium text-foreground">{p.name}</span>
+                          <span className="block text-[10.5px] text-muted-foreground">{fileSize(p.size)}</span>
+                        </span>
+                      </div>
+                    )}
+                    {p.state === "uploading" && (
+                      <span className="absolute inset-0 flex items-center justify-center rounded-xl bg-background/60">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${p.name}`}
+                      onClick={() => removeAttachment(p.key)}
+                      className="absolute -right-1.5 -top-1.5 rounded-full border border-border bg-background p-0.5 text-muted-foreground shadow-sm hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                    {p.state === "error" && (
+                      <div className={cn("mt-0.5 text-[9.5px] leading-tight text-destructive", p.kind === "image" ? "w-16" : "w-full")}>
+                        {p.error}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex items-end gap-2 rounded-2xl border border-border bg-card p-1.5 pl-3 shadow-sm transition focus-within:border-primary/50 focus-within:shadow-[0_0_0_4px_hsl(var(--primary)/0.12)]">
+              {attach && (
+                <>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept={ACCEPT}
+                    multiple
+                    hidden
+                    data-testid="attachment-input"
+                    onChange={(e) => {
+                      void addAttachments(Array.from(e.target.files ?? []));
+                      e.target.value = ""; // the same file can be picked again
+                    }}
+                  />
+                  <button
+                    type="button"
+                    aria-label="Attach a file or picture"
+                    title={
+                      lang === "ar"
+                        ? "أرفق صورة أو ملف (PDF، Word، Excel…)"
+                        : "Attach a picture or a file (PDF, Word, Excel, PowerPoint, CSV, text)"
+                    }
+                    onClick={() => fileRef.current?.click()}
+                    disabled={needsConsent || blocked || busy || pending.length >= attach.per_message}
+                    className="-ml-1.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition hover:bg-muted hover:text-primary disabled:opacity-40"
+                  >
+                    <Paperclip className="h-4 w-4" />
+                  </button>
+                </>
+              )}
               <textarea
                 ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
+                onPaste={onPaste}
                 rows={1}
                 dir="auto"
                 disabled={needsConsent || blocked}
@@ -793,7 +1190,12 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
                   type="button"
                   aria-label="Send message"
                   onClick={() => void send()}
-                  disabled={!input.trim() || needsConsent || blocked}
+                  disabled={
+                    (!input.trim() && !pending.some((p) => p.state === "ready")) ||
+                    pending.some((p) => p.state === "uploading") ||
+                    needsConsent ||
+                    blocked
+                  }
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[linear-gradient(135deg,hsl(152_69%_26%),hsl(158_62%_38%))] text-white shadow-sm transition hover:brightness-110 disabled:opacity-40"
                 >
                   <ArrowUp className="h-4 w-4" />

@@ -354,7 +354,68 @@ export const authApi = {
       auth: false,
     }).then(() => undefined);
   },
+
+  /** The change of sign-in email in progress, if any (addresses come masked). */
+  emailChangeStatus(): Promise<{ pending: EmailChange | null }> {
+    return apiRequest("/api/v1/auth/email-change");
+  },
+
+  /** Start changing the sign-in email: the approval link goes to the CURRENT address. */
+  startEmailChange(new_email: string): Promise<EmailChange> {
+    return apiRequest("/api/v1/auth/email-change", { method: "POST", body: { new_email } });
+  },
+
+  cancelEmailChange(): Promise<void> {
+    return apiRequest("/api/v1/auth/email-change/cancel", { method: "POST", body: {} }).then(
+      () => undefined,
+    );
+  },
+
+  /** What a link from the emails is about, changing nothing (opening a link never acts:
+   * mail scanners open links on their own). */
+  inspectEmailChangeLink(token: string): Promise<EmailChangeLink> {
+    return apiRequest("/api/v1/auth/email-change/inspect", {
+      method: "POST",
+      body: { token },
+      auth: false,
+    });
+  },
+
+  /** The button on either link's page: approval (then a link goes to the new address) or
+   * confirmation (the change is made). No sign-in needed: the link is the proof. */
+  followEmailChangeLink(token: string): Promise<EmailChange> {
+    return apiRequest("/api/v1/auth/email-change/confirm", {
+      method: "POST",
+      body: { token },
+      auth: false,
+    });
+  },
+
+  /** "This wasn't me": the change stops; from the current address every device is signed out. */
+  rejectEmailChangeLink(token: string): Promise<{ status: "cancelled"; signed_out: boolean }> {
+    return apiRequest("/api/v1/auth/email-change/reject", {
+      method: "POST",
+      body: { token },
+      auth: false,
+    });
+  },
 };
+
+export interface EmailChange {
+  status: "awaiting_approval" | "awaiting_confirmation" | "completed";
+  new_email: string;
+  sent_to: string | null;
+  expires_at: string | null;
+}
+
+/** A link from the email-change emails: "approve" came to the current address, "confirm"
+ * to the new one. ``new_email`` is in full, ``account_email`` masked. */
+export interface EmailChangeLink {
+  step: "approve" | "confirm";
+  new_email: string;
+  account_email: string;
+  expires_at: string;
+}
 
 // ---- Profile endpoints ----
 export interface ProfileResponse {

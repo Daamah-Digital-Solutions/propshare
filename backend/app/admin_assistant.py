@@ -11,6 +11,7 @@ conversation, which ticket) — staff can read, but never silently.
 # ruff: noqa: E501  (inline HTML templates)
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import html as _html
 import json
@@ -20,7 +21,7 @@ from markupsafe import Markup
 from sqladmin import BaseView, ModelView, action, expose
 from sqlalchemy import Integer, cast, func, select
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import HTMLResponse, RedirectResponse, Response
 
 from app.admin_listing import is_full_admin
 from app.core import crypto
@@ -30,6 +31,7 @@ from app.core.db import session_scope
 from app.core.errors import AppError
 from app.models import (
     AssistantActionProposal,
+    AssistantAttachment,
     AssistantConversation,
     AssistantMessage,
     KbArticle,
@@ -37,7 +39,7 @@ from app.models import (
     SupportTicketMessage,
 )
 from app.services import kb_service, ticket_service
-from app.services.assistant import agent
+from app.services.assistant import agent, attachments
 
 
 def _actor(request: Request) -> uuid.UUID | None:
@@ -117,6 +119,52 @@ class AssistantConversationAdmin(_AdminOnly, model=AssistantConversation):
             )
             transcript = []
             decrypt_error = None
+            # what the user attached: pictures shown inline (decrypted for this audited view
+            # only), files as links to the audited admin download
+            pics: dict = {}
+            files: dict = {}
+            attached = (
+                await session.execute(
+                    select(
+                        AssistantAttachment.id,
+                        AssistantAttachment.message_id,
+                        AssistantAttachment.kind,
+                        AssistantAttachment.filename,
+                        AssistantAttachment.size_bytes,
+                        AssistantAttachment.unreadable,
+                    )
+                    .where(
+                        AssistantAttachment.conversation_id == conv.id,
+                        AssistantAttachment.message_id.is_not(None),
+                    )
+                    .order_by(AssistantAttachment.created_at)
+                )
+            ).all()
+            for att_id, msg_id, kind, filename, size, unreadable in attached:
+                if kind == "image":
+                    try:
+                        row = (
+                            await session.execute(
+                                select(AssistantAttachment.mime, AssistantAttachment.data).where(
+                                    AssistantAttachment.id == att_id
+                                )
+                            )
+                        ).one()
+                    except crypto.DecryptionFailed:  # pragma: no cover - key mismatch
+                        continue
+                    data = base64.b64encode(row.data).decode("ascii")
+                    pics.setdefault(msg_id, []).append(f"data:{row.mime};base64,{data}")
+                else:
+                    files.setdefault(msg_id, []).append(
+                        {
+                            "name": filename,
+                            "size": f"{size / 1024:.0f} KB"
+                            if size < 1024**2
+                            else f"{size / 1024**2:.1f} MB",
+                            "url": f"/admin/assistant-attachment?id={att_id}",
+                            "unreadable": unreadable,
+                        }
+                    )
             for m in rows:
                 try:
                     transcript.append(
@@ -124,6 +172,8 @@ class AssistantConversationAdmin(_AdminOnly, model=AssistantConversation):
                             "id": str(m.id),
                             "role": m.role,
                             "text": m.text or "",
+                            "pictures": pics.get(m.id, []),
+                            "files": files.get(m.id, []),
                             "tool_calls": m.tool_calls if isinstance(m.tool_calls, list) else [],
                             "cards": m.cards if isinstance(m.cards, list) else [],
                             "confidence": m.confidence,
@@ -483,6 +533,53 @@ table{border-collapse:collapse;width:100%} td,th{padding:6px 8px;border-bottom:1
 <p class="hint">Opening a conversation decrypts its transcript and is written to the audit log.</p></div></div></body></html>"""
 
 
+class AssistantAttachmentView(BaseView):
+    """Session-authed, audited download of a file a user attached in the chat (never public).
+    Linked from the conversation transcript; every download is written to the audit log."""
+
+    name = "Assistant attachment"
+
+    def is_visible(self, request: Request) -> bool:
+        return False
+
+    def is_accessible(self, request: Request) -> bool:
+        return _admin_only(request)
+
+    @expose("/assistant-attachment", methods=["GET"], identity="assistant-attachment")
+    async def download(self, request: Request):
+        if not request.session.get("admin_id"):
+            return RedirectResponse("/admin/login", status_code=302)
+        if not is_full_admin(request):
+            return HTMLResponse("Forbidden", status_code=403)
+        try:
+            att_id = uuid.UUID(request.query_params.get("id", ""))
+        except ValueError:
+            return HTMLResponse("Bad request", status_code=400)
+        async with session_scope() as session:
+            att = await session.get(AssistantAttachment, att_id)
+            if att is None:
+                return HTMLResponse("Not found", status_code=404)
+            await write_audit(
+                session,
+                action="assistant.attachment_viewed",
+                entity_type="assistant_conversation",
+                entity_id=str(att.conversation_id),
+                actor_id=_actor(request),
+                after={"attachment_id": str(att.id), "filename": att.filename},
+                ip=request.client.host if request.client else None,
+            )
+            data, mime, name = att.data, att.mime, att.filename
+        return Response(
+            content=data,
+            media_type=mime,
+            headers={
+                "Content-Disposition": attachments.content_disposition("attachment", name),
+                "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+
 class AssistantDashboardView(BaseView):
     name = "Assistant status"
     icon = "fa-solid fa-robot"
@@ -597,6 +694,7 @@ class AssistantDashboardView(BaseView):
 
 ASSISTANT_VIEWS = (
     AssistantDashboardView,
+    AssistantAttachmentView,
     AssistantConversationAdmin,
     AssistantActionProposalAdmin,
     SupportTicketAdmin,

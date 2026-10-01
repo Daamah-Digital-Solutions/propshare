@@ -16,11 +16,11 @@ import datetime
 import decimal
 import uuid
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.crypto import EncryptedJSON, EncryptedText
+from app.core.crypto import EncryptedBytes, EncryptedJSON, EncryptedText
 from app.models.base import Base
 
 _NOW = func.now()
@@ -126,6 +126,46 @@ class AssistantActionProposal(Base):
     decided_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AssistantAttachment(Base):
+    """A picture or a file a signed-in user attached to a chat message (DDL: alembic 0033).
+    The bytes are ciphertext at rest, like the messages; it goes with its conversation or
+    message."""
+
+    __tablename__ = "assistant_attachments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assistant_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # set when the message it was sent with is saved; None = uploaded, not sent yet
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assistant_messages.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)  # image | file
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    mime: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    pages: Mapped[int | None] = mapped_column(Integer)  # a PDF's page count
+    # the AI provider refused it: it is never sent to the model again
+    unreadable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    data: Mapped[bytes] = mapped_column("data_enc", EncryptedBytes, nullable=False)
+    enc_key_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=_NOW
+    )
+
+
 class AssistantConsent(Base):
     __tablename__ = "assistant_consents"
 
@@ -141,6 +181,7 @@ class AssistantConsent(Base):
 
 __all__ = [
     "AssistantActionProposal",
+    "AssistantAttachment",
     "AssistantConsent",
     "AssistantConversation",
     "AssistantMessage",

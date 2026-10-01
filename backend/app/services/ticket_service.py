@@ -199,7 +199,10 @@ async def _queue_support_email(
     row = EmailOutbox(
         user_id=None,
         to_email=inbox,
-        subject=f"[{ticket.ticket_no}] {ticket.subject or 'Support ticket'} ({ticket.priority})",
+        # one line whatever the ticket says: a line break in a header stops the email
+        subject=" ".join(
+            f"[{ticket.ticket_no}] {ticket.subject or 'Support ticket'} ({ticket.priority})".split()
+        ),
         body=body,
         category="support",
         status="pending",
@@ -209,16 +212,25 @@ async def _queue_support_email(
 
 
 async def create_from_handoff(
-    session: AsyncSession, *, user_id: uuid.UUID | None, handoff: HandoffSummary
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID | None,
+    handoff: HandoffSummary,
+    subject: str | None = None,
+    description: str | None = None,
 ) -> SupportTicket:
-    """The assistant's confirmed ``create_support_ticket``: structured summary only."""
+    """The assistant's confirmed ``create_support_ticket``. The structured summary is always
+    there; ``subject`` and ``description`` are the problem as the assistant wrote it from the
+    chat and the user read and confirmed on the card (client: "I already told it the problem,
+    the ticket should carry it"). The description becomes the ticket's first message, in the
+    user's name, exactly like a support-form ticket; the chat itself is never copied."""
     ticket = SupportTicket(
         kind="support",
         user_id=user_id,
         conversation_id=uuid.UUID(handoff.conversation_id),
         category=handoff.category,
         priority=handoff.priority,
-        subject=_subject_for(handoff.category),
+        subject=(subject or "").strip()[:200] or _subject_for(handoff.category),
         summary=handoff.render(),
         context=handoff.as_context(),
         source="assistant",
@@ -227,13 +239,31 @@ async def create_from_handoff(
     session.add(ticket)
     await session.flush()
     await session.refresh(ticket)
+    body = (description or "").strip()[:MAX_BODY]
+    if body:
+        session.add(
+            SupportTicketMessage(
+                ticket_id=ticket.id,
+                author_type="user",
+                author_id=user_id,
+                body=body,
+                internal=False,
+            )
+        )
     conv = await session.get(AssistantConversation, ticket.conversation_id)
     if conv is not None and conv.ticket_id is None:
         conv.ticket_id = ticket.id
+    described = (
+        f"\n\nSubject: {ticket.subject}\nDescription (written by the assistant, confirmed by "
+        f"the user):\n{body}"
+        if body
+        else ""
+    )
     await _queue_support_email(
         session,
         ticket,
-        f"New ticket {ticket.ticket_no} from the assistant.{_dup_note(ticket)}\n\n{ticket.summary}",
+        f"New ticket {ticket.ticket_no} from the assistant.{_dup_note(ticket)}{described}"
+        f"\n\n{ticket.summary}",
     )
     if user_id is not None:
         await notification_service.notify(
@@ -241,7 +271,7 @@ async def create_from_handoff(
             user_id=user_id,
             type="support_ticket",
             title=f"Ticket {ticket.ticket_no} opened",
-            message="A member of the team will follow up on your request.",
+            message="A member of the customer service team will reply on the ticket.",
         )
     await write_audit(
         session,

@@ -25,7 +25,7 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from urllib.parse import urlencode
@@ -37,8 +37,8 @@ from app.core import crypto
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import AssistantConversation, AssistantMessage
-from app.services import kb_service, settings_service
-from app.services.assistant import guard, prompts
+from app.services import kb_service, settings_service, verification_partners
+from app.services.assistant import attachments, guard, prompts
 from app.services.assistant.context import AgentContext
 from app.services.assistant.tools import REGISTRY, llm_tools
 from app.services.assistant.tools.base import ToolSpec, call_tool, parse_args
@@ -67,6 +67,8 @@ MAX_ITERATIONS = 6
 HISTORY_MESSAGES = 20  # stored messages replayed (user + assistant + system notes)
 CACHE_KEY = "capimax-assistant-v1"  # constant: the prefix holds no user data
 MAX_USER_CHARS = 4000
+# provider errors that mean "this request cannot be read": with files in it, they are the cause
+FILE_REFUSALS = frozenset({"BAD_REQUEST", "HTTP_413"})
 
 SAFE_MODE_TEXT = {
     "en": (
@@ -99,7 +101,15 @@ class AssistantSettings:
     pricing: dict[str, dict[str, float]]
     reply_language: str = "auto"  # "en" = English only
     visitor_daily_cap: int = 0  # all visitors together per UTC day; 0 = no cap
+    user_daily_token_cap: int = 0  # one member's tokens per UTC day; 0 = no cap
     consent_required: bool = False  # members accept / visitors read a notice first
+    # pictures and files in the chat (0033): signed-in users only
+    attachments_enabled: bool = False
+    attachments_per_message: int = 3
+    attachment_max_mb: int = 10
+    attachments_daily_cap: int = 30
+    file_max_pages: int = 30
+    image_detail: str = "auto"
 
     @property
     def model_configured(self) -> bool:
@@ -136,7 +146,14 @@ async def load_settings(session: AsyncSession) -> AssistantSettings:
         pricing=pricing,
         reply_language=await s("assistant_reply_language") or "auto",
         visitor_daily_cap=int(await s("assistant_visitor_daily_cap") or 0),
+        user_daily_token_cap=int(await s("assistant_user_daily_token_cap") or 0),
         consent_required=(await s("assistant_consent_required")).lower() in _ON,
+        attachments_enabled=(await s("assistant_attachments_enabled")).lower() in _ON,
+        attachments_per_message=int(await s("assistant_attachments_per_message") or 3),
+        attachment_max_mb=int(await s("assistant_attachment_max_mb") or 10),
+        attachments_daily_cap=int(await s("assistant_attachments_daily_cap") or 0),
+        file_max_pages=int(await s("assistant_file_max_pages") or 30),
+        image_detail=await s("assistant_image_detail") or "auto",
     )
 
 
@@ -266,32 +283,102 @@ async def add_system_note(
     return note
 
 
-async def _history_items(session: AsyncSession, conversation_id: uuid.UUID) -> list[LLMItem]:
-    rows = (
-        (
-            await session.execute(
-                select(AssistantMessage)
-                .where(AssistantMessage.conversation_id == conversation_id)
-                .order_by(AssistantMessage.created_at.desc(), AssistantMessage.id.desc())
-                .limit(HISTORY_MESSAGES)
-            )
-        )
-        .scalars()
-        .all()
-    )
+@dataclasses.dataclass(frozen=True)
+class _Room:
+    """What attachments of earlier messages may still add to one request."""
+
+    count: int
+    size: int  # bytes
+    pages: int
+
+
+async def _history_items(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    image_detail: str = "auto",
+    room: _Room | None = None,
+    leave_out: uuid.UUID | None = None,
+) -> tuple[list[LLMItem], list[uuid.UUID]]:
+    """The conversation so far (without ``leave_out``), and the attachments of earlier messages
+    whose content goes with it (as far as ``room`` allows; with no room each one is a note)."""
+    query = select(AssistantMessage).where(AssistantMessage.conversation_id == conversation_id)
+    if leave_out is not None:
+        query = query.where(AssistantMessage.id != leave_out)
+    query = query.order_by(AssistantMessage.created_at.desc(), AssistantMessage.id.desc())
+    rows = (await session.execute(query.limit(HISTORY_MESSAGES))).scalars().all()
     items: list[LLMItem] = []
+    attached: list[tuple[int, list[str]]] = []  # (item index, attachment ids) of user messages
     for row in reversed(rows):
         content = row.content if isinstance(row.content, list) else None
         if content:
             for d in content:
                 item = item_from_dict(d) if isinstance(d, dict) else None
                 if item is not None:
+                    ids = (d.get("attachments") or d.get("images")) if isinstance(d, dict) else None
+                    if ids:
+                        attached.append((len(items), [str(i) for i in ids]))
                     items.append(item)
         elif row.role == "user" and row.text:
             items.append(UserMessage(row.text))
         elif row.role == "assistant" and row.text:
             items.append(LLMAssistantMessage(row.text))
-    return items
+    replayed: list[uuid.UUID] = []
+    if attached:
+        replayed = await _replay_attachments(
+            session, conversation_id, items, attached, image_detail, room
+        )
+    return items, replayed
+
+
+async def _replay_attachments(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    items: list[LLMItem],
+    attached: list[tuple[int, list[str]]],
+    detail: str,
+    room: _Room | None,
+) -> list[uuid.UUID]:
+    """The latest pictures and files go back to the model with their messages, newest first
+    and a message's all or none, while they fit in ``room``; the others become a one-line
+    note, so a long chat does not keep paying for them. One the provider refused never goes
+    again. Returns the ids that went."""
+    own = [[uuid.UUID(i) for i in ids] for _index, ids in attached]
+    meta = await attachments.metas(
+        session, conversation_id=conversation_id, ids=[i for ids in own for i in ids]
+    )
+    keep: list[uuid.UUID] = []
+    if room is not None:
+        count, size, pages = room.count, room.size, room.pages
+        for ids in reversed(own):
+            usable = [meta[i] for i in ids if i in meta and not meta[i].unreadable]
+            need = (
+                len(usable),
+                sum(m.size_bytes for m in usable),
+                sum(m.pages or 0 for m in usable),
+            )
+            if usable and need[0] <= count and need[1] <= size and need[2] <= pages:
+                keep.extend(m.id for m in usable)
+                count, size, pages = count - need[0], size - need[1], pages - need[2]
+    rows = await attachments.load(session, conversation_id=conversation_id, ids=keep)
+    for (index, _ids), ids in zip(attached, own, strict=True):
+        item = items[index]
+        assert isinstance(item, UserMessage)
+        shown = [rows[i] for i in ids if i in rows]
+        refused = [meta[i].filename for i in ids if i in meta and meta[i].unreadable]
+        earlier = len(ids) - len(shown) - len(refused)
+        lines = [item.text] if item.text else []
+        if shown:
+            lines.append(attachments.describe(shown))
+        if earlier:
+            lines.append(
+                f"[The user attached {earlier} file{'s' if earlier != 1 else ''} here earlier.]"
+            )
+        if refused:
+            lines.append(attachments.describe_refused(refused))
+        images, files = attachments.to_inputs(shown, detail)
+        items[index] = UserMessage("\n".join(lines), images, files)
+    return list(rows)
 
 
 # --------------------------------------------------------------------------- #
@@ -326,6 +413,114 @@ def _property_path(slug: str | None) -> str | None:
         return guard.make_link("property", slug)["path"]
     except AppError:
         return None
+
+
+def _usd(value: str | None) -> str:
+    if value in (None, ""):
+        return "—"
+    return f"${Decimal(str(value)):,.2f}"
+
+
+def _certificates_card(result: dict[str, Any]) -> dict[str, Any]:
+    """The holder's certificates: one section per property with its download, all of them as
+    one ZIP when they hold more than one, and the partner that verifies them."""
+    sections = []
+    for it in result["items"]:
+        name = it.get("property_slug") or it["property_id"]
+        sections.append(
+            {
+                "heading": it.get("property_title"),
+                "rows": [
+                    ["Units", str(it["units"])],
+                    ["Share of the property", it["ownership_pct"]],
+                    ["Certificate number", it["certificate_reference"]],
+                ],
+                "files": [
+                    {
+                        "label": "Certificate (PDF)",
+                        "path": f"/api/v1/investments/certificate/{it['property_id']}",
+                        "filename": f"certificate-{name}.pdf",
+                        "format": "pdf",
+                    }
+                ],
+            }
+        )
+    files = []
+    if int(result.get("holdings") or 0) > 1:
+        files.append(
+            {
+                "label": "All my certificates (ZIP)",
+                "path": "/api/v1/investments/certificates.zip",
+                "filename": "capimax-certificates.zip",
+                "format": "zip",
+            }
+        )
+    url = result.get("verify_url")
+    return {
+        "kind": "document",
+        "doc": "certificate",
+        "title": "Your ownership certificate" + ("s" if len(sections) > 1 else ""),
+        "sections": sections,
+        "files": files,
+        "links": (
+            [{"label": f"Verify at {result['verify_provider']}", "path": url}]
+            if url in verification_partners.URLS
+            else []
+        ),
+        "path": guard.make_link("certificates")["path"],
+        "footnote": (
+            "Generated live from the ownership ledger. To confirm a certificate, enter its "
+            "certificate number at Capimax Verify."
+        ),
+    }
+
+
+def _schedules_card(result: dict[str, Any]) -> dict[str, Any]:
+    """Each installment plan's schedule, as a PDF and an Excel file, with where it stands."""
+    sections = []
+    for it in result["items"]:
+        name = it.get("property_slug") or it["plan_id"]
+        if it.get("next_due_date"):
+            nxt = f"{_usd(it.get('next_due_amount'))} due {it['next_due_date']}"
+        else:
+            nxt = "Nothing left to pay"
+        base = f"/api/v1/installments/{it['plan_id']}/schedule"
+        sections.append(
+            {
+                "heading": it.get("property_title"),
+                "rows": [
+                    ["Plan", f"{it['duration_months']} months ({it['status']})"],
+                    ["Units", f"{it['vested_units']} of {it['units_total']} vested"],
+                    ["Paid so far", _usd(it.get("paid_amount"))],
+                    ["Remaining", _usd(it.get("remaining_amount"))],
+                    ["Next payment", nxt],
+                ],
+                "files": [
+                    {
+                        "label": "Schedule (PDF)",
+                        "path": f"{base}.pdf",
+                        "filename": f"installment-schedule-{name}.pdf",
+                        "format": "pdf",
+                    },
+                    {
+                        "label": "Schedule (Excel)",
+                        "path": f"{base}.xlsx",
+                        "filename": f"installment-schedule-{name}.xlsx",
+                        "format": "xlsx",
+                    },
+                ],
+            }
+        )
+    return {
+        "kind": "document",
+        "doc": "installment_schedule",
+        "title": "Your installment schedule" + ("s" if len(sections) > 1 else ""),
+        "sections": sections,
+        "files": [],
+        "links": [],
+        "path": guard.make_link("installments")["path"],
+        "footnote": "Every payment with its due date, fee and status. Dates are UTC.",
+    }
 
 
 def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -> dict | None:
@@ -456,6 +651,10 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
             "platform_fee_pct": result["platform_fee_pct"],
             "items": items,
         }
+    if name == "get_my_certificates" and result.get("items"):
+        return _certificates_card(result)
+    if name == "get_my_installment_schedules" and result.get("items"):
+        return _schedules_card(result)
     if name == "propose_action":
         issued = next((t for t in tokens if t["proposal_id"] == result["proposal_id"]), None)
         card = {
@@ -463,6 +662,7 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
             "proposal_id": result["proposal_id"],
             "action": result["action"],
             "summary": result["summary"],
+            "details": [list(row) for row in result.get("details") or []],
         }
         if issued:
             card["token"] = issued["token"]
@@ -512,13 +712,15 @@ async def run_turn(
     *,
     settings: AssistantSettings | None = None,
     now: dt.datetime | None = None,
+    attachment_ids: Sequence[uuid.UUID] = (),
 ) -> AsyncIterator[dict[str, Any]]:
     """Handle one user message. Yields event dicts: started, delta, tool, card, reset, done.
 
     The caller owns the session. The user's message is committed as soon as it is stored, so a
     turn that is cut off still counts against the daily caps (an aborted stream must not be a
     free question); everything the assistant produces commits once at the end, so a crash
-    mid-turn leaves no half-written answer behind."""
+    mid-turn leaves no half-written answer behind. ``attachment_ids`` are pictures and files
+    the user uploaded to this conversation for this message (signed-in users only)."""
     if ctx.conversation_id is None:
         raise AppError("NO_CONVERSATION", "A conversation is required.", status_code=422)
     settings = settings or await load_settings(session)
@@ -528,23 +730,57 @@ async def run_turn(
     if conv is None:
         raise AppError("NOT_FOUND", "Conversation not found.", status_code=404)
 
+    sent: list[Any] = []  # the pictures and files that go with this message
+    if attachment_ids:
+        if ctx.is_visitor or ctx.user_id is None:
+            raise AppError("SIGN_IN_REQUIRED", "Sign in to send files.", status_code=403)
+        if not settings.attachments_enabled:
+            raise AppError(
+                "ATTACHMENTS_DISABLED",
+                "Files and pictures cannot be sent in the chat right now.",
+                status_code=409,
+            )
+        if len(set(attachment_ids)) > settings.attachments_per_message:
+            raise AppError(
+                "TOO_MANY_FILES",
+                f"Send up to {settings.attachments_per_message} files with a message.",
+                status_code=422,
+            )
+        sent = await attachments.take_for_message(
+            session, ids=attachment_ids, user_id=ctx.user_id, conversation_id=conv.id
+        )
+
     clean_text = guard.strip_platform_context_tags(text).strip()[:MAX_USER_CHARS]
-    if not clean_text:
+    if not clean_text and not sent:
         raise AppError("EMPTY_MESSAGE", "Say something first.", status_code=422)
     started_at = time.monotonic()
     now = now or dt.datetime.now(dt.UTC)
 
-    history = await _history_items(session, conv.id)
+    # earlier attachments fill what this message's own leave of one request's room
+    room = _Room(
+        attachments.HISTORY_ATTACHMENTS,
+        attachments.REQUEST_BYTES - sum(a.size_bytes for a in sent),
+        attachments.REQUEST_PAGES - sum(a.pages or 0 for a in sent),
+    )
+    history, replayed = await _history_items(
+        session, conv.id, image_detail=settings.image_detail, room=room
+    )
+    stored_item = item_to_dict(UserMessage(clean_text))
+    if sent:
+        stored_item["attachments"] = [str(a.id) for a in sent]
     user_row = AssistantMessage(
         conversation_id=conv.id,
         role="user",
         text=clean_text,
-        content=[item_to_dict(UserMessage(clean_text))],
+        content=[stored_item],
         lang=ctx.lang,
         enc_key_id=crypto.active_key_id(),
         created_at=now,
     )
     session.add(user_row)
+    await session.flush()
+    for attachment in sent:
+        attachment.message_id = user_row.id
     await session.commit()
 
     if settings.reply_language == "en" and ctx.lang != "en":
@@ -552,14 +788,24 @@ async def run_turn(
     instructions = await build_prompt(session, settings)
     tools = llm_tools(exclude=set(settings.disabled_tools))
     user_key = guard.safety_identifier(str(ctx.user_id or ctx.visitor_key or "anonymous"))
+    english_only = settings.reply_language == "en"
+    said = clean_text or "(No text: the user sent only what is attached.)"
+    images, files = attachments.to_inputs(sent, settings.image_detail)
     prefix_items: list[LLMItem] = [
         *history,
         UserMessage(
             prompts.user_item_text(
-                ctx, clean_text, now, english_only=settings.reply_language == "en"
-            )
+                ctx,
+                f"{said}\n{attachments.describe(sent)}" if sent else said,
+                now,
+                english_only=english_only,
+            ),
+            images,
+            files,
         ),
     ]
+    # whose content this request carries: if the provider refuses it, they are the suspects
+    carried = [a.id for a in sent] or replayed
     turn_items: list[LLMItem] = []  # what this turn adds (stored on the assistant message)
     tool_log: list[dict[str, Any]] = []
     cards: list[dict[str, Any]] = []
@@ -608,6 +854,25 @@ async def run_turn(
         if failed is not None or completed is None:
             code = failed.code if failed else "NO_TERMINAL_EVENT"
             log.warning("assistant provider failure %s: %s", code, failed and failed.message)
+            if code in FILE_REFUSALS and carried and iterations == 1 and not text_buf:
+                # the provider refused a request with files in it: the new ones (the old ones
+                # went through before), else the old ones, never go to the model again, and
+                # this turn is answered once more without any file, so the user hears why
+                await attachments.mark_unreadable(session, carried)
+                await session.commit()
+                flags.add("attachments_refused")
+                carried = []
+                history, _none = await _history_items(
+                    session, conv.id, image_detail=settings.image_detail, leave_out=user_row.id
+                )
+                if sent:
+                    names = [a.filename for a in sent]
+                    said = f"{said}\n{attachments.describe_refused(names, now=True)}"
+                prefix_items = [
+                    *history,
+                    UserMessage(prompts.user_item_text(ctx, said, now, english_only=english_only)),
+                ]
+                continue
             flags.add(f"provider_error:{code}")
             safe_mode = code
             break

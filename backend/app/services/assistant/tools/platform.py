@@ -218,9 +218,31 @@ class SearchPropertiesIn(BaseModel):
     city: str | None = None
     country: str | None = None
     min_yield: float | None = Field(default=None, ge=0, le=100)
-    max_price: float | None = Field(default=None, ge=0)
-    sort: str = Field(default="newest", description="newest | yield | price | funded")
+    max_price: float | None = Field(
+        default=None, ge=0, description="Highest value of the WHOLE property, in USD"
+    )
+    budget: float | None = Field(
+        default=None,
+        gt=0,
+        description="An amount the user has to invest, in USD: only listings they can enter "
+        "with it (minimum investment at most this), with the units it buys in each",
+    )
+    sort: str | None = Field(
+        default=None,
+        description="newest | yield (highest projected yield first) | price (lowest property "
+        "value first) | entry (lowest amount to get in first) | funded; empty = entry with a "
+        "budget, else newest",
+    )
     limit: int = Field(default=5, ge=1, le=10)
+
+
+_SORTS = {
+    "newest": "newest",
+    "yield": "yield-high",
+    "price": "price-low",
+    "entry": "entry-low",
+    "funded": "funded",
+}
 
 
 class PropertyCard(ToolOutput):
@@ -246,11 +268,17 @@ class PropertyCard(ToolOutput):
     developer_name: str | None
     developer_slug: str | None
     image: str | None  # platform-relative file URL, for the chat card thumbnail
+    # with a budget: the least that gets you in, and the whole units the budget buys here
+    entry_amount: float | None = None
+    units_for_budget: int | None = None
 
 
 class SearchPropertiesOut(ToolOutput):
     items: list[PropertyCard]
     total: int
+    # with a budget: the smallest amount that gets into ANY listing (when nothing fits the
+    # budget, say so and give this)
+    lowest_entry: float | None = None
     as_of: str
 
 
@@ -281,6 +309,16 @@ def _card(row: dict) -> dict:
     }
 
 
+def _budget_fit(card: dict, budget: float | None) -> dict:
+    """The least that gets into this listing and the whole units ``budget`` buys in it."""
+    price = card["unit_price"]
+    entry = card["minimum_investment"] or price
+    card["entry_amount"] = entry
+    if budget is not None and price:
+        card["units_for_budget"] = min(int(budget // price), card["available_units"])
+    return card
+
+
 async def _search_properties(session: AsyncSession, ctx: AgentContext, args) -> dict:
     a: SearchPropertiesIn = args
     rows, total = await property_service.list_public(
@@ -291,15 +329,19 @@ async def _search_properties(session: AsyncSession, ctx: AgentContext, args) -> 
         city=a.city,
         min_yield=a.min_yield,
         max_price=a.max_price,
+        max_entry=a.budget,
         search=a.search,
-        sort=a.sort if a.sort in ("newest", "yield", "price", "funded") else "newest",
+        sort=_SORTS.get(a.sort or "", "entry-low" if a.budget else "newest"),
         limit=a.limit,
         offset=0,
     )
     names = await property_service._owner_names(session, rows)
     return {
-        "items": [_card(property_service.serialize_summary(p, names)) for p in rows],
+        "items": [
+            _budget_fit(_card(property_service.serialize_summary(p, names)), a.budget) for p in rows
+        ],
         "total": int(total),
+        "lowest_entry": await property_service.lowest_entry(session) if a.budget else None,
         "as_of": _now(),
     }
 
@@ -308,7 +350,9 @@ register(
     ToolSpec(
         "search_properties",
         "Search the marketplace (published listings only). Returns up to 10 property cards "
-        "with live prices, yields and availability.",
+        "with live prices, yields and availability. When the user mentions an amount they have "
+        "or want to invest, pass it as budget: you get only the listings it can enter, the "
+        "units it buys in each and the lowest entry anywhere.",
         SearchPropertiesIn,
         SearchPropertiesOut,
         "informational",

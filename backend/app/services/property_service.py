@@ -158,6 +158,21 @@ async def _owner_names(session: AsyncSession, props: list[Property]) -> dict[uui
 
 
 # --- Public reads ---------------------------------------------------------- #
+# The least an investor can put into a listing: its minimum investment, or one unit.
+ENTRY_AMOUNT = func.coalesce(Property.minimum_investment, Property.unit_price)
+
+
+async def lowest_entry(session: AsyncSession) -> float | None:
+    """The smallest amount that buys into any published listing with units left (None when
+    there is none)."""
+    value = await session.scalar(
+        select(func.min(ENTRY_AMOUNT)).where(
+            Property.status.in_(PUBLIC_STATUSES), Property.available_units > 0
+        )
+    )
+    return float(value) if value is not None else None
+
+
 async def list_public(
     session: AsyncSession,
     *,
@@ -169,11 +184,14 @@ async def list_public(
     min_yield: float | None = None,
     min_price: float | None = None,
     max_price: float | None = None,
+    max_entry: float | None = None,
     search: str | None = None,
     sort: str = "newest",
     limit: int = 60,
     offset: int = 0,
 ) -> tuple[list[Property], int]:
+    """Published listings. ``max_entry`` keeps only those an investor can enter with that much
+    (the listing's minimum investment, or one unit when it sets none) that still have units."""
     conds: list[ColumnElement[bool]] = [Property.status.in_(PUBLIC_STATUSES)]
     if status in ("active", "funded"):
         conds = [Property.status == PropertyStatus(status)]
@@ -191,6 +209,9 @@ async def list_public(
         conds.append(Property.total_value >= min_price)
     if max_price is not None:
         conds.append(Property.total_value <= max_price)
+    if max_entry is not None:
+        conds.append(ENTRY_AMOUNT <= max_entry)
+        conds.append(Property.available_units > 0)
     if search:
         like = f"%{search.lower()}%"
         conds.append(
@@ -208,6 +229,8 @@ async def list_public(
         stmt = stmt.order_by(func.coalesce(Property.expected_yield, Property.target_yield).desc())
     elif sort == "funded":
         stmt = stmt.order_by(Property.funding_progress.desc())
+    elif sort == "entry-low":
+        stmt = stmt.order_by(ENTRY_AMOUNT.asc(), Property.created_at.desc())
     else:  # newest
         stmt = stmt.order_by(Property.created_at.desc())
     stmt = stmt.limit(min(limit, 200)).offset(max(offset, 0))

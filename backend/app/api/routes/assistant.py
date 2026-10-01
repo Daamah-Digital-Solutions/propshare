@@ -3,9 +3,9 @@ action confirmation, feedback and the maintenance jobs.
 
 Gate order for every message: deploy-level kill switch -> DB kill switch -> model configured
 -> rollout (admins / all / visitors) -> consent (signed-in, only when assistant_consent_required
-is on) -> per-user daily cap -> global daily token budget. ``GET /status`` runs the same checks
-and reports the first failing one instead of raising, so the widget can fall back without a
-round of errors.
+is on) -> per-user daily caps (messages, tokens) -> global daily token budget. ``GET /status``
+runs the same checks and reports the first failing one instead of raising, so the widget can
+fall back without a round of errors.
 
 The SSE stream runs on its OWN database session: the request-scoped session would end when
 the handler returns, long before the model has finished.
@@ -20,8 +20,9 @@ import json
 import re
 import uuid
 from collections.abc import AsyncIterator, Callable
+from typing import Annotated
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, File, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,9 +32,16 @@ from app.core import crypto
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
 from app.core.errors import AppError
-from app.core.ratelimit import ASSISTANT_LIMIT, limiter
-from app.models import AssistantActionProposal, AssistantConversation, AssistantMessage
+from app.core.ratelimit import ASSISTANT_LIMIT, ATTACHMENT_LIMIT, limiter
+from app.models import (
+    AssistantActionProposal,
+    AssistantAttachment,
+    AssistantConversation,
+    AssistantMessage,
+)
 from app.schemas.assistant import (
+    AttachmentOut,
+    AttachmentsOut,
     ConfirmIn,
     ConsentIn,
     ConsentOut,
@@ -45,7 +53,7 @@ from app.schemas.assistant import (
     ProposalOut,
     StatusOut,
 )
-from app.services.assistant import actions, agent, consent
+from app.services.assistant import actions, agent, attachments, consent
 from app.services.assistant.agent import AssistantSettings
 from app.services.assistant.context import AgentContext, load_context
 from app.services.llm import registry
@@ -119,6 +127,10 @@ async def _gate(
         settings.daily_message_cap
     ):
         return settings, "DAILY_CAP"
+    if settings.user_daily_token_cap and await _tokens_today(
+        session, user_id=principal.user_id
+    ) >= (settings.user_daily_token_cap):
+        return settings, "DAILY_CAP"
     if settings.daily_token_budget and await _tokens_today(session) >= settings.daily_token_budget:
         return settings, "BUDGET_EXHAUSTED"
     return settings, None
@@ -181,20 +193,23 @@ async def _messages_today(
     return int(n or 0)
 
 
-async def _tokens_today(session: AsyncSession) -> int:
+async def _tokens_today(session: AsyncSession, *, user_id: uuid.UUID | None = None) -> int:
+    """Tokens used today: by everyone (the platform budget), or by one member."""
     usage = AssistantMessage.usage
-    total = await session.scalar(
-        select(
-            func.coalesce(
-                func.sum(
-                    cast(usage["input_tokens"].astext, Integer)
-                    + cast(usage["output_tokens"].astext, Integer)
-                ),
-                0,
-            )
-        ).where(AssistantMessage.role == "assistant", AssistantMessage.created_at >= _today())
-    )
-    return int(total or 0)
+    query = select(
+        func.coalesce(
+            func.sum(
+                cast(usage["input_tokens"].astext, Integer)
+                + cast(usage["output_tokens"].astext, Integer)
+            ),
+            0,
+        )
+    ).where(AssistantMessage.role == "assistant", AssistantMessage.created_at >= _today())
+    if user_id is not None:
+        query = query.join(
+            AssistantConversation, AssistantConversation.id == AssistantMessage.conversation_id
+        ).where(AssistantConversation.user_id == user_id)
+    return int(await session.scalar(query) or 0)
 
 
 # --------------------------------------------------------------------------- #
@@ -220,6 +235,15 @@ async def status(request: Request, session: SessionDep):
         rollout=settings.rollout,
         reply_language=settings.reply_language,
         privacy_notice=settings.consent_required,
+        attachments=(
+            AttachmentsOut(
+                per_message=settings.attachments_per_message,
+                max_mb=settings.attachment_max_mb,
+                max_pages=settings.file_max_pages,
+            )
+            if principal is not None and settings.attachments_enabled
+            else None
+        ),
     )
 
 
@@ -319,6 +343,7 @@ async def list_messages(conversation_id: uuid.UUID, request: Request, session: S
         .scalars()
         .all()
     )
+    sent = await attachments.for_messages(session, [m.id for m in rows if m.role == "user"])
     return [
         MessageOut(
             id=m.id,
@@ -328,9 +353,92 @@ async def list_messages(conversation_id: uuid.UUID, request: Request, session: S
             confidence=m.confidence,
             feedback=m.feedback,
             created_at=m.created_at,
+            attachments=[AttachmentOut(**a) for a in sent.get(m.id, [])],
         )
         for m in rows
     ]
+
+
+def _attachment_out(row: AssistantAttachment) -> AttachmentOut:
+    return AttachmentOut(
+        id=row.id,
+        kind=row.kind,
+        filename=row.filename,
+        mime=row.mime,
+        size_bytes=row.size_bytes,
+        width=row.width,
+        height=row.height,
+        pages=row.pages,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Pictures and files: uploaded before the message that carries them (signed-in users only)
+# --------------------------------------------------------------------------- #
+@router.post(
+    "/conversations/{conversation_id}/attachments", response_model=AttachmentOut, status_code=201
+)
+@limiter.limit(ATTACHMENT_LIMIT)
+async def upload_attachment(
+    conversation_id: uuid.UUID,
+    request: Request,
+    principal: PrincipalDep,
+    session: SessionDep,
+    file: Annotated[UploadFile, File()],
+):
+    """A picture or a file for the next message: recognised by its content (a picture is
+    re-encoded without metadata, at most 2048 px; a document is kept as sent) and stored
+    encrypted. Send its id with the message in ``attachment_ids``."""
+    settings, reason = await _gate(session, principal, None)
+    if reason:
+        _raise_gate(reason)
+    if not settings.attachments_enabled:
+        raise AppError(
+            "ATTACHMENTS_DISABLED",
+            "Files and pictures cannot be sent in the chat right now.",
+            status_code=409,
+        )
+    ctx = await _context(session, principal, None, conversation_id=conversation_id)
+    conv = await agent.get_conversation(session, ctx, conversation_id)  # ownership check
+    limit = settings.attachment_max_mb * 1024 * 1024
+    data = await file.read(limit + 1)
+    row = await attachments.store_upload(
+        session,
+        user_id=principal.user_id,
+        conversation_id=conv.id,
+        data=data,
+        filename=file.filename,
+        max_mb=settings.attachment_max_mb,
+        daily_cap=settings.attachments_daily_cap,
+        max_pages=settings.file_max_pages,
+    )
+    return _attachment_out(row)
+
+
+@router.delete("/attachments/{attachment_id}", status_code=204)
+async def delete_attachment(attachment_id: uuid.UUID, principal: PrincipalDep, session: SessionDep):
+    """A picture or file the user took off before sending: it goes, and its slot frees up."""
+    await attachments.discard(session, user_id=principal.user_id, attachment_id=attachment_id)
+    return Response(status_code=204)
+
+
+@router.get("/attachments/{attachment_id}")
+async def get_attachment(attachment_id: uuid.UUID, principal: PrincipalDep, session: SessionDep):
+    """One of the caller's own pictures or files (shown or downloaded again from the chat).
+    A file always downloads (never opened in the page); nothing is cached."""
+    row = await session.get(AssistantAttachment, attachment_id)
+    if row is None or row.user_id != principal.user_id:
+        raise AppError("NOT_FOUND", "File not found.", status_code=404)
+    disposition = "inline" if row.kind == "image" else "attachment"
+    return Response(
+        content=row.data,
+        media_type=row.mime,
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": attachments.content_disposition(disposition, row.filename),
+        },
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -348,12 +456,18 @@ _KEEPALIVE = ": keep-alive\n\n"
 
 
 async def _stream(
-    ctx: AgentContext, text: str, settings: AssistantSettings, llm: LLMClient
+    ctx: AgentContext,
+    text: str,
+    settings: AssistantSettings,
+    llm: LLMClient,
+    attachment_ids: list[uuid.UUID] | None = None,
 ) -> AsyncIterator[str]:
     timeout = agent.timeout_seconds()
     maker = get_sessionmaker()
     async with maker() as session:
-        gen = agent.run_turn(session, ctx, text, llm, settings=settings)
+        gen = agent.run_turn(
+            session, ctx, text, llm, settings=settings, attachment_ids=attachment_ids or ()
+        )
         pending: asyncio.Future | None = None
         try:
             while True:
@@ -406,9 +520,11 @@ async def send_message(
         page=body.page,
     )
     await agent.get_conversation(session, ctx, conversation_id)  # ownership check
+    if body.attachment_ids and principal is None:
+        raise AppError("SIGN_IN_REQUIRED", "Sign in to send files.", status_code=403)
     llm = llm_factory(settings.provider)
     return StreamingResponse(
-        _stream(ctx, body.text, settings, llm),
+        _stream(ctx, body.text, settings, llm, body.attachment_ids),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

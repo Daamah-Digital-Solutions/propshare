@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -74,6 +75,49 @@ class ChangePasswordIn(BaseModel):
 
 class VerifyEmailIn(BaseModel):
     token: str
+
+
+class EmailChangeIn(BaseModel):
+    # validated with the sign-up rules in the service (so the assistant's path gets them too)
+    new_email: str = Field(min_length=3, max_length=320)
+
+
+class EmailChangeLinkIn(BaseModel):
+    token: str = Field(min_length=10, max_length=256)
+
+
+class EmailChangeOut(BaseModel):
+    """Where a change stands: ``awaiting_approval`` (link sent to the current address, shown
+    masked in ``sent_to``), ``awaiting_confirmation`` (link sent to the new one) or
+    ``completed``. Addresses are masked."""
+
+    status: str
+    new_email: str
+    sent_to: str | None = None
+    expires_at: dt.datetime | None = None
+
+
+class EmailChangeStatusOut(BaseModel):
+    pending: EmailChangeOut | None
+
+
+class EmailChangeLinkOut(BaseModel):
+    """What a link from the emails is about, before anything happens: the page shows it and
+    acts only when the person presses a button. ``new_email`` is in full (the link went to the
+    account's owner, or to that address itself); ``account_email`` is masked."""
+
+    step: Literal["approve", "confirm"]
+    new_email: str
+    account_email: str
+    expires_at: dt.datetime
+
+
+class EmailChangeRejectOut(BaseModel):
+    """ "This wasn't me": the change stopped; ``signed_out`` when every device was signed out
+    (the link from the current address)."""
+
+    status: str
+    signed_out: bool
 
 
 class OAuthCallbackIn(BaseModel):

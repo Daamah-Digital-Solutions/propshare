@@ -40,6 +40,11 @@ const TOOL_LABELS: Record<string, ToolLabel> = {
   list_my_returns: { running: "Loading your returns", done: "Loaded your returns" },
   list_my_installment_plans: { running: "Checking your installments", done: "Checked your installments" },
   get_my_holdings: { running: "Checking your holdings", done: "Checked your holdings" },
+  get_my_certificates: { running: "Getting your certificates", done: "Got your certificates" },
+  get_my_installment_schedules: {
+    running: "Getting your installment schedule",
+    done: "Got your installment schedule",
+  },
   get_my_account: { running: "Checking your account", done: "Checked your account" },
   get_my_kyc_status: { running: "Checking your verification", done: "Checked your verification" },
   list_my_notifications: { running: "Reading your notifications", done: "Read your notifications" },
@@ -122,6 +127,10 @@ export function coveredPaths(card: AssistantCard): string[] {
       return ["/secondary-market", "/secondary-market?tab=sell"];
     case "installment":
       return ["/dashboard?tab=installments"];
+    case "document":
+      // the card downloads the files and links its own verifier: the page and that link
+      // would only say the same thing twice
+      return [card.path, ...card.links.map((l) => l.path)];
     default:
       return [];
   }

@@ -37,6 +37,29 @@ def _now() -> str:
     return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat()
 
 
+_HELD_BACK_WHY = {
+    "listed": "already listed for sale",
+    "lp_exit": "in an open liquidity-provider exit request",
+    "family_pending": "promised to a family member who has not registered yet",
+    "gift": "in a scheduled gift",
+    "installment_plan": (
+        "on an installment plan that is still running (they become sellable after its last "
+        "payment, and the remaining installments can be paid early)"
+    ),
+    "pledged": "pledged to Nova Finance for a Nova Sukuk certificate",
+}
+
+
+def held_back_reasons(held_back: dict[str, int]) -> str:
+    """Why units cannot be sold, in words: '3 are on an installment plan ...; 2 are listed'."""
+    parts = [
+        f"{n} {'is' if n == 1 else 'are'} {_HELD_BACK_WHY[k]}"
+        for k, n in held_back.items()
+        if n and k in _HELD_BACK_WHY
+    ]
+    return "; ".join(parts)
+
+
 def pick_by_name(query: str, rows: list[dict], *, what: str) -> dict:
     """The row the user means, from their own list: an exact id or slug, else the title words
     (all of them, in any order). Ambiguous or unknown names are errors the model relays."""
@@ -124,10 +147,10 @@ async def _prepare_sale(session, ctx: AgentContext, args) -> dict:
             "No price was given, so this uses the reference price; change it before listing."
         )
     if a.units > held["sellable_units"]:
-        reserved = held["units"] - held["sellable_units"]
+        why = held_back_reasons(held.get("held_back") or {})
         blocking.append(
             f"You can list up to {held['sellable_units']} units of this property"
-            + (f" ({reserved} are already listed or reserved)." if reserved else ".")
+            + (f" (of your {held['units']}: {why})." if why else ".")
         )
     sett = await settings_service.get_secondary_settings(session)
     lockup_days = int(sett["lockup_days"] or 0)

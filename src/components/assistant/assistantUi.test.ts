@@ -78,6 +78,23 @@ describe("assistant UI helpers", () => {
     expect(toolLabel("prepare_sale", "ok")).toBe("Prepared your listing");
   });
 
+  it("a document card covers its own page and its verifier's link", () => {
+    expect(toolLabel("get_my_certificates", "running")).toBe("Getting your certificates…");
+    expect(toolLabel("get_my_installment_schedules", "ok")).toBe("Got your installment schedule");
+    expect(
+      coveredPaths({
+        kind: "document",
+        doc: "certificate",
+        title: "Your ownership certificate",
+        sections: [],
+        files: [],
+        links: [{ label: "Verify", path: "https://www.cimglobalfinancial.com/capimax-verify" }],
+        path: "/dashboard?tab=certificates",
+        footnote: null,
+      }),
+    ).toEqual(["/dashboard?tab=certificates", "https://www.cimglobalfinancial.com/capimax-verify"]);
+  });
+
   it("helps verify a document on the verification pages, a partner's site gets a badge", () => {
     expect(linkIcon("https://www.proofanchor.io/verify")).toBe(BadgeCheck);
     expect(linkIcon("/verification-center")).toBe(BadgeCheck);
