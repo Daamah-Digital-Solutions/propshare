@@ -120,7 +120,13 @@ class PropertySummaryOut(BaseModel):
     image: str | None
     total_value: float
     minimum_investment: float
+    # the CURRENT price of a unit (its history: GET /properties/{id}/prices)
     unit_price: float
+    # how an under-construction listing is bought: installments | full | both (ready
+    # listings are always paid in full and ignore it)
+    offplan_payment: str = "installments"
+    # the price the listing was launched at, once the unit price has changed since (else null)
+    launch_price: float | None = None
     target_yield: float | None
     expected_yield: float | None
     capital_appreciation: float | None
@@ -133,6 +139,27 @@ class PropertySummaryOut(BaseModel):
     developer_name: str | None
     # URL key of the developer's public profile (/developers/{slug}); None when unnamed.
     developer_slug: str | None = None
+
+
+class PricePointOut(BaseModel):
+    at: dt.datetime
+    price: str
+    change_pct: str  # the move this change made (0 for the launch price)
+    label: str | None  # a sales phase or stage, when the change opened one
+    note: str | None
+
+
+class PriceHistoryOut(BaseModel):
+    """A listing's unit price over time (0034): the launch price, then every recorded
+    change. ``change_pct`` is the current price against the launch price."""
+
+    property_id: uuid.UUID
+    current_price: str
+    launch_price: str
+    change_pct: str
+    updated_at: dt.datetime | None  # when the price last changed (None = never)
+    phase: str | None  # the latest phase a change opened
+    points: list[PricePointOut]
 
 
 class PropertyDetailOut(PropertySummaryOut):

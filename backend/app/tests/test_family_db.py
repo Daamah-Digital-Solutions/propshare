@@ -406,6 +406,50 @@ async def test_family_reinvest_discount_is_configurable(client, db):
     assert res.json()["units"] == 12
 
 
+@pytest.mark.asyncio
+async def test_family_reinvest_buys_only_what_is_sold_in_full(client, db):
+    # The family reinvest pays for units in full. It used to skip the checks every other
+    # purchase makes, so it could take money for a listing that is not open, for a sample,
+    # and (0034) for an under-construction listing that is sold by installments only.
+    t = await _verified_user(client, db, "ri3@f.com")
+    uid = _uid(db, "ri3@f.com")
+    _fund_wallet(db, uid, 100000)
+    await _create_group(client, t)
+
+    async def reinvest(pid: str):
+        return await client.post(
+            "/api/v1/family/reinvest",
+            json={"property_id": pid, "amount": 1000},
+            headers=_hdr(t, "auto"),
+        )
+
+    closed = _seed_property(db, unit_price=100)
+    db("UPDATE properties SET status='draft' WHERE id=:p", p=closed)
+    sample = _seed_property(db, unit_price=100)
+    db("UPDATE properties SET content='{\"sample\": true}'::jsonb WHERE id=:p", p=sample)
+    by_plan = _seed_property(db, unit_price=100)
+    db("UPDATE properties SET model='installment' WHERE id=:p", p=by_plan)
+    for pid, code in (
+        (closed, "PROPERTY_NOT_OPEN"),
+        (sample, "SAMPLE_LISTING"),
+        (by_plan, "INSTALLMENTS_ONLY"),
+    ):
+        r = await reinvest(pid)
+        assert r.status_code == 409 and r.json()["error"]["code"] == code, r.text
+        assert _holding(db, uid, pid) == 0
+    assert db("SELECT balance FROM wallets WHERE user_id=:i", i=uid)[0][0] == 100000
+
+    # an under-construction listing that IS sold in full (a project sold in phases) is fine
+    in_phases = _seed_property(db, unit_price=100)
+    db(
+        "UPDATE properties SET model='installment', offplan_payment='full' WHERE id=:p",
+        p=in_phases,
+    )
+    ok = await reinvest(in_phases)
+    assert ok.status_code == 200, ok.text
+    assert _holding(db, uid, in_phases) == 10
+
+
 # --- idempotency ------------------------------------------------------------ #
 @pytest.mark.asyncio
 async def test_transfer_idempotency(client, db):

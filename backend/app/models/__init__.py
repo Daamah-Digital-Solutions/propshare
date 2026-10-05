@@ -171,7 +171,16 @@ class Property(Base):
     )
     total_units: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
     available_units: Mapped[int] = mapped_column(Integer, nullable=False, server_default="100")
+    # the CURRENT price of a unit: staff record a new one as the property is revalued or a
+    # sales phase opens (price_service; the history is in property_prices)
     unit_price: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
+    # how an under-construction listing is bought (0034): installments | full | both
+    offplan_payment: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="installments"
+    )
+    # the price the listing was launched at, kept from its FIRST price change on (0034);
+    # NULL = the unit price has never changed, so the launch price is the current one
+    launch_price: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
     spv_name: Mapped[str | None] = mapped_column(Text)
     spv_registration: Mapped[str | None] = mapped_column(Text)
     legal_structure: Mapped[str | None] = mapped_column(Text)
@@ -321,6 +330,11 @@ class SecondaryListing(Base):
     )
     investment_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("investments.id", ondelete="CASCADE")
+    )
+    # 0034: the listing offers a whole installment plan position (every unit of the plan, paid
+    # or not, sold together; the buyer takes the plan over). NULL = fully owned units.
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("installment_plans.id", ondelete="CASCADE")
     )
     units_for_sale: Mapped[int] = mapped_column(Integer, nullable=False)
     units_remaining: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -568,6 +582,7 @@ from app.models.payout_methods import (  # noqa: E402
     UserBankAccount,
     UserCryptoWallet,
 )
+from app.models.prices import PropertyPrice  # noqa: E402
 from app.models.secondary import SecondaryTrade  # noqa: E402
 from app.models.support import SupportTicket, SupportTicketMessage  # noqa: E402
 from app.models.withdrawals import ConnectAccount, PayoutEvent, Withdrawal  # noqa: E402
@@ -630,6 +645,8 @@ __all__ = [
     "EmailOutbox",
     # property milestones (Phase 15b)
     "PropertyMilestone",
+    # the unit price's history (0034)
+    "PropertyPrice",
     # investor communications (Phase 15c)
     "DeveloperUpdate",
     "DeveloperUpdateRecipient",

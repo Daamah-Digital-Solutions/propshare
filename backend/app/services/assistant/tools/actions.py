@@ -241,7 +241,7 @@ async def _propose_action(session: AsyncSession, ctx: AgentContext, args) -> dic
             raise AppError("NOT_FOUND", "No active listing of yours with that id.", status_code=404)
         params = {"listing_id": listing_id}
         summary = (
-            f"Cancel your secondary-market listing of {row.get('units')} unit(s) of "
+            f"Cancel your secondary-market listing of {row.get('units_remaining')} unit(s) of "
             f"{row.get('property_title') or 'the property'}."
         )
     elif a.action == "cancel_liquidity_exit_request":

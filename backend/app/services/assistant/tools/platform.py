@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import uuid
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,9 +20,11 @@ from app.models import Document, KbArticle
 from app.services import (
     document_service,
     installment_service,
+    investment_service,
     listing_service,
     payment_service,
     platform_accounts_service,
+    price_service,
     property_service,
     reference_library,
     settings_service,
@@ -258,7 +261,7 @@ class PropertyCard(ToolOutput):
     status: str
     unit_price: float | None
     minimum_investment: float | None
-    total_value: float | None
+    total_value: float | None  # the whole property at today's unit price
     target_yield: float | None
     expected_yield: float | None
     capital_appreciation: float | None
@@ -268,6 +271,13 @@ class PropertyCard(ToolOutput):
     developer_name: str | None
     developer_slug: str | None
     image: str | None  # platform-relative file URL, for the chat card thumbnail
+    # how units are bought: full (paid at once) | installments (the plan) | both
+    payment: str = "full"
+    # unit_price is the CURRENT price; a listing under construction gets a new one as it is
+    # revalued or a sales phase opens: where it started and how far it has moved since
+    launch_price: float | None = None
+    price_change_pct: float | None = None
+    price_updated_at: str | None = None
     # with a budget: the least that gets you in, and the whole units the budget buys here
     entry_amount: float | None = None
     units_for_budget: int | None = None
@@ -291,12 +301,12 @@ def _card(row: dict) -> dict:
         "country": row["country"],
         "city": row["city"],
         "model": row["model"],
-        "model_label": listing_service.MODEL_LABELS.get(row["model"], row["model"]),
+        "model_label": listing_service.purchase_label(row["model"], row.get("offplan_payment")),
         "property_type": row["property_type"],
         "status": row["status"],
         "unit_price": row["unit_price"],
         "minimum_investment": row["minimum_investment"],
-        "total_value": row["total_value"],
+        "total_value": _asset_value(row),
         "target_yield": row["target_yield"],
         "expected_yield": row["expected_yield"],
         "capital_appreciation": row["capital_appreciation"],
@@ -306,7 +316,46 @@ def _card(row: dict) -> dict:
         "developer_name": row["developer_name"],
         "developer_slug": row.get("developer_slug"),
         "image": row.get("image"),
+        "payment": _payment(row["model"], row.get("offplan_payment")),
     }
+
+
+def _asset_value(row: dict) -> float | None:
+    """All the units at today's unit price. The listing's own ``total_value`` is the offering's
+    total: what was paid for the units already sold plus the rest at today's price, so after a
+    price change it is not what the property is worth."""
+    units, price = row.get("total_units"), row.get("unit_price")
+    if row.get("launch_price") is not None and units and price:  # the price has moved
+        return float(decimal.Decimal(str(price)) * int(units))
+    return row.get("total_value")
+
+
+def _payment(model: str | None, offplan_payment: str | None) -> str:
+    """full | installments | both: a ready listing is paid in full; one under construction
+    says which (the listing's own choice)."""
+    if listing_service.profile_of(model) not in listing_service.OFFPLAN_PROFILES:
+        return "full"
+    return offplan_payment or "installments"
+
+
+async def _with_prices(session: AsyncSession, cards: list[dict]) -> list[dict]:
+    """Add each card's price line: the launch price, the move since, the last change."""
+    ids = [uuid.UUID(c["id"]) for c in cards]
+    summaries = await price_service.summaries(session, ids)
+    for card in cards:
+        info = summaries.get(uuid.UUID(card["id"]))
+        price = card["unit_price"]
+        if info is None or price is None:
+            card["launch_price"] = price
+            card["price_change_pct"] = 0.0 if price is not None else None
+            continue
+        launch = decimal.Decimal(info["launch_price"])
+        card["launch_price"] = float(launch)
+        card["price_change_pct"] = float(
+            price_service.change_pct(launch, decimal.Decimal(str(price)))
+        )
+        card["price_updated_at"] = info["updated_at"].date().isoformat()
+    return cards
 
 
 def _budget_fit(card: dict, budget: float | None) -> dict:
@@ -336,10 +385,11 @@ async def _search_properties(session: AsyncSession, ctx: AgentContext, args) -> 
         offset=0,
     )
     names = await property_service._owner_names(session, rows)
+    cards = [
+        _budget_fit(_card(property_service.serialize_summary(p, names)), a.budget) for p in rows
+    ]
     return {
-        "items": [
-            _budget_fit(_card(property_service.serialize_summary(p, names)), a.budget) for p in rows
-        ],
+        "items": await _with_prices(session, cards),
         "total": int(total),
         "lowest_entry": await property_service.lowest_entry(session) if a.budget else None,
         "as_of": _now(),
@@ -350,9 +400,10 @@ register(
     ToolSpec(
         "search_properties",
         "Search the marketplace (published listings only). Returns up to 10 property cards "
-        "with live prices, yields and availability. When the user mentions an amount they have "
-        "or want to invest, pass it as budget: you get only the listings it can enter, the "
-        "units it buys in each and the lowest entry anywhere.",
+        "with live prices, yields and availability, how each is bought (payment: full, "
+        "installments or both) and how far its unit price has moved since launch. When the "
+        "user mentions an amount they have or want to invest, pass it as budget: you get only "
+        "the listings it can enter, the units it buys in each and the lowest entry anywhere.",
         SearchPropertiesIn,
         SearchPropertiesOut,
         "informational",
@@ -378,7 +429,19 @@ class DocumentOut(ToolOutput):
     category: str
 
 
+class PricePointOut(ToolOutput):
+    date: str
+    price: float
+    change_pct: float  # the move this change made
+    label: str | None  # a sales phase or stage this price opened
+    note: str | None
+
+
 class PropertyDetailOut(PropertyCard):
+    # the unit price over time: the launch price, then each change recorded since (newest
+    # last, at most the 12 latest)
+    price_history: list[PricePointOut]
+    phase: str | None  # the sales phase the latest price opened, when it named one
     description: str | None
     subtitle: str | None
     expected_completion: str | None
@@ -398,7 +461,10 @@ async def _get_property(session: AsyncSession, ctx: AgentContext, args) -> dict:
     a: GetPropertyIn = args
     prop = await property_service.get_public_detail(session, a.id_or_slug)
     names = await property_service._owner_names(session, [prop])
-    card = _card(property_service.serialize_summary(prop, names))
+    card = (await _with_prices(session, [_card(property_service.serialize_summary(prop, names))]))[
+        0
+    ]
+    line = await price_service.history(session, prop)
     milestones = await listing_service.list_milestones(session, prop.id)
     docs = await document_service.list_property_documents(session, a.id_or_slug)
     content = prop.content if isinstance(prop.content, dict) else {}
@@ -407,6 +473,17 @@ async def _get_property(session: AsyncSession, ctx: AgentContext, args) -> dict:
     details = content.get("details") or {}
     return {
         **card,
+        "price_history": [
+            {
+                "date": pt["at"].date().isoformat() if pt["at"] else "",
+                "price": float(pt["price"]),
+                "change_pct": float(pt["change_pct"]),
+                "label": pt["label"],
+                "note": pt["note"],
+            }
+            for pt in line["points"][-12:]
+        ],
+        "phase": line["phase"],
         "description": prop.description,
         "subtitle": prop.subtitle,
         "expected_completion": _s(prop.expected_completion),
@@ -435,7 +512,9 @@ register(
     ToolSpec(
         "get_property",
         "Full public details of one published listing by id or slug: numbers, description, "
-        "milestones, document titles and the page link. Never invent a property.",
+        "milestones, document titles and the page link, plus how it is bought (payment) and "
+        "its unit price over time (price_history: the launch price, then each new price the "
+        "platform recorded; unit_price is the price now). Never invent a property.",
         GetPropertyIn,
         PropertyDetailOut,
         "informational",
@@ -465,7 +544,7 @@ class CompareItem(ToolOutput):
     model_label: str
     property_type: str
     status: str
-    purchase: str  # direct | installment
+    purchase: str  # direct | installment | either (the investor chooses)
     unit_price: float | None
     minimum_investment: float | None
     expected_yield: float | None
@@ -533,11 +612,12 @@ async def _compare_properties(session: AsyncSession, ctx: AgentContext, args) ->
         if not exits and (content.get("terms") or {}).get("exitOptions"):
             exits = [str(content["terms"]["exitOptions"])]
         exit_fee = (content.get("fees") or {}).get("exit")
-        offplan = listing_service.profile_of(prop.model) in listing_service.OFFPLAN_PROFILES
         items.append(
             {
                 **{k: card[k] for k in CompareItem.model_fields if k in card},
-                "purchase": "installment" if offplan else "direct",
+                "purchase": {"full": "direct", "installments": "installment"}.get(
+                    card["payment"], "either"
+                ),
                 "expected_completion": _s(prop.expected_completion),
                 "exit_options": exits[:4],
                 "exit_fee_pct": float(exit_fee) if isinstance(exit_fee, int | float) else None,
@@ -759,6 +839,12 @@ class QuoteIn(BaseModel):
     duration_months: int | None = Field(
         default=None, description="Installment plan length for off-plan listings"
     )
+    pay: str | None = Field(
+        default=None,
+        pattern="^(full|installments)$",
+        description="For a listing that can be bought both ways: full = pay at once, "
+        "installments = the plan. Empty: the plan when a duration is given, else full payment",
+    )
 
 
 class ScheduleRow(ToolOutput):
@@ -783,6 +869,7 @@ class QuoteOut(ToolOutput):
     total_now: str
     minimum_investment: str
     purchase_type: str  # direct | installment
+    payment_options: list[str]  # how this listing can be bought: full and/or installments
     down_payment_pct: int | None
     installment_fee_pct: str | None
     schedule: list[ScheduleRow]
@@ -820,8 +907,16 @@ async def _quote_investment(session: AsyncSession, ctx: AgentContext, args) -> d
     elif ctx.kyc_status != "verified":
         notes.append("Identity verification must be approved before investing.")
         blocking = True
-    profile = listing_service.profile_of(prop.model)
-    offplan = profile in listing_service.OFFPLAN_PROFILES
+    modes = investment_service.payment_modes(prop)
+    # by the plan when the listing offers nothing else, or the user asked for it (a duration
+    # is asking for it); in full otherwise
+    by_plan = "installments" in modes and (
+        "full" not in modes or a.pay == "installments" or (a.pay is None and a.duration_months)
+    )
+    if a.pay == "full" and "full" not in modes:
+        notes.append("This listing is bought through its installment plan, not paid in full.")
+    if (a.pay == "installments" or a.duration_months) and "installments" not in modes:
+        notes.append("This listing is paid in full: it has no installment plan.")
     months: int | None = None
     subtotal = (unit * units).quantize(_CENTS)
     rates = await settings_service.get_fee_rates(session)
@@ -829,7 +924,7 @@ async def _quote_investment(session: AsyncSession, ctx: AgentContext, args) -> d
     schedule: list[dict] = []
     down_pct = None
     inst_fee = None
-    if offplan:
+    if by_plan:
         months = a.duration_months or 12
         table = installment_service._DOWN_PCT
         if months not in table:
@@ -856,10 +951,18 @@ async def _quote_investment(session: AsyncSession, ctx: AgentContext, args) -> d
             )
         platform_fee = decimal.Decimal(0)
         total_now = decimal.Decimal(schedule[0]["total_amount"]) if schedule else decimal.Decimal(0)
-        notes.append("Off-plan listings are bought through the standard installment plan.")
+        if "full" in modes:
+            notes.append("This listing can also be paid in full, at once.")
+        else:
+            notes.append("Off-plan listings are bought through the standard installment plan.")
     else:
         platform_fee = (subtotal * platform_pct / 100).quantize(_CENTS)
         total_now = subtotal + platform_fee
+        if "installments" in modes:
+            notes.append(
+                "This listing can also be bought through the installment plan: a down payment "
+                "now, then monthly installments."
+            )
     return {
         "property_title": prop.title,
         "slug": prop.slug,
@@ -873,7 +976,8 @@ async def _quote_investment(session: AsyncSession, ctx: AgentContext, args) -> d
         "platform_fee": f"{platform_fee:.2f}",
         "total_now": f"{total_now:.2f}",
         "minimum_investment": f"{decimal.Decimal(prop.minimum_investment):.2f}",
-        "purchase_type": "installment" if offplan else "direct",
+        "purchase_type": "installment" if by_plan else "direct",
+        "payment_options": list(modes),
         "down_payment_pct": down_pct,
         "installment_fee_pct": inst_fee,
         "schedule": schedule[:25],
@@ -886,9 +990,11 @@ register(
     ToolSpec(
         "quote_investment",
         "Prepare an order on a listing, from a number of units (preferred) or an amount: whole "
-        "units, fees, total payable now, and for off-plan listings the installment schedule. "
-        "The user then sees an order card whose button opens the checkout pre-filled, stopping "
-        "at payment. Prepares only; nothing is bought or charged.",
+        "units, fees, total payable now, and for a purchase by installments the schedule. A "
+        "listing under construction is bought by its installment plan, in full, or either "
+        "(payment_options says which; pay chooses when both are offered). The user then sees "
+        "an order card whose button opens the checkout pre-filled, stopping at payment. "
+        "Prepares only; nothing is bought or charged.",
         QuoteIn,
         QuoteOut,
         "prepare_only",

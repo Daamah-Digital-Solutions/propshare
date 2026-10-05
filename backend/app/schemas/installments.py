@@ -14,6 +14,9 @@ class InstallmentPlanCreateIn(BaseModel):
     duration_months: int = Field(description="6 | 12 | 18 | 24")
     # How the down payment is paid (a Nova Sukuk certificate goes to POST /installments/sukuk).
     method: str = Field(default="wallet", pattern="^(wallet|card|crypto|pronova)$")
+    # The unit price on the investor's screen when they confirmed: the plan locks it, so a
+    # different price now is answered with 409 PRICE_CHANGED instead.
+    expected_unit_price: float | None = Field(default=None, gt=0)
 
 
 class InstallmentPaymentOut(BaseModel):
@@ -27,6 +30,27 @@ class InstallmentPaymentOut(BaseModel):
     vest_units: int
     status: str
     paid_at: dt.datetime | None
+
+
+class PlanPositionOut(BaseModel):
+    """A running plan valued at the property's current unit price (0034): what the whole
+    position is worth, and the holder's part of it (``equity`` = value less the principal
+    still to pay = what the holder put in + the gain on every unit since they got in)."""
+
+    price: str
+    value: str
+    paid_principal: str
+    # the holder's own: the price per unit they got in at (the plan's locked price, or the
+    # price they bought the position at) and what they have put in (equity = cost + gain)
+    entry_price: str
+    cost: str
+    remaining_principal: str
+    remaining_fees: str
+    equity: str
+    gain: str
+    # pledged | lockup | listed: why the position cannot be listed now (None = it can)
+    blocked: str | None = None
+    lockup_until: dt.datetime | None = None
 
 
 class InstallmentPlanOut(BaseModel):
@@ -58,6 +82,11 @@ class InstallmentPlanOut(BaseModel):
     created_at: dt.datetime
     completed_at: dt.datetime | None
     payments: list[InstallmentPaymentOut]
+    # a running plan only (0034): its value today, the listing that offers it for sale, and
+    # when the holder took it over from another investor (payments before that were theirs)
+    position: PlanPositionOut | None = None
+    listing_id: uuid.UUID | None = None
+    acquired_at: dt.datetime | None = None
 
 
 class InstallmentRunOut(BaseModel):

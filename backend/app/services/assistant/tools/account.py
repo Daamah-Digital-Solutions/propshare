@@ -8,6 +8,7 @@ phone, address, bank accounts), counterparties on trades, storage keys, raw payl
 from __future__ import annotations
 
 import datetime as dt
+import decimal
 import uuid
 from typing import Any
 
@@ -416,6 +417,7 @@ class PortfolioOut(ToolOutput):
     total_returns: str
     properties: int
     units: int
+    sold: str
     as_of: str
 
 
@@ -426,8 +428,11 @@ async def _get_my_portfolio(session: AsyncSession, ctx: AgentContext, args) -> d
 register(
     ToolSpec(
         "get_my_portfolio",
-        "Portfolio totals of the signed-in user: invested, current value, returns, "
-        "number of properties and units.",
+        "Portfolio totals of the signed-in user: invested (everything bought so far), current "
+        "value (holdings at each property's current unit price; a running installment plan "
+        "counts as its position: all its units at that price less the principal still to "
+        "pay), sold (what selling units and positions brought in), returns (distributions), "
+        "number of properties and units. The gain so far is current_value + sold - invested.",
         NoArgs,
         PortfolioOut,
         "read_own",
@@ -501,6 +506,21 @@ class PlanOut(ToolOutput):
     status: str
     next_due: PlanPayment | None
     payments: list[PlanPayment]
+    # a running plan as a position, at the property's current unit price: what all its units
+    # are worth, the principal still to pay, and the holder's part (equity = value - remaining
+    # = cost + gain). cost = what the user has put in: the installments paid, or, for a plan
+    # taken over from another investor (taken_over = true), what they paid for it plus their
+    # own installments since. entry_price = the price per unit the user got in at (the plan's
+    # unit_price, or the price they bought the position at); gain = units x (price now -
+    # entry_price). for_sale = listed on the secondary market
+    position_value: str | None = None
+    remaining_principal: str | None = None
+    equity: str | None = None
+    entry_price: str | None = None
+    cost: str | None = None
+    gain: str | None = None
+    taken_over: bool = False
+    for_sale: bool = False
 
 
 class PlansOut(ToolOutput):
@@ -538,6 +558,14 @@ async def _list_my_installment_plans(session: AsyncSession, ctx: AgentContext, a
                 "status": p["status"],
                 "next_due": pending[0] if pending else None,
                 "payments": pays,
+                "position_value": (p.get("position") or {}).get("value"),
+                "remaining_principal": (p.get("position") or {}).get("remaining_principal"),
+                "equity": (p.get("position") or {}).get("equity"),
+                "entry_price": (p.get("position") or {}).get("entry_price"),
+                "cost": (p.get("position") or {}).get("cost"),
+                "gain": (p.get("position") or {}).get("gain"),
+                "taken_over": p.get("acquired_at") is not None,
+                "for_sale": p.get("listing_id") is not None,
             }
         )
     return {"items": out}
@@ -546,7 +574,9 @@ async def _list_my_installment_plans(session: AsyncSession, ctx: AgentContext, a
 register(
     ToolSpec(
         "list_my_installment_plans",
-        "The signed-in user's installment plans with their payment schedules and next due payment.",
+        "The signed-in user's installment plans with their payment schedules and next due "
+        "payment, and for a running plan what the position is worth now (all its units at the "
+        "current unit price, less what is still to pay) and whether it is listed for sale.",
         NoArgs,
         PlansOut,
         "read_own",
@@ -577,25 +607,63 @@ class HoldingOut(ToolOutput):
     held_back: HeldBackOut
     # the resale lock-up still running on this holding (ISO date), if any
     lockup_until: str | None
-    unit_price: str
+    unit_price: str  # the price of a unit NOW
+    value: str  # units x unit_price
+    launch_price: str | None  # the price the listing started at
+    price_change_pct: str | None  # unit_price against the launch price
+    price_updated_at: str | None  # when the platform last gave the property a new price
+    average_cost: str | None  # what these units cost the user per unit, on average
     # printed on the investment certificate; the number to enter at Capimax Verify
     certificate_reference: str
 
 
+class PositionOut(ToolOutput):
+    """A running installment plan as a position the user could sell, whole."""
+
+    plan_id: str
+    property_title: str | None
+    units: int  # every unit of the plan, paid for or not
+    vested_units: int
+    # the price per unit the user got in at: the price the plan locked, or the price they
+    # bought the position at from another investor
+    entry_price: str
+    unit_price: str  # the price of a unit now
+    value: str  # units x unit_price
+    # what the user has put in: the installments paid, or what they paid for the position
+    # plus their own installments since
+    cost: str
+    remaining_principal: str  # what a buyer would take over, on the schedule's dates
+    installments_left: int
+    next_due: str | None
+    gain: str  # units x (unit_price - entry_price)
+    you_would_receive: str  # value - remaining_principal = cost + gain, at the current price
+    listed: bool  # already offered on the secondary market
+    blocked: str | None  # pledged | lockup | listed: why it cannot be listed now, if anything
+
+
 class HoldingsOut(ToolOutput):
     items: list[HoldingOut]
+    positions: list[PositionOut]
     note: str
 
 
 _HELD_BACK_NOTE = (
     "sellable_units can be listed on the secondary market or offered to a liquidity provider "
-    "now. held_back says why the rest cannot: listed = already on sale in an active listing; "
-    "lp_exit = in an open liquidity-provider exit request; family_pending = promised to a family "
-    "member who has not registered yet; gift = in a scheduled gift; installment_plan = vested "
-    "under an installment plan that is still running: they become sellable when the plan's last "
-    "payment is made, and the remaining installments can be paid early from the plan "
-    "(prepare_installment_payment); pledged = pledged to Nova Finance for a Nova Sukuk "
-    "certificate until staff release the pledge. lockup_until = the resale lock-up ends then."
+    "now. held_back says why the rest cannot be listed one by one: listed = already on sale in "
+    "an active listing; lp_exit = in an open liquidity-provider exit request; family_pending = "
+    "promised to a family member who has not registered yet; gift = in a scheduled gift; "
+    "installment_plan = vested under an installment plan that is still running: these are sold "
+    "with the plan, whole, as one POSITION (see positions; prepare_sale with position=true): "
+    "the buyer pays the seller what the seller put in plus the price change on all the plan's "
+    "units since (you_would_receive = cost + gain) and takes over the remaining installments. "
+    "A position already includes its vested units, which are also in items: never add a "
+    "position to its holding (for the total value use get_my_portfolio). cost counts the "
+    "principal paid, not the installment fees, which are not returned by a sale; "
+    "pledged = pledged to Nova "
+    "Finance for a Nova Sukuk certificate until staff release the pledge. lockup_until = the "
+    "resale lock-up ends then. unit_price is the price now: the platform gives a property under "
+    "construction a new price as it is revalued (price_change_pct is the move since launch); "
+    "the gain on a holding is (unit_price - average_cost) x units."
 )
 
 
@@ -615,21 +683,48 @@ async def _get_my_holdings(session: AsyncSession, ctx: AgentContext, args) -> di
                 "held_back": r["held_back"],
                 "lockup_until": lock.date().isoformat() if lock else None,
                 "unit_price": r["unit_price"],
+                "value": f"{decimal.Decimal(r['unit_price']) * r['units']:.2f}",
+                "launch_price": r.get("launch_price"),
+                "price_change_pct": r.get("price_change_pct"),
+                "price_updated_at": _iso(r.get("price_updated_at")),
+                "average_cost": r.get("average_cost"),
                 "certificate_reference": certificate_service.certificate_reference(
                     r["property_id"], uid
                 ),
             }
         )
-    return {"items": items, "note": _HELD_BACK_NOTE}
+    positions = [
+        {
+            "plan_id": str(p["plan_id"]),
+            "property_title": p["property_title"],
+            "units": p["units"],
+            "vested_units": p["vested_units"],
+            "entry_price": p["entry_price"],
+            "unit_price": p["unit_price"],
+            "value": p["value"],
+            "cost": p["cost"],
+            "remaining_principal": p["remaining_principal"],
+            "installments_left": p["installments_left"],
+            "next_due": _iso(p["next_due"]),
+            "gain": p["gain"],
+            "you_would_receive": p["cash"],
+            "listed": p["listing_id"] is not None,
+            "blocked": p["blocked"],
+        }
+        for p in (await secondary_service.my_positions(session, uid))[:20]
+    ]
+    return {"items": items, "positions": positions, "note": _HELD_BACK_NOTE}
 
 
 register(
     ToolSpec(
         "get_my_holdings",
-        "Units the signed-in user holds per property: how many can be sold now and, for the rest, "
-        "why not (already listed, in an exit request, an installment plan still running, a "
-        "pledge, a lock-up), plus the reference printed on each property's investment "
-        "certificate.",
+        "Units the signed-in user holds per property: the unit price now, what it was at launch "
+        "and what the holding cost; how many can be sold now and, for the rest, why not "
+        "(already listed, in an exit request, on an installment plan still running, a pledge, "
+        "a lock-up); the running installment plans as positions that can be sold whole (what "
+        "the user would receive, what the buyer takes over); plus the reference printed on "
+        "each property's investment certificate.",
         NoArgs,
         HoldingsOut,
         "read_own",
@@ -646,6 +741,11 @@ class ListingOut(ToolOutput):
     price_per_unit: str
     status: str
     created_at: str | None
+    # an installment plan position (sold whole): what the buyer pays the seller, and the
+    # principal the buyer takes over
+    is_position: bool = False
+    buyer_pays_you: str | None = None
+    buyer_takes_over: str | None = None
 
 
 class ListingsOut(ToolOutput):
@@ -654,10 +754,18 @@ class ListingsOut(ToolOutput):
 
 async def _list_my_secondary_listings(session: AsyncSession, ctx: AgentContext, args) -> dict:
     rows = await secondary_service.list_my_listings(session, _uid(ctx))
-    keep = ListingOut.model_fields.keys()
+    keep = ("property_title", "units_for_sale", "units_remaining", "price_per_unit", "status")
     return {
         "items": [
-            {k: (str(r[k]) if k == "listing_id" else r.get(k)) for k in keep} for r in rows[:50]
+            {
+                **{k: r.get(k) for k in keep},
+                "listing_id": str(r["listing_id"]),
+                "created_at": r.get("created_at"),
+                "is_position": r.get("plan_id") is not None,
+                "buyer_pays_you": (r.get("position") or {}).get("cash"),
+                "buyer_takes_over": (r.get("position") or {}).get("remaining_principal"),
+            }
+            for r in rows[:50]
         ]
     }
 

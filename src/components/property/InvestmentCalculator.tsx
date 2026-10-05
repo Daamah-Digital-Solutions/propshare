@@ -53,6 +53,10 @@ interface InvestmentCalculatorProps {
   setInvestmentAmount: (amount: number) => void;
   /** Open the review step (the last one before payment) once: an order the assistant prepared. */
   openReview?: boolean;
+  /** Under construction and paid in full: no rent before handover, the return is the unit price. */
+  offplan?: boolean;
+  /** Called when the review step opens for a prepared order, so the page offers it once. */
+  onReviewOpened?: () => void;
 }
 
 // Funding rails: the ONE list every property offers (src/lib/paymentMethods.ts) — wallet,
@@ -66,6 +70,8 @@ const InvestmentCalculator = ({
   investmentAmount,
   setInvestmentAmount,
   openReview = false,
+  offplan = false,
+  onReviewOpened,
 }: InvestmentCalculatorProps) => {
   const [selectedPayment, setSelectedPayment] = useState<PayMethodId>("wallet");
   const [sukuk, setSukuk] = useState<SukukDraft>(EMPTY_SUKUK_DRAFT);
@@ -76,7 +82,9 @@ const InvestmentCalculator = ({
     if (openReview && !reviewOpened.current) {
       reviewOpened.current = true;
       setShowConfirmation(true);
+      onReviewOpened?.();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openReview]);
   const { reinvestState, clearReinvestment } = useReinvest();
   const queryClient = useQueryClient();
@@ -100,6 +108,12 @@ const InvestmentCalculator = ({
   // Whole units only (the server rounds the amount down at purchase): say how many it buys.
   const unitPrice = Number(propertyData.unitPrice ?? 0);
   const wholeUnits = unitPrice > 0 ? Math.floor((investmentAmount + 1e-9) / unitPrice) : 0;
+  // The server buys whole units and charges for those, so every figure below is computed on
+  // what they cost: the total shown is the total charged. (A reinvestment is priced by the
+  // server at its own discounted unit price: its amount stays as typed.)
+  const pricedAmount =
+    !reinvesting && unitPrice > 0 ? Math.round(wholeUnits * unitPrice * 100) / 100 : investmentAmount;
+  const belowOneUnit = !reinvesting && unitPrice > 0 && wholeUnits < 1;
 
   // The reinvest discount is REAL and applied SERVER-SIDE (admin-configurable
   // reinvest_discount_pct) as a discounted unit PRICE — you pay your returns and receive
@@ -125,13 +139,13 @@ const InvestmentCalculator = ({
 
   // Reinvest is funded from the wallet with NO separate purchase fee (the subsidy is the
   // discounted unit price). Standard invest charges the platform fee at purchase.
-  const purchaseFee = reinvesting ? 0 : investmentAmount * PURCHASE_FEE_RATE;
-  const annualManagementFee = investmentAmount * ANNUAL_MANAGEMENT_FEE_RATE;
-  const nominalPayable = investmentAmount + purchaseFee;
+  const purchaseFee = reinvesting ? 0 : pricedAmount * PURCHASE_FEE_RATE;
+  const annualManagementFee = pricedAmount * ANNUAL_MANAGEMENT_FEE_RATE;
+  const nominalPayable = pricedAmount + purchaseFee;
   // Pronova promo: discount off the WHOLE payable (server-authoritative; shown to match the charge).
   const paymentDiscountAmount = pronovaSelected ? (nominalPayable * pronovaDiscountPct) / 100 : 0;
   const totalPayable = nominalPayable - paymentDiscountAmount;
-  const investmentValue = investmentAmount;
+  const investmentValue = pricedAmount;
 
   // Expected returns (net of annual management fee) - based on full investment value
   const grossAnnualReturn = (investmentValue * propertyData.expectedYield) / 100;
@@ -147,7 +161,7 @@ const InvestmentCalculator = ({
       if (!reinvesting && apiMethod === "sukuk") {
         // Nova Sukuk: the certificate goes to our team; the units are held meanwhile.
         const r = await investApi.buyWithSukuk(
-          { property_id: propertyId, amount: investmentAmount },
+          { property_id: propertyId, amount: pricedAmount },
           {
             file: sukuk.file as File,
             certificate_no: sukuk.certificate_no,
@@ -186,7 +200,13 @@ const InvestmentCalculator = ({
         return;
       }
       const res = await investApi.create(
-        { property_id: propertyId, amount: investmentAmount, method: apiMethod as InvestMethod },
+        {
+          property_id: propertyId,
+          amount: pricedAmount,
+          method: apiMethod as InvestMethod,
+          // the price these amounts were shown at: the server refuses if it has changed
+          ...(unitPrice > 0 ? { expected_unit_price: unitPrice } : {}),
+        },
         crypto.randomUUID(),
       );
       if (res.checkout_url) {
@@ -209,6 +229,15 @@ const InvestmentCalculator = ({
       if (reinvestState.isReinvesting) clearReinvestment();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : undefined;
+      if (code === "PRICE_CHANGED") {
+        // the unit price moved while this page was open: show the new amounts, ask again
+        setShowConfirmation(false);
+        queryClient.invalidateQueries({ queryKey: ["property"] });
+        toast.error("The unit price changed", {
+          description: "The amounts were updated to the new price. Review them and confirm again.",
+        });
+        return;
+      }
       const message =
         code === "KYC_REQUIRED"
           ? "Please complete identity verification before investing."
@@ -328,7 +357,7 @@ const InvestmentCalculator = ({
               onValueChange={([value]) => setInvestmentAmount(value)}
               min={propertyData.minInvestment}
               max={propertyData.maxInvestment}
-              step={100}
+              step={unitPrice > 0 ? unitPrice : 100}
               className="w-full"
             />
             <div className="flex justify-between text-sm text-muted-foreground">
@@ -398,6 +427,20 @@ const InvestmentCalculator = ({
         )}
 
         {/* Expected Returns */}
+        {offplan ? (
+        <div className="bg-primary/5 rounded-xl p-4 space-y-2" data-testid="offplan-returns">
+          <h4 className="font-semibold text-foreground flex items-center gap-2">
+            <TrendingUp size={16} className="text-primary" />
+            How this investment earns
+          </h4>
+          <p className="text-sm text-muted-foreground">
+            This property is under construction: it pays no rent before handover. Your return is
+            the change in the unit price, which is updated as the project advances. You can offer
+            your units for sale on the secondary market at the price of the day (a sale needs a
+            buyer; a lock-up or a Nova pledge may apply).
+          </p>
+        </div>
+        ) : (
         <div className="bg-primary/5 rounded-xl p-4 space-y-3">
           <h4 className="font-semibold text-foreground flex items-center gap-2">
             <TrendingUp size={16} className="text-primary" />
@@ -422,6 +465,7 @@ const InvestmentCalculator = ({
             </div>
           </div>
         </div>
+        )}
 
         {/* Fee Breakdown */}
         <div className="bg-secondary/50 rounded-xl p-4 space-y-3">
@@ -431,8 +475,11 @@ const InvestmentCalculator = ({
           </h4>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Investment Amount</span>
-              <span className="text-foreground">${investmentAmount.toLocaleString()}</span>
+              <span className="text-muted-foreground">
+                Investment Amount
+                {!reinvesting && unitPrice > 0 && ` (${wholeUnits.toLocaleString()} unit${wholeUnits === 1 ? "" : "s"})`}
+              </span>
+              <span className="text-foreground">${pricedAmount.toLocaleString()}</span>
             </div>
             {reinvesting && (
               <div className="flex justify-between text-success">
@@ -466,7 +513,7 @@ const InvestmentCalculator = ({
             <Calendar size={14} className="text-muted-foreground mt-0.5 flex-shrink-0" />
             <p className="text-xs text-muted-foreground">
               <span className="font-medium">Annual Management Fee:</span> {mgmtPct}% (${annualManagementFee.toFixed(2)}/year)
-              will be deducted from your rental distributions.
+              will be deducted from your rental distributions{offplan ? ", which start after handover" : ""}.
             </p>
           </div>
         </div>
@@ -476,6 +523,7 @@ const InvestmentCalculator = ({
           variant="hero" 
           size="xl" 
           className="w-full"
+          disabled={belowOneUnit}
           onClick={() => {
             if (sukukSelected && !reinvesting && !sukukReady(sukuk)) {
               toast.error("Attach your Nova certificate", {
@@ -493,7 +541,7 @@ const InvestmentCalculator = ({
             </>
           ) : (
             <>
-              Invest ${investmentAmount.toLocaleString()}
+              Invest ${pricedAmount.toLocaleString()}
               <ArrowRight size={20} />
             </>
           )}
@@ -525,14 +573,14 @@ const InvestmentCalculator = ({
               </h3>
               <p className="text-muted-foreground">
                 You are about to {reinvesting ? "reinvest" : "invest"} $
-                {investmentAmount.toLocaleString()} in this property
+                {pricedAmount.toLocaleString()} in this property
               </p>
             </div>
 
             <div className="bg-secondary/50 rounded-xl p-4 mb-6 space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Investment Value</span>
-                <span className="font-medium text-foreground">${investmentAmount.toLocaleString()}</span>
+                <span className="font-medium text-foreground">${pricedAmount.toLocaleString()}</span>
               </div>
               {reinvesting && (
                 <div className="flex justify-between text-success">

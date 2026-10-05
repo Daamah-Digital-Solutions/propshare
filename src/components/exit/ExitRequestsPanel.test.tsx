@@ -7,12 +7,13 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { api } = vi.hoisted(() => ({
+const { api, listings } = vi.hoisted(() => ({
   api: { cancelRequest: vi.fn(), cancelListing: vi.fn(), myRequests: vi.fn() },
+  listings: { items: [] as unknown[] },
 }));
 vi.mock("@/lib/api", () => ({
   secondaryApi: {
-    mine: async () => ({ items: [] }),
+    mine: async () => ({ items: listings.items }),
     cancel: (...a: unknown[]) => api.cancelListing(...a),
   },
   liquidityApi: {
@@ -59,6 +60,7 @@ function mount() {
 describe("ExitRequestsPanel — instant exits to the liquidity providers", () => {
   beforeEach(() => {
     Object.values(api).forEach((f) => f.mockReset());
+    listings.items = [];
   });
 
   it("shows a waiting request and cancels it through the liquidity API", async () => {
@@ -82,6 +84,41 @@ describe("ExitRequestsPanel — instant exits to the liquidity providers", () =>
     fireEvent.mouseDown(await screen.findByRole("tab", { name: /Completed/i }));
     expect(await screen.findByText(/Partly funded: 4 of 10 units paid to your wallet; the rest expired/)).toBeInTheDocument();
     expect(screen.getByText("$380.24")).toBeInTheDocument(); // 950.60 / 10 x 4
+  });
+
+  it("shows an installment position for what its seller is paid, not units x price", async () => {
+    // 10 units at $110 on a plan with $700 still to pay: the seller is paid $400, not $1,100
+    const position = {
+      listing_id: "lst-1",
+      property_id: "prop-1",
+      property_title: "Creek Tower",
+      property_location: "Dubai",
+      seller_id: "me",
+      units_for_sale: 10,
+      units_remaining: 10,
+      price_per_unit: "110.00",
+      unit_price_ref: "110.00",
+      status: "active",
+      created_at: "2026-10-01T09:00:00Z",
+      plan_id: "plan-1",
+      position: { cash: "400.00" },
+      cash: "400.00",
+    };
+    listings.items = [position];
+    api.myRequests.mockResolvedValue({ items: [], total: 0 });
+    const { unmount } = mount();
+    expect(await screen.findByText("Creek Tower")).toBeInTheDocument();
+    expect(screen.getAllByText("$400").length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("$1,100");
+    unmount();
+
+    // once sold the row no longer carries the position: what it was sold for stays
+    listings.items = [{ ...position, status: "sold", units_remaining: 0, position: null }];
+    mount();
+    fireEvent.mouseDown(await screen.findByRole("tab", { name: /Completed/i }));
+    expect(await screen.findByText("Creek Tower")).toBeInTheDocument();
+    expect(screen.getAllByText("$400").length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("$1,100");
   });
 
   it("shows a funded request as paid, with what the seller received", async () => {

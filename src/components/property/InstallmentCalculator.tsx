@@ -54,9 +54,11 @@ import {
   type SukukDraft,
 } from "@/components/payments/SukukCertificateFields";
 import { payMethod, type PayMethodId } from "@/lib/paymentMethods";
+import { money as fmtMoney, unitPrice as fmtUnitPrice } from "@/lib/money";
 
 interface PropertyData {
   propertyValue: number;
+  unitPrice?: number; // price of one unit: a plan is for whole units only
   minInvestment: number;
   maxInvestment: number;
   expectedYield: number;
@@ -133,13 +135,21 @@ const InstallmentCalculator = ({
   // and to each installment; the SERVER recomputes the exact charge at plan creation.
   const FEE_RATE = (propertyData.fees?.installmentFee ?? 4) / 100;
 
+  // The server turns the amount into whole units at the unit price and builds the plan on
+  // what those cost, so every figure below is computed on that: what is shown is what is
+  // charged.
+  const unitPrice = Number(propertyData.unitPrice ?? 0);
+  const wholeUnits = unitPrice > 0 ? Math.floor((investmentAmount + 1e-9) / unitPrice) : 0;
+  const planAmount = unitPrice > 0 ? Math.round(wholeUnits * unitPrice * 100) / 100 : investmentAmount;
+  const belowOneUnit = unitPrice > 0 && wholeUnits < 1;
+
   // Installment calculations (fees applied separately to each payment)
   const downPaymentPercent = selectedDuration?.downPaymentPercent || 25;
-  const baseDownPayment = (investmentAmount * downPaymentPercent) / 100;
+  const baseDownPayment = (planAmount * downPaymentPercent) / 100;
   const downPaymentFee = baseDownPayment * FEE_RATE;
   const downPayment = baseDownPayment + downPaymentFee;
   
-  const baseRemainingAmount = investmentAmount - baseDownPayment;
+  const baseRemainingAmount = planAmount - baseDownPayment;
   const numberOfInstallments = months - 1; // First month is down payment
   const baseInstallmentAmount = baseRemainingAmount / numberOfInstallments;
   const installmentFee = baseInstallmentAmount * FEE_RATE;
@@ -151,7 +161,7 @@ const InstallmentCalculator = ({
   // (platform-funded; the server applies the real rate).
   const downPaymentDiscount = pronovaSelected ? Math.round(downPayment * pronovaPct) / 100 : 0;
   const dueNow = downPayment - downPaymentDiscount;
-  const totalInvestment = investmentAmount + totalFees - downPaymentDiscount;
+  const totalInvestment = planAmount + totalFees - downPaymentDiscount;
 
   // Generate installment schedule with fee breakdown
   const installmentSchedule = useMemo((): InstallmentScheduleItem[] => {
@@ -186,8 +196,8 @@ const InstallmentCalculator = ({
     return schedule;
   }, [baseDownPayment, downPaymentFee, downPayment, baseInstallmentAmount, installmentFee, installmentAmount, months]);
 
-  const expectedAnnualReturn = (investmentAmount * propertyData.expectedYield) / 100;
-  const expectedTotalReturn = (investmentAmount * propertyData.totalReturn) / 100;
+  const expectedAnnualReturn = (planAmount * propertyData.expectedYield) / 100;
+  const expectedTotalReturn = (planAmount * propertyData.totalReturn) / 100;
 
   const quickAmounts = [1000, 2500, 5000, 10000, 25000];
 
@@ -204,7 +214,7 @@ const InstallmentCalculator = ({
         // Nova Sukuk: the certificate covers the down payment; our team reviews it while the
         // plan's units are held, and the plan starts once it is approved.
         const r = await installmentsApi.createPlanWithSukuk(
-          { property_id: propertyId, amount: investmentAmount, duration_months: months },
+          { property_id: propertyId, amount: planAmount, duration_months: months },
           {
             file: sukuk.file as File,
             certificate_no: sukuk.certificate_no,
@@ -229,9 +239,11 @@ const InstallmentCalculator = ({
       // checkout whose confirmation starts the plan.
       const plan = await installmentsApi.createPlan({
         property_id: propertyId,
-        amount: investmentAmount,
+        amount: planAmount,
         duration_months: months,
         method: selectedMethod.apiMethod as "wallet" | "card" | "crypto" | "pronova",
+        // the price the plan would lock, as shown here: the server refuses if it has changed
+        ...(unitPrice > 0 ? { expected_unit_price: unitPrice } : {}),
       });
       if (plan.checkout_url) {
         if (plan.payment_id) rememberPendingPayment(plan.payment_id);
@@ -250,6 +262,17 @@ const InstallmentCalculator = ({
       queryClient.invalidateQueries({ queryKey: ["portfolio"] });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : undefined;
+      if (code === "PRICE_CHANGED") {
+        // the unit price moved while this page was open: show the new schedule, ask again
+        setShowConfirmation(false);
+        setShowSchedule(false);
+        setScheduleReviewed(false);
+        queryClient.invalidateQueries({ queryKey: ["property"] });
+        toast.error("The unit price changed", {
+          description: "The plan was recalculated at the new price. Review the schedule and confirm again.",
+        });
+        return;
+      }
       const message =
         code === "KYC_REQUIRED"
           ? "Please complete identity verification before starting an installment plan."
@@ -286,7 +309,7 @@ const InstallmentCalculator = ({
       `INSTALLMENT SCHEDULE\n`,
       `${'='.repeat(50)}\n\n`,
       `Property: ${propertyTitle}\n`,
-      `Investment Amount: $${investmentAmount.toFixed(2)}\n`,
+      `Investment Amount: $${planAmount.toFixed(2)}\n`,
       `Duration: ${months} months\n\n`,
       `FEE STRUCTURE:\n`,
       `- Down Payment Fee: 4% ($${downPaymentFee.toFixed(2)})\n`,
@@ -410,7 +433,7 @@ const InstallmentCalculator = ({
               onValueChange={([value]) => setInvestmentAmount(value)}
               min={propertyData.minInvestment}
               max={propertyData.maxInvestment}
-              step={100}
+              step={unitPrice > 0 ? unitPrice : 100}
               className="w-full"
             />
             <div className="flex justify-between text-sm text-muted-foreground">
@@ -432,6 +455,16 @@ const InstallmentCalculator = ({
               className="w-full pl-8 pr-4 py-3 bg-secondary border border-border rounded-xl text-foreground text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
+          {unitPrice > 0 && (
+            <p className="mt-2 text-xs text-muted-foreground" data-testid="plan-units-hint">
+              Units cost {fmtUnitPrice(unitPrice)} each. This amount covers{" "}
+              <span className="font-medium text-foreground">
+                {wholeUnits.toLocaleString("en-US")} whole unit{wholeUnits === 1 ? "" : "s"}
+              </span>
+              {planAmount !== investmentAmount && wholeUnits > 0 ? ` (${fmtMoney(planAmount)})` : ""}: the
+              plan is for those.
+            </p>
+          )}
         </div>
 
         {/* Installment Duration */}
@@ -506,8 +539,11 @@ const InstallmentCalculator = ({
           </h4>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Investment Amount</span>
-              <span className="text-foreground">${investmentAmount.toLocaleString()}</span>
+              <span className="text-muted-foreground">
+                Investment Amount
+                {unitPrice > 0 && ` (${wholeUnits.toLocaleString("en-US")} unit${wholeUnits === 1 ? "" : "s"})`}
+              </span>
+              <span className="text-foreground">${planAmount.toLocaleString()}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Down Payment ({downPaymentPercent}%)</span>
@@ -579,6 +615,7 @@ const InstallmentCalculator = ({
           variant="hero"
           size="xl"
           className="w-full"
+          disabled={belowOneUnit}
           onClick={() => {
             if (sukukSelected && !sukukReady(sukuk)) {
               toast.error("Attach your Nova certificate", {
@@ -713,7 +750,7 @@ const InstallmentCalculator = ({
                   ))}
                   <TableRow className="bg-muted/50">
                     <TableCell colSpan={3} className="font-semibold">Total</TableCell>
-                    <TableCell className="text-right font-medium">${investmentAmount.toFixed(2)}</TableCell>
+                    <TableCell className="text-right font-medium">${planAmount.toFixed(2)}</TableCell>
                     <TableCell className="text-right font-medium text-primary">${totalFees.toFixed(2)}</TableCell>
                     <TableCell className="text-right font-bold text-primary">
                       ${totalInvestment.toFixed(2)}

@@ -1,12 +1,15 @@
 """Secondary-market routes (Phase 8) — investor-to-investor unit resale.
 
-- POST   /secondary/listings            list units you own (KYC-gated).
+- POST   /secondary/listings            list units you own, or a whole installment plan
+                                        position (plan_id) (KYC-gated).
 - GET    /secondary/listings            browse active listings (optional ?property_id).
 - POST   /secondary/listings/{id}/cancel  cancel your own active listing.
 - POST   /secondary/listings/{id}/buy   buy units off a listing (KYC-gated,
                                         Idempotency-Key required, wallet-funded).
 - GET    /secondary/listings/mine       your own listings (any status).
 - GET    /secondary/holdings            your net unit holdings (sellable units).
+- GET    /secondary/positions           your running installment plans as positions you
+                                        could sell, at each property's current price.
 - GET    /secondary/settings            live resale-fee/lock-up/price-bound knobs
                                         (so the UI shows the rate the server charges).
 
@@ -30,6 +33,8 @@ from app.schemas.secondary import (
     ListingCreateIn,
     ListingListOut,
     ListingOut,
+    MyPositionListOut,
+    MyPositionOut,
     SecondarySettingsOut,
     TradeOut,
 )
@@ -40,6 +45,15 @@ router = APIRouter(prefix="/api/v1/secondary", tags=["secondary"])
 
 @router.post("/listings", response_model=ListingOut)
 async def create_listing(body: ListingCreateIn, session: SessionDep, principal: KycVerifiedDep):
+    if body.plan_id is not None:
+        result = await secondary_service.create_position_listing(
+            session,
+            seller_id=principal.user_id,
+            plan_id=body.plan_id,
+            price_per_unit=body.price_per_unit,
+        )
+        return ListingOut(**result)
+    assert body.property_id is not None and body.units is not None  # the schema's rule
     result = await secondary_service.create_listing(
         session,
         seller_id=principal.user_id,
@@ -93,6 +107,8 @@ async def buy_units(
         listing_id=listing_id,
         units=body.units,
         idempotency_key=idempotency_key,
+        expected_cash=body.expected_cash,
+        expected_fee=body.expected_fee,
     )
     return TradeOut(**result)
 
@@ -101,6 +117,12 @@ async def buy_units(
 async def my_holdings(session: SessionDep, principal: PrincipalDep):
     rows = await secondary_service.my_holdings(session, principal.user_id)
     return HoldingListOut(items=[HoldingOut(**r) for r in rows], total=len(rows))
+
+
+@router.get("/positions", response_model=MyPositionListOut)
+async def my_positions(session: SessionDep, principal: PrincipalDep):
+    rows = await secondary_service.my_positions(session, principal.user_id)
+    return MyPositionListOut(items=[MyPositionOut(**r) for r in rows], total=len(rows))
 
 
 @router.get("/settings", response_model=SecondarySettingsOut)

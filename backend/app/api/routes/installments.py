@@ -62,6 +62,7 @@ async def create_plan(
         duration_months=body.duration_months,
         idempotency_key=_idem(request),
         method=body.method,
+        expected_unit_price=body.expected_unit_price,
         # back to the Installments tab, which follows the payment until the plan starts
         # (the service appends the payment id)
         success_url=f"{app_base}/dashboard?tab=installments&plan=success",

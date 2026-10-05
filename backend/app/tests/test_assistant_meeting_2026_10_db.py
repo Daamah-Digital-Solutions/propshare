@@ -106,10 +106,13 @@ async def test_a_budget_finds_what_it_can_enter_and_the_units_it_buys(client, db
     assert by_yield["lowest_entry"] is None  # only with a budget
 
 
-# --- why units cannot be sold -------------------------------------------------------------- #
+# --- units on a running plan are sold with the plan ----------------------------------------- #
 @pytest.mark.asyncio
-async def test_a_holder_is_told_why_units_cannot_be_sold(client, db, asession):
-    uid, pid = await _plan(client, db, "held@p.io")
+async def test_units_on_a_running_plan_are_sold_as_the_whole_position(client, db, asession):
+    """The client's test (2026-10-01): "I want to exit" on an under-construction holding was
+    answered "zero sellable units". The units of a running plan are not listed one by one,
+    but the plan is sold whole: the assistant prepares that, it does not say "you cannot"."""
+    uid, pid = await _plan(client, db, "held@p.io")  # 12 units at 100, 300 paid, 3 vested
     ctx = await _ctx(asession, uid)
     out = await _run(asession, ctx, "get_my_holdings", {})
     item = out["items"][0]
@@ -117,13 +120,74 @@ async def test_a_holder_is_told_why_units_cannot_be_sold(client, db, asession):
     assert item["units"] == vested and item["sellable_units"] == 0
     assert item["held_back"]["installment_plan"] == vested and item["held_back"]["listed"] == 0
     assert "installment plan that is still running" in out["note"]
+    assert "sold with the plan, whole, as one POSITION" in out["note"]
     assert item["lockup_until"] is None
+    assert (item["value"], item["launch_price"], item["average_cost"]) == (
+        "300.00",
+        "100.00",
+        "100.00",
+    )
+    pos = out["positions"][0]
+    assert (
+        pos["units"],
+        pos["vested_units"],
+        pos["cost"],
+        pos["remaining_principal"],
+    ) == (
+        12,
+        3,
+        "300.00",
+        "900.00",
+    )
+    assert (pos["you_would_receive"], pos["listed"], pos["blocked"]) == ("300.00", False, None)
+
+    # "sell 1 unit" of it prepares the sale of the whole position, ready to list
     sale = await _run(asession, ctx, "prepare_sale", {"property": "Plan Tower", "units": 1})
-    assert sale["ready"] is False
-    assert "on an installment plan that is still running" in " ".join(sale["notes"])
+    assert (sale["ready"], sale["kind"], sale["units"]) == (True, "position", 12)
+    assert (sale["you_receive"], sale["buyer_fee"], sale["buyer_pays"]) == (
+        "300.00",
+        "3.00",
+        "303.00",
+    )
+    assert (sale["remaining_principal"], sale["installments_left"]) == ("900.00", 11)
+    assert "The whole position is sold: 12 units, 3 of them yours already" in " ".join(
+        sale["notes"]
+    )
+    card = _card_for("prepare_sale", sale, [])
+    assert (
+        card["path"].startswith("/secondary-market?tab=sell&plan=")
+        and "price=100.00" in card["path"]
+    )
+    assert card["position"] == {
+        "position_value": "1200.00",
+        "cost": "300.00",
+        "remaining_principal": "900.00",
+        "installments_left": 11,
+        "gain": "0.00",
+    }
+    # a higher price: the gain is on all 12 units, not on the 3 paid for
+    dearer = await _run(
+        asession,
+        ctx,
+        "prepare_sale",
+        {"property": "Plan Tower", "price_per_unit": 110, "position": True},
+    )
+    assert (dearer["you_receive"], dearer["gain"]) == ("420.00", "120.00")
+    # a price that would not cover what is still to pay is explained, not prepared
+    low = await _run(
+        asession, ctx, "prepare_sale", {"property": "Plan Tower", "price_per_unit": 70}
+    )
+    assert low["ready"] is False and "ask more than 75.00 a unit" in " ".join(low["notes"])
+    plans = await _run(asession, ctx, "list_my_installment_plans", {})
+    assert (plans["items"][0]["equity"], plans["items"][0]["for_sale"]) == ("300.00", False)
+
     _setting(db, "secondary_lockup_days", "30")
     locked = await _run(asession, ctx, "get_my_holdings", {})
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", locked["items"][0]["lockup_until"])
+    assert locked["positions"][0]["blocked"] == "lockup"
+    held = await _run(asession, ctx, "prepare_sale", {"property": "Plan Tower"})
+    assert held["ready"] is False and "lock-up until" in " ".join(held["notes"])
+    assert str(pid)
 
 
 # --- documents in the chat ----------------------------------------------------------------- #

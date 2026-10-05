@@ -216,6 +216,36 @@ describe("prepared cards", () => {
     expect(screen.getByRole("link", { name: /review & list/i })).toHaveAttribute("href", sale.path);
   });
 
+  it("the sale of a running installment plan is shown as the whole position", () => {
+    // 10 units on a plan bought at $100, $300 paid, asked at $110: 1,100 - 700 = 400
+    show({
+      ...sale,
+      units: 10,
+      you_receive: "400.00",
+      buyer_fee: "4.00",
+      buyer_pays: "404.00",
+      path: "/secondary-market?tab=sell&plan=plan-1&price=110.00",
+      position: {
+        position_value: "1100.00",
+        cost: "300.00",
+        remaining_principal: "700.00",
+        installments_left: 2,
+        gain: "100.00",
+      },
+    });
+    const card = screen.getByTestId("sale-card");
+    expect(card).toHaveTextContent("Your position is ready to list");
+    expect(card).toHaveTextContent("Position10 units (the whole plan)");
+    expect(card).toHaveTextContent("Position value$1,100.00");
+    expect(card).toHaveTextContent("Still to pay (2 installments, the buyer's)−$700.00");
+    expect(card).toHaveTextContent("You receive$400.00");
+    expect(card).toHaveTextContent(/with this position filled in/i);
+    expect(screen.getByRole("link", { name: /review & list/i })).toHaveAttribute(
+      "href",
+      "/secondary-market?tab=sell&plan=plan-1&price=110.00",
+    );
+  });
+
   it("an installment shows due date, split and what is left; overdue is marked", () => {
     show(installment);
     const card = screen.getByTestId("installment-card");
@@ -237,6 +267,11 @@ describe("prepared cards", () => {
     expect(card).toHaveTextContent("Secondary market (2% fee)");
     expect(card).toHaveTextContent(/highest listed riskmedium—/i);
     expect(card).toHaveTextContent(/projections, not promises/i);
+  });
+
+  it("a comparison says when a property is bought either way", () => {
+    show({ ...comparison, items: [{ ...comparison.items[0], purchase: "either" }] });
+    expect(screen.getByTestId("comparison-card")).toHaveTextContent("In full or by installments");
   });
 
   it("a failed download says why, in the card", async () => {

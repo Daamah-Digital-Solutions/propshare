@@ -123,11 +123,12 @@ _FIELD_MACRO = """
 </div>
 {%- endmacro %}
 
-{% macro adapt_script(rules) -%}
+{% macro adapt_script(rules, offering_locked=False) -%}
 <script id="listing-rules" type="application/json">{{ rules|tojson }}</script>
 <script>
 (function () {
   var R = JSON.parse(document.getElementById("listing-rules").textContent);
+  var LOCKED = {{ 'true' if offering_locked else 'false' }};
   var sel = document.querySelector("select[name=model]") || document.querySelector("input[name=model]");
   if (!sel) return;
   function num(name) { var e = document.getElementById("f_" + name); if (!e || e.value === "") return null; var v = Number(e.value); return isNaN(v) ? null : v; }
@@ -136,7 +137,8 @@ _FIELD_MACRO = """
   function calc() {
     var tv = num("total_value"), up = num("unit_price"), mn = num("minimum_investment");
     var units = document.getElementById("f_total_units");
-    if (tv !== null && up) {
+    if (LOCKED) { say("total_units", "Fixed: investors hold units. A new price is recorded under Unit price (top of this page).", false); }
+    else if (tv !== null && up) {
       var u = tv / up;
       if (Number.isInteger(u)) { if (units) units.value = u; say("total_units", usd(tv) + " \u00f7 " + usd(up) + " = " + u.toLocaleString("en-US") + " units", false); }
       else { if (units) units.value = ""; var lo = Math.floor(u) * up; say("total_units", usd(tv) + " \u00f7 " + usd(up) + " is not a whole number of units. Use " + usd(lo) + " or " + usd(lo + up) + ".", true); }
@@ -218,6 +220,7 @@ _PAGE = _env.from_string(
     <div class="muted">{{ model_label }} · {{ p.location }} · web address <code>/property/{{ p.slug or p.id }}</code></div>
   </div>
   <div class="actions">
+    {% if full_admin %}<a class="btn" href="/admin/unit-prices/{{ p.id }}" title="The price of a unit now, its history, and recording a new price">Unit price</a>{% endif %}
     {% if full_admin %}<a class="btn" href="/admin/property/edit/{{ p.id }}" title="Raw database fields (technical)">Raw fields</a>{% endif %}
     {% if p.status.value in ('active','funded') %}
       <a class="btn" href="{{ public_url }}" target="_blank" rel="noopener">Open public page ↗</a>
@@ -245,7 +248,7 @@ _PAGE = _env.from_string(
 
 <div class="card">
  <h2>Listing details</h2>
- <p class="lead">The core of the listing. Fields marked <span class="req">*</span> are required. The form changes with the ownership model. Units, price and model lock automatically once an investor holds units.</p>
+ <p class="lead">The core of the listing. Fields marked <span class="req">*</span> are required. The form changes with the ownership model. Units, price and model lock automatically once an investor holds units{% if full_admin %}; after that the price changes only by recording a new one under <a href="/admin/unit-prices/{{ p.id }}">Unit price</a>{% endif %}.</p>
  <form method="post"><input type="hidden" name="action" value="save_core">
  {% for group, fields in core_groups %}<h3>{{ group }}</h3><div class="cols">{% for f in fields %}{{ field(f, core_values.get(f.name), profile, model_locked) }}{% endfor %}</div>{% if loop.first %}{{ installment_notice(installment_terms, profile) }}{% endif %}{% endfor %}
  <button class="primary" type="submit" style="margin-top:14px">Save listing details</button>
@@ -503,7 +506,7 @@ _PAGE = _env.from_string(
  <p class="lead">Removes the listing, its photos, documents and milestones permanently. Not possible once investors hold units — unpublish instead.</p>
  <form method="post" onsubmit="return confirm('Delete this listing and all its files? This cannot be undone.')"><input type="hidden" name="action" value="delete_listing"><button class="danger" type="submit">Delete this listing</button></form>
 </div>
-{{ adapt_script(rules) }}
+{{ adapt_script(rules, offering_locked) }}
 </div></body></html>"""
 )
 
@@ -856,6 +859,7 @@ class ListingEditorView(BaseView):
                 core_groups=_groups(listing_service.CORE_FORM_GROUPS),
                 profile=profile,
                 model_locked=prop.model in listing_service.HIDDEN_MODELS and positions > 0,
+                offering_locked=positions > 0,
                 checklist=checklist,
                 save_warnings=[] if error else list(request.state.listing_warnings),
                 installment_terms=terms,

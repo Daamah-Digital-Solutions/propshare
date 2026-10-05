@@ -102,6 +102,10 @@ async def test_content_editor_gets_403_on_every_restricted_admin_view_and_action
         ("GET", "/admin/upload-document"),
         ("POST", "/admin/upload-document"),
         ("GET", f"/admin/role-application-doc?req={some_id}"),
+        # 0034: recording a unit price moves the value of every holding
+        ("GET", "/admin/unit-prices"),
+        ("GET", f"/admin/unit-prices/{some_id}"),
+        ("POST", f"/admin/unit-prices/{some_id}"),
     ):
         r = await client.request(method, url, follow_redirects=False)
         if r.status_code != 403:

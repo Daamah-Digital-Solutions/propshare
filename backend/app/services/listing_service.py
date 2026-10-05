@@ -115,12 +115,15 @@ MODEL_EXPLAIN: dict[str, str] = {
         "in the whole portfolio and share its rental income."
     ),
     "installment": (
-        "A property under construction. Investors lock today's unit price and pay through "
-        "the platform's standard installment plan; rental income starts after handover."
+        "A property under construction. Investors buy at today's unit price, through the "
+        "platform's standard installment plan or in full (choose under Offering); the unit "
+        "price is then updated as the project is revalued. Rental income starts after "
+        "handover."
     ),
     "construction-portfolio": (
-        "Several projects under construction offered together, bought through the "
-        "platform's standard installment plan; rental income starts after handover."
+        "Several projects under construction offered together, bought at today's unit price "
+        "through the platform's standard installment plan or in full (choose under "
+        "Offering); rental income starts after handover."
     ),
     "future": "Not available: " + HIDDEN_MODEL_REASONS["future"] + ".",
     "option": "Not available: " + HIDDEN_MODEL_REASONS["option"] + ".",
@@ -128,8 +131,32 @@ MODEL_EXPLAIN: dict[str, str] = {
 }
 
 
+# How an under-construction listing is bought (0034, properties.offplan_payment).
+OFFPLAN_PAYMENT_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("installments", "Installment plan (down payment, then monthly installments)"),
+    ("full", "Paid in full (a project sold in phases, each at its own price)"),
+    ("both", "Either: the investor chooses the plan or full payment"),
+)
+OFFPLAN_PAYMENT_LABELS: dict[str, str] = {
+    "installments": "paid in installments",
+    "full": "paid in full",
+    "both": "paid in full or in installments",
+}
+
+
 def profile_of(model: str | None) -> str:
     return MODEL_PROFILE.get(model or "", PROFILE_READY)
+
+
+def purchase_label(model: str | None, offplan_payment: str | None) -> str:
+    """The model's label with how THIS listing is bought (an under-construction listing may
+    be paid in full, by installments or either)."""
+    label = MODEL_LABELS.get(model or "", model or "")
+    if profile_of(model) not in OFFPLAN_PROFILES or model in HIDDEN_MODELS:
+        return label
+    how = OFFPLAN_PAYMENT_LABELS.get(offplan_payment or "installments", "paid in installments")
+    kind = "Off-plan portfolio" if profile_of(model) == PROFILE_OFFPLAN_PORTFOLIO else "Off-plan"
+    return f"{kind}, {how}"
 
 
 def validate_model_choice(model: str, *, current: str | None = None) -> str:
@@ -197,6 +224,7 @@ class FieldSpec:
     profile_help: tuple[tuple[str, str], ...] = ()
     computed: bool = False
     positive: bool = False
+    default: Any = None  # what an empty value means (a select that must always have one)
 
     @property
     def description(self) -> str:
@@ -332,7 +360,8 @@ CORE_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec(
         "unit_price",
         "Price per unit (USD)",
-        "What one unit costs. Investors buy whole units only. Locked once investors hold units.",
+        "What one unit costs. Investors buy whole units only. Once investors hold units it "
+        "changes only by recording a new price (Unit price, on the listing's page).",
         "100",
         kind="money",
         required=True,
@@ -356,6 +385,19 @@ CORE_FIELDS: tuple[FieldSpec, ...] = (
         kind="money",
         required=True,
         group=GROUP_OFFERING,
+    ),
+    FieldSpec(
+        "offplan_payment",
+        "How investors pay",
+        "Installment plan: a down payment, then monthly installments. Paid in full: for a "
+        "project sold in phases, each phase at its own unit price (record each new price "
+        "under Unit price). Either: the investor chooses. Applies to new purchases only.",
+        "",
+        kind="select",
+        group=GROUP_OFFERING,
+        options=OFFPLAN_PAYMENT_OPTIONS,
+        show_in=OFFPLAN_PROFILES,
+        default="installments",
     ),
     FieldSpec(
         "expected_yield",
@@ -499,7 +541,7 @@ def parse_core_value(spec: FieldSpec, raw: Any, profile: str | None = None) -> A
     if not s:
         if required:
             raise _bad_field(spec, "this field is required", profile)
-        return None
+        return spec.default
     if spec.kind in ("text", "textarea"):
         if len(s) > spec.max_len:
             raise _bad_field(spec, f"must be at most {spec.max_len} characters", profile)
@@ -551,6 +593,10 @@ def parse_core(form: Any, names: list[str], *, model: str | None = None) -> dict
     for name in names:
         spec = CORE_BY_NAME[name]
         if spec.computed or not spec.shown(profile):
+            continue
+        if spec.default is not None and name not in form:
+            # a choice the form did not carry at all (a page opened before the field existed,
+            # a script): the stored choice stays, it is not reset to the default
             continue
         out[name] = parse_core_value(spec, form.get(name), profile)
     return out
@@ -864,6 +910,14 @@ async def update_core(
         positions = await count_positions(session, prop.id)
         if positions:
             raise AppError("OFFERING_LOCKED", locked_message(positions), status_code=409)
+    if "unit_price" in changed and prop.launch_price is not None:
+        # its price has a recorded history (0034): a change made here would not be in it
+        raise AppError(
+            "PRICE_HAS_HISTORY",
+            "This listing's unit price has a recorded history: change it under Unit prices, "
+            "so the change is recorded and shown to investors.",
+            status_code=409,
+        )
     for k, v in changed.items():
         setattr(prop, k, v)
     if "total_units" in changed:

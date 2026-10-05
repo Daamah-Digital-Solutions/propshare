@@ -178,6 +178,16 @@ export interface SaleCard {
   resale_fee_pct: string;
   buyer_fee: string;
   buyer_pays: string;
+  /** the sale of a whole running installment plan (a position), not of loose units:
+   * `units` is every unit of the plan and `you_receive` what the buyer pays the seller */
+  position?: {
+    position_value: string;
+    /** what the seller has put into the position */
+    cost: string;
+    remaining_principal: string;
+    installments_left: number;
+    gain: string;
+  };
   notes: string[];
   ready: boolean;
   path: string;
@@ -208,7 +218,7 @@ export interface ComparisonCard {
     city: string | null;
     country: string | null;
     model_label: string | null;
-    purchase: "direct" | "installment" | string;
+    purchase: "direct" | "installment" | "either" | string;
     unit_price: number | null;
     minimum_investment: number | null;
     expected_yield: number | null;

@@ -10,6 +10,8 @@ import {
   Tag,
   ExternalLink,
   Layers,
+  TrendingDown,
+  TrendingUp,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ExitButton } from "@/components/exit/ExitButton";
@@ -18,10 +20,15 @@ import { SukukCertificatesCard } from "@/components/dashboard/SukukCertificatesC
 import { holdingsApi, investApi } from "@/lib/api";
 
 const money = (v: number) => `$${v.toLocaleString()}`;
+const shortDay = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 
 export const ActiveInvestments = () => {
   // Live holdings from the ownership ledger (server-authoritative). No mock portfolio.
-  const { data } = useQuery({ queryKey: ["holdings", "mine"], queryFn: holdingsApi.mine });
+  const { data, isSuccess: holdingsLoaded } = useQuery({
+    queryKey: ["holdings", "mine"],
+    queryFn: holdingsApi.mine,
+  });
   const holdings = (data?.items ?? []).filter((h) => h.units > 0);
   // Purchases paid through a hosted checkout that the server has not confirmed yet: the
   // units are reserved, the money is with the provider — show them instead of nothing.
@@ -36,7 +43,13 @@ export const ActiveInvestments = () => {
     (i) => i.status === "pending" && !inReview.has(i.id),
   );
 
-  const totalValue = holdings.reduce((s, h) => s + h.units * Number(h.unit_price), 0);
+  // The server's figure (the same one the overview shows): holdings at the price of the day,
+  // and a running installment plan counted as the position it is, not as its paid units.
+  const { data: portfolio } = useQuery({ queryKey: ["portfolio", "summary"], queryFn: investApi.portfolio });
+  const heldValue = holdings.reduce((s, h) => s + h.units * Number(h.unit_price), 0);
+  const totalValue = portfolio ? Number(portfolio.current_value) : heldValue;
+  // say so only when both figures are in and really differ (never while one is loading)
+  const countsPositions = Boolean(portfolio) && holdingsLoaded && Math.abs(totalValue - heldValue) >= 0.01;
   const totalUnits = holdings.reduce((s, h) => s + h.units, 0);
 
   return (
@@ -90,6 +103,11 @@ export const ActiveInvestments = () => {
               <div>
                 <p className="text-sm text-muted-foreground">Current Value</p>
                 <p className="text-2xl font-bold text-foreground">{money(totalValue)}</p>
+                {countsPositions && (
+                  <p className="text-[11px] text-muted-foreground" data-testid="value-with-positions">
+                    with your installment plans as positions
+                  </p>
+                )}
               </div>
             </div>
           </CardContent>
@@ -153,20 +171,70 @@ export const ActiveInvestments = () => {
                   <Badge className="bg-primary">Owned</Badge>
                 </div>
 
+                {/* the price of a unit now: a property under construction gets a new one as it
+                    is revalued, and that is what the holding is worth and can be sold at */}
+                <div
+                  className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2"
+                  data-testid="holding-price"
+                >
+                  <div>
+                    <p className="text-xs text-muted-foreground">Unit price now</p>
+                    <p className="text-base font-bold text-foreground">${Number(h.unit_price).toLocaleString()}</p>
+                  </div>
+                  {h.price_change_pct != null && h.launch_price != null && (
+                    <div className="text-right">
+                      <p
+                        className={`inline-flex items-center gap-1 text-sm font-semibold ${
+                          Number(h.price_change_pct) < 0 ? "text-destructive" : "text-primary"
+                        }`}
+                      >
+                        {Number(h.price_change_pct) < 0 ? (
+                          <TrendingDown className="h-3.5 w-3.5" />
+                        ) : (
+                          <TrendingUp className="h-3.5 w-3.5" />
+                        )}
+                        {Number(h.price_change_pct) > 0 ? "+" : ""}
+                        {Number(h.price_change_pct).toFixed(1)}% since launch
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        launched at ${Number(h.launch_price).toLocaleString()}
+                        {h.price_updated_at ? ` · updated ${shortDay(h.price_updated_at)}` : ""}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <div className="p-2 rounded-lg bg-muted/50">
                     <p className="text-xs text-muted-foreground">Units Owned</p>
                     <p className="text-sm font-semibold">{h.units}</p>
+                    {h.average_cost != null && (
+                      <p className="text-[11px] text-muted-foreground">
+                        bought at ${Number(h.average_cost).toLocaleString()} on average
+                      </p>
+                    )}
                   </div>
                   <div className="p-2 rounded-lg bg-muted/50">
                     <p className="text-xs text-muted-foreground">Current Value</p>
                     <p className="text-sm font-semibold text-primary">
                       {money(h.units * Number(h.unit_price))}
                     </p>
+                    {h.average_cost != null && Number(h.unit_price) !== Number(h.average_cost) && (
+                      <p
+                        className={`text-[11px] ${
+                          Number(h.unit_price) < Number(h.average_cost) ? "text-destructive" : "text-primary"
+                        }`}
+                      >
+                        {Number(h.unit_price) > Number(h.average_cost) ? "+" : "−"}
+                        {money(Math.abs(h.units * (Number(h.unit_price) - Number(h.average_cost))))} on what you paid
+                      </p>
+                    )}
                   </div>
                   <div className="p-2 rounded-lg bg-muted/50">
                     <p className="text-xs text-muted-foreground">Listed for sale</p>
-                    <p className="text-sm font-semibold">{h.listed_units}</p>
+                    <p className="text-sm font-semibold">
+                      {h.held_back ? (h.held_back.listed ?? 0) + (h.held_back.lp_exit ?? 0) : h.listed_units}
+                    </p>
                   </div>
                   <div className="p-2 rounded-lg bg-muted/50">
                     <p className="text-xs text-muted-foreground">Sellable</p>
@@ -179,8 +247,24 @@ export const ActiveInvestments = () => {
                   </div>
                 </div>
 
+                {(h.plan_units ?? 0) > 0 && (
+                  <p className="mb-3 text-xs text-muted-foreground" data-testid="holding-plan-units">
+                    {h.plan_units} of these units are on an installment plan you are still paying: they are
+                    sold together with the plan, as one position.{" "}
+                    <Link to="/dashboard?tab=installments" className="text-primary underline">
+                      See the plan and sell it
+                    </Link>
+                  </p>
+                )}
+
                 <div className="flex items-center justify-end gap-2 flex-wrap">
-                  <Link to="/secondary-market">
+                  <Link
+                    to={
+                      h.sellable_units === 0 && (h.plan_units ?? 0) > 0
+                        ? "/dashboard?tab=installments" // only a plan here: it is sold from its card
+                        : `/secondary-market?tab=sell&property=${h.property_id}`
+                    }
+                  >
                     <Button
                       variant="outline"
                       size="sm"

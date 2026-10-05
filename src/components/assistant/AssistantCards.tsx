@@ -530,20 +530,43 @@ export function SalePreparedCard({ card, onClose }: { card: SaleCard; onClose?: 
     Number(card.vs_reference_pct) === 0
       ? "reference price"
       : `${signedPct(card.vs_reference_pct)} vs ${money(card.reference_price)}`;
-  return (
-    <PreparedShell
-      testId="sale-card"
-      icon={Tag}
-      title={card.ready ? "Your listing is ready" : "Listing prepared: one step first"}
-      rows={[
+  // A running installment plan is sold whole: the buyer pays the seller the position's value
+  // less what is still to pay on the plan, and takes the remaining installments over.
+  const pos = card.position;
+  const rows: Row[] = pos
+    ? [
+        ["Property", card.property_title],
+        ["Position", `${card.units} units (the whole plan)`],
+        ["Price per unit", `${money(card.price_per_unit)} (${vsRef})`],
+        ["Position value", money(pos.position_value)],
+        [
+          `Still to pay (${pos.installments_left} installment${pos.installments_left === 1 ? "" : "s"}, the buyer's)`,
+          `−${money(pos.remaining_principal)}`,
+        ],
+        [`Buyer pays fee (${card.resale_fee_pct}%)`, money(card.buyer_fee)],
+      ]
+    : [
         ["Property", card.property_title],
         ["Units", String(card.units)],
         ["Price per unit", `${money(card.price_per_unit)} (${vsRef})`],
         [`Buyer pays fee (${card.resale_fee_pct}%)`, money(card.buyer_fee)],
-      ]}
+      ];
+  const noun = pos ? "position" : "listing";
+  return (
+    <PreparedShell
+      testId="sale-card"
+      icon={Tag}
+      title={
+        card.ready
+          ? pos
+            ? "Your position is ready to list"
+            : "Your listing is ready"
+          : "Listing prepared: one step first"
+      }
+      rows={rows}
       total={["You receive", money(card.you_receive)]}
       notes={card.notes}
-      footnote="Opens the Sell form with this listing filled in. Nothing is listed until you confirm."
+      footnote={`Opens the Sell form with this ${noun} filled in. Nothing is listed until you confirm.`}
     >
       <CtaLink to={card.path} onClose={onClose} label={card.ready ? "Review & list" : "Open the Sell form"} />
     </PreparedShell>
@@ -588,7 +611,15 @@ export function ComparisonCardView({ card, onClose }: { card: ComparisonCard; on
   type Item = ComparisonCard["items"][number];
   const rows: [string, (it: Item) => React.ReactNode][] = [
     ["Type", (it) => it.model_label ?? "—"],
-    ["How you buy", (it) => (it.purchase === "installment" ? "Installment plan" : "Direct purchase")],
+    [
+      "How you buy",
+      (it) =>
+        it.purchase === "installment"
+          ? "Installment plan"
+          : it.purchase === "either"
+            ? "In full or by installments"
+            : "Direct purchase",
+    ],
     ["Unit price", (it) => (it.unit_price === null ? "—" : fmtMoney(it.unit_price))],
     ["Minimum", (it) => (it.minimum_investment === null ? "—" : fmtMoney(it.minimum_investment))],
     ["Projected yield", (it) => pct(it.expected_yield)],

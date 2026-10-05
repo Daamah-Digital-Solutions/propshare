@@ -56,7 +56,9 @@ const LISTING_STATUS: Record<string, ExitStatus> = {
 
 function toExitRequest(l: SecondaryListing): ExitRequest {
   const price = Number(l.price_per_unit);
-  const gross = l.units_for_sale * price;
+  // An installment position is not units x price: the seller is paid the position's value
+  // less what is still to pay on the plan (`cash`; once sold, what it was sold for).
+  const gross = l.plan_id ? Number(l.cash ?? l.position?.cash ?? 0) : l.units_for_sale * price;
   return {
     id: l.listing_id,
     propertyId: l.property_id ?? "",

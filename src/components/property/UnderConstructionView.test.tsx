@@ -3,13 +3,13 @@
  * every block is fed by real listing data and hidden when there is none. The old page's
  * invented text ("96%", "Educational Demo", "on-chain", fake documents) must never return.
  */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PropertyDetail } from "@/lib/api";
 
-const { docs } = vi.hoisted(() => ({ docs: vi.fn() }));
+const { docs, prices } = vi.hoisted(() => ({ docs: vi.fn(), prices: vi.fn() }));
 vi.mock("@/lib/api", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
   return {
@@ -17,6 +17,7 @@ vi.mock("@/lib/api", async (orig) => {
     assetUrl: (u: string) => u,
     apiUrl: (u: string) => `http://api${u}`,
     documentsApi: { listForProperty: async () => docs() },
+    propertyApi: { prices: async (id: string) => prices(id) },
   };
 });
 
@@ -123,7 +124,7 @@ const full: PropertyDetail = {
   },
 } as PropertyDetail;
 
-function mount(detail: PropertyDetail) {
+function mount(detail: PropertyDetail, preview?: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -131,6 +132,7 @@ function mount(detail: PropertyDetail) {
         <UnderConstructionView
           detail={detail}
           fees={FEES}
+          preview={preview}
           investPanel={<div data-testid="invest-calc" />}
           documentsPanel={<div data-testid="real-docs" />}
         />
@@ -139,6 +141,17 @@ function mount(detail: PropertyDetail) {
   );
 }
 
+// the price line of a listing whose price never changed: its launch price is its only point
+const flat = (price: string) => ({
+  property_id: "p1",
+  current_price: price,
+  launch_price: price,
+  change_pct: "0.00",
+  updated_at: null,
+  phase: null,
+  points: [{ at: "2026-01-01T00:00:00Z", price, change_pct: "0.00", label: "Launch price", note: null }],
+});
+
 const openTab = (name: RegExp) => {
   const tab = screen.getByRole("tab", { name });
   fireEvent.mouseDown(tab);
@@ -146,7 +159,11 @@ const openTab = (name: RegExp) => {
 };
 
 describe("UnderConstructionView", () => {
-  beforeEach(() => docs.mockReset());
+  beforeEach(() => {
+    docs.mockReset();
+    prices.mockReset();
+    prices.mockReturnValue(flat("100.00"));
+  });
 
   it("restores every section of the old design from real listing data", async () => {
     docs.mockReturnValue([{ id: "d1", property_id: "p1", title: "Valuation", type: "valuation", download_url: "/api/v1/documents/d1/download", created_at: "" }]);
@@ -166,10 +183,13 @@ describe("UnderConstructionView", () => {
     expect(cp).toHaveTextContent("40%");
     expect(cp).toHaveTextContent("Foundation");
     expect(cp).toHaveTextContent("Certified");
+    // the price now is the real unit price; the stages' price indexes are estimates per unit
     const price = screen.getByTestId("price-appreciation");
-    expect(price).toHaveTextContent("$1,050,000"); // 1,000,000 × 105 / 100
-    expect(price).toHaveTextContent("$1,150,000"); // next phase
-    expect(price).toHaveTextContent("$1,300,000"); // delivery
+    expect(price).toHaveTextContent("Launch Price$100");
+    expect(price).toHaveTextContent("Unit Price Now$100Unchanged since launch");
+    expect(price).toHaveTextContent("Next Expected Price$105At Foundation · +5% · estimate"); // 100 × 105 / 100
+    expect(price).toHaveTextContent("Estimated Delivery Price$130"); // 100 × 130 / 100
+    expect(price).toHaveTextContent(/estimates set per construction stage, not guarantees/i);
     const val = screen.getByTestId("valuation-report");
     expect(val).toHaveTextContent("Knight Frank");
     expect(await within(val).findByRole("link", { name: /download valuation report/i })).toHaveAttribute(
@@ -238,6 +258,87 @@ describe("UnderConstructionView", () => {
     } as PropertyDetail);
     expect(screen.getByTestId("construction-progress")).toHaveTextContent("30%");
     expect(screen.queryByTestId("price-appreciation")).toBeNull();
+  });
+
+  it("shows the recorded unit price and its history, never an estimate the price already passed", async () => {
+    docs.mockReturnValue([]);
+    // launched at $100, phase 2 opened at $110: the Foundation estimate ($105) is behind it
+    prices.mockReturnValue({
+      property_id: "p1",
+      current_price: "110.00",
+      launch_price: "100.00",
+      change_pct: "10.00",
+      updated_at: "2026-09-01T09:00:00Z",
+      phase: "Phase 2",
+      points: [
+        { at: "2026-01-01T00:00:00Z", price: "100.00", change_pct: "0.00", label: "Launch price", note: null },
+        { at: "2026-09-01T09:00:00Z", price: "110.00", change_pct: "10.00", label: "Phase 2", note: "Structure topped out" },
+      ],
+    });
+    // 4,000 of the 10,000 units were sold at $100: the offering's own total is a blend
+    mount({
+      ...full,
+      unit_price: 110,
+      launch_price: 100,
+      total_value: 1_060_000,
+      available_units: 6000,
+    } as PropertyDetail);
+    const price = await screen.findByTestId("price-appreciation");
+    await waitFor(() => expect(price).toHaveTextContent("Unit Price Now$110+10% since launch"));
+    expect(price).toHaveTextContent("Launch Price$100");
+    expect(price).toHaveTextContent("Phase 2");
+    expect(price).not.toHaveTextContent("$105"); // already behind the real price
+    expect(price).toHaveTextContent("Next Expected Price$115At Structure"); // 100 × 115 / 100
+    expect(price).toHaveTextContent("Estimated Delivery Price$130");
+    const history = within(price).getByTestId("unit-price-history");
+    expect(history).toHaveTextContent("Sep 1, 2026Phase 2Structure topped out$110 +10%");
+    // the asset is every unit at the price now, not the blended total of the offering
+    expect(screen.getAllByText("$1,100,000").length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("$1,060,000");
+    expect(prices).toHaveBeenCalledWith("p1");
+  });
+
+  it("needs no second request to say how far the price has moved", async () => {
+    docs.mockReturnValue([]);
+    // the history request fails (or has not answered yet): the listing itself carries its
+    // launch price, so the tiles and the stage estimates are still right
+    prices.mockImplementation(() => {
+      throw new Error("offline");
+    });
+    mount({ ...full, unit_price: 110, launch_price: 100, total_value: 1_060_000 } as PropertyDetail);
+    const price = screen.getByTestId("price-appreciation");
+    expect(price).toHaveTextContent("Launch Price$100");
+    expect(price).toHaveTextContent("Unit Price Now$110+10% since launch");
+    expect(price).toHaveTextContent("Next Expected Price$115At Structure");
+    expect(price).toHaveTextContent("Estimated Delivery Price$130");
+    expect(price).not.toHaveTextContent("Unchanged since launch");
+    expect(within(price).queryByTestId("unit-price-history")).toBeNull();
+    expect(screen.getAllByText("$1,100,000").length).toBeGreaterThan(0);
+  });
+
+  it("names a listing by how it is bought", async () => {
+    docs.mockReturnValue([]);
+    const { unmount } = mount({ ...base, offplan_payment: "full" } as PropertyDetail);
+    // a project sold in phases: no installment card, and the page says how it is paid
+    expect(screen.getAllByText(/Property Sold in Phases/).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("installment-structure")).toBeNull();
+    expect(screen.getByTestId("phase-structure")).toHaveTextContent(/in full at the price of the phase open today/i);
+    expect(screen.getByTestId("phase-structure")).toHaveTextContent("$100 per unit");
+    openTab(/financials/i);
+    expect(screen.getByTestId("fee-structure")).not.toHaveTextContent(/installment fee/i);
+    unmount();
+
+    mount({ ...base, offplan_payment: "both" } as PropertyDetail);
+    expect(screen.getAllByText(/Under-Construction Property/).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("installment-structure")).toHaveTextContent(/you can also pay for your units in full/i);
+    expect(screen.queryByTestId("phase-structure")).toBeNull();
+    expect(screen.getByText("Full payment, or an installment plan · 6 to 24 months")).toBeInTheDocument();
+  });
+
+  it("asks for no price history while a draft is previewed", () => {
+    docs.mockReturnValue([]);
+    mount(base, "tok123");
+    expect(prices).not.toHaveBeenCalled();
   });
 
   it("hides the valuation download when no valuation document is uploaded", async () => {

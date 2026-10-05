@@ -84,12 +84,14 @@ NOT_BUILT: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(
-            r"phased|tranche|shared participation|developer.retain|purchase option|"
+            r"tranche|shared participation|developer.retain|purchase option|"
             r"forward.(participation|purchase)|future.(participation|property)",
             _I,
         ),
-        "Phased funding, developer shared participation, purchase options and future or "
-        "forward participation are not open for investment yet.",
+        "Developer shared participation, purchase options and future or forward participation "
+        "are not open for investment yet, and funding is not released to a developer in "
+        "tranches. (A property under construction CAN be sold in phases, each at its own unit "
+        "price, paid in full or by installments.)",
     ),
     (
         re.compile(r"record date|waterfall", _I),

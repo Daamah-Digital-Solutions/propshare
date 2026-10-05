@@ -19,6 +19,9 @@ class InvestmentCreateIn(BaseModel):
     # "pronova" is a branded rail that settles via Stripe card (D5) with a server-applied
     # discount off the total; otherwise identical to "card".
     method: str = Field(pattern="^(wallet|card|crypto|pronova)$")
+    # The unit price on the buyer's screen when they confirmed: a different price now is
+    # answered with 409 PRICE_CHANGED instead of a purchase at a price they did not see.
+    expected_unit_price: float | None = Field(default=None, gt=0)
 
 
 class InvestmentCreateOut(BaseModel):
@@ -55,11 +58,15 @@ class InvestmentListOut(BaseModel):
 class PortfolioOut(BaseModel):
     """Server-authoritative portfolio summary (decimal-exact strings)."""
 
-    invested: str  # wallet.total_invested
-    current_value: str  # Σ held units × property.unit_price (from ownership_ledger)
+    invested: str  # wallet.total_invested (everything bought so far, held or sold since)
+    # Σ held units × property.unit_price (from ownership_ledger); a running installment plan
+    # counts as its position: all its units at that price less the principal still to pay
+    current_value: str
     total_returns: str  # wallet.total_returns
     properties: int  # distinct properties currently held
     units: int  # total units currently held
+    # what selling units and positions brought in: current_value + sold - invested = the gain
+    sold: str = "0"
 
 
 class ReinvestIn(BaseModel):

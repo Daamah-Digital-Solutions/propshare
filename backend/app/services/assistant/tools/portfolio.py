@@ -4,8 +4,10 @@ everything, the user presses the last button).
 
 Nothing here lists, sells or pays. ``prepare_sale`` applies the listing endpoint's rules
 (ownership, units already reserved, lock-up, price bounds, verification) and works out what
-the seller receives and what a buyer pays on top; ``prepare_installment_payment`` finds the
-next unpaid installment and checks the wallet covers it. The server turns each result into a
+the seller receives and what a buyer pays on top, for units held outright and for a whole
+installment plan position (0034: the buyer pays the seller what was paid plus the increase
+on all its units, and takes over the rest of the plan); ``prepare_installment_payment`` finds
+the next unpaid installment and checks the wallet covers it. The server turns each result into a
 card whose link opens the platform's own form, pre-filled, where the user confirms.
 """
 
@@ -20,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
 from app.core.errors import AppError
-from app.models import Property
+from app.models import InstallmentPlan, Property
 from app.services import installment_service, secondary_service, settings_service, wallet_service
 from app.services.assistant.context import AgentContext
 from app.services.assistant.tools.base import ToolOutput, ToolSpec, register
@@ -43,8 +45,9 @@ _HELD_BACK_WHY = {
     "family_pending": "promised to a family member who has not registered yet",
     "gift": "in a scheduled gift",
     "installment_plan": (
-        "on an installment plan that is still running (they become sellable after its last "
-        "payment, and the remaining installments can be paid early)"
+        "on an installment plan that is still running (they are sold with the plan, whole, as "
+        "one position: the buyer pays you what you paid plus the price increase and takes "
+        "over the remaining installments)"
     ),
     "pledged": "pledged to Nova Finance for a Nova Sukuk certificate",
 }
@@ -90,12 +93,24 @@ class SalePrepIn(BaseModel):
     property: str = Field(
         min_length=1, max_length=160, description="The property held: its name, slug or id"
     )
-    units: int = Field(ge=1, le=1_000_000, description="Units to list for sale")
+    units: int | None = Field(
+        default=None,
+        ge=1,
+        le=1_000_000,
+        description="Units to list for sale; leave empty for an installment position (it is "
+        "sold whole)",
+    )
     price_per_unit: float | None = Field(
         default=None,
         gt=0,
         le=100_000_000,
         description="Asking price per unit in USD; empty = the reference price",
+    )
+    position: bool | None = Field(
+        default=None,
+        description="true = sell the installment plan position the user has in that property "
+        "(every unit of the plan, with its remaining installments going to the buyer). Empty: "
+        "decided from what the user holds there",
     )
 
 
@@ -116,18 +131,32 @@ class SalePrepOut(ToolOutput):
     ready: bool  # nothing blocks the Create Listing button
     notes: list[str]
     as_of: str
+    # the sale of an installment plan position (kind = position): the whole plan changes
+    # hands; you_receive is what the buyer pays the seller now (the position's value at the
+    # asking price less the principal still to pay = cost + gain), and the buyer then pays
+    # remaining_principal on the plan's dates. cost = what the user has put in (the
+    # installments paid, or what they paid to take the plan over plus their installments
+    # since); gain = the price change on every unit since they got in (negative = a loss)
+    kind: str = "units"  # units | position
+    plan_id: str | None = None
+    position_value: str | None = None
+    cost: str | None = None
+    remaining_principal: str | None = None
+    installments_left: int | None = None
+    gain: str | None = None
 
 
 async def _prepare_sale(session, ctx: AgentContext, args) -> dict:
     a: SalePrepIn = args
     assert ctx.user_id is not None  # prepare_only: guard.authorize refuses visitors
     holdings = await secondary_service.my_holdings(session, ctx.user_id)
+    positions = await secondary_service.my_positions(session, ctx.user_id)
+    ids = {uuid.UUID(h["property_id"]) for h in holdings}
+    ids |= {uuid.UUID(p["property_id"]) for p in positions}
     slugs = dict(
         (
             await session.execute(
-                select(Property.id, Property.slug).where(
-                    Property.id.in_([uuid.UUID(h["property_id"]) for h in holdings] or [None])
-                )
+                select(Property.id, Property.slug).where(Property.id.in_(list(ids) or [None]))
             )
         ).all()
     )
@@ -135,53 +164,78 @@ async def _prepare_sale(session, ctx: AgentContext, args) -> dict:
         {**h, "id": h["property_id"], "slug": slugs.get(uuid.UUID(h["property_id"]))}
         for h in holdings
     ]
+    # a plan whose units have not vested yet is a position with no holding row of its own
+    listed_ids = {h["property_id"] for h in holdings}
+    for p in positions:
+        if p["property_id"] in listed_ids:
+            continue
+        listed_ids.add(p["property_id"])
+        rows.append(
+            {
+                "id": p["property_id"],
+                "property_id": p["property_id"],
+                "slug": slugs.get(uuid.UUID(p["property_id"])),
+                "title": p["property_title"],
+                "units": 0,
+                "sellable_units": 0,
+                "held_back": {},
+            }
+        )
     held = pick_by_name(a.property, rows, what="units in that property")
     prop = await session.get(Property, uuid.UUID(held["property_id"]))
     reference = decimal.Decimal(str(prop.unit_price))
     price = _q(decimal.Decimal(str(a.price_per_unit))) if a.price_per_unit else _q(reference)
-
+    here = [p for p in positions if p["property_id"] == held["property_id"]]
+    # a position when the user asks for one, or when the units they hold there are all on a
+    # running plan (those are never listed one by one)
+    as_position = bool(here) and (a.position is True or held["sellable_units"] == 0)
+    if a.position is True and not here:
+        raise AppError(
+            "NO_POSITION",
+            f"You have no running installment plan in {prop.title}; its units are listed "
+            "like any others.",
+            status_code=422,
+        )
+    sett = await settings_service.get_secondary_settings(session)
+    fee_pct = decimal.Decimal(str(sett["resale_fee_pct"] or "0"))
     blocking: list[str] = []
     info: list[str] = []
     if a.price_per_unit is None:
         info.append(
             "No price was given, so this uses the reference price; change it before listing."
         )
-    if a.units > held["sellable_units"]:
+    if as_position:
+        return await _prepare_position_sale(
+            session, ctx, prop, here, price, reference, sett, fee_pct, held, info
+        )
+    units = a.units or held["sellable_units"]
+    if a.units is None:
+        info.append(f"No number of units was given, so this lists all {units} you can sell.")
+    if units < 1 or units > held["sellable_units"]:
         why = held_back_reasons(held.get("held_back") or {})
         blocking.append(
             f"You can list up to {held['sellable_units']} units of this property"
             + (f" (of your {held['units']}: {why})." if why else ".")
         )
-    sett = await settings_service.get_secondary_settings(session)
+        units = max(units, 1)
     lockup_days = int(sett["lockup_days"] or 0)
     if lockup_days > 0:
         first = await secondary_service._earliest_acquisition(session, ctx.user_id, prop.id)
         if first is not None and dt.datetime.now(dt.UTC) < first + dt.timedelta(days=lockup_days):
             unlock = (first + dt.timedelta(days=lockup_days)).date().isoformat()
             blocking.append(f"These units are in a {lockup_days}-day lock-up until {unlock}.")
-    for bound, pct, word in (
-        ("min", sett["price_min_pct"], "at least"),
-        ("max", sett["price_max_pct"], "at most"),
-    ):
-        if pct is None:
-            continue
-        limit = _q(reference * pct / decimal.Decimal(100))
-        if (bound == "min" and price < limit) or (bound == "max" and price > limit):
-            blocking.append(
-                f"The price must be {word} {limit:.2f} ({pct}% of the reference price)."
-            )
+    blocking += _bound_notes(sett, reference, price)
     if kyc := kyc_note(ctx.kyc_status):
         blocking.append(kyc)
 
-    fee_pct = decimal.Decimal(str(sett["resale_fee_pct"] or "0"))
-    gross = _q(price * a.units)
+    gross = _q(price * units)
     buyer_fee = _q(gross * fee_pct / decimal.Decimal(100))
     vs_reference = _q((price - reference) / reference * 100) if reference else decimal.Decimal(0)
     return {
         "property_title": prop.title,
         "property_id": str(prop.id),
         "property_slug": prop.slug,
-        "units": a.units,
+        "units": units,
         "price_per_unit": f"{price:.2f}",
         "reference_price": f"{reference:.2f}",
         "vs_reference_pct": f"{vs_reference:.2f}",
@@ -197,13 +251,111 @@ async def _prepare_sale(session, ctx: AgentContext, args) -> dict:
     }
 
 
+def _bound_notes(sett: dict, reference: decimal.Decimal, price: decimal.Decimal) -> list[str]:
+    out = []
+    for bound, pct, word in (
+        ("min", sett["price_min_pct"], "at least"),
+        ("max", sett["price_max_pct"], "at most"),
+    ):
+        if pct is None:
+            continue
+        limit = _q(reference * pct / decimal.Decimal(100))
+        if (bound == "min" and price < limit) or (bound == "max" and price > limit):
+            out.append(f"The price must be {word} {limit:.2f} ({pct}% of the reference price).")
+    return out
+
+
+async def _prepare_position_sale(
+    session, ctx, prop, here, price, reference, sett, fee_pct, held, info
+) -> dict:
+    """The sale of a whole installment plan position at ``price`` per unit."""
+    blocking: list[str] = []
+    if len(here) > 1:
+        info.append(
+            f"You have {len(here)} running plans in this property; this prepares the newest. "
+            "The Installments tab lists each one with its own Sell button."
+        )
+    pos = here[0]
+    plan = await session.get(InstallmentPlan, pos["plan_id"])
+    payments = await installment_service._payments_for(session, plan.id)
+    fig = await installment_service.holder_position(session, plan, payments, price)
+    cash = fig["equity"]
+    if pos["blocked"] == "pledged":
+        blocking.append(
+            "This plan was started with a Nova Sukuk certificate: its units are pledged to "
+            "Nova Finance until the pledge is released."
+        )
+    elif pos["blocked"] == "lockup" and pos["lockup_until"] is not None:
+        blocking.append(
+            f"This position is in a lock-up until {pos['lockup_until'].date().isoformat()}."
+        )
+    elif pos["blocked"] == "listed":
+        blocking.append(
+            "This position is already listed for sale; cancel that listing to change its price."
+        )
+    if cash <= 0:
+        floor = _q(fig["remaining_principal"] / plan.units_total)
+        blocking.append(
+            f"At that price the position is worth {fig['value']:.2f}, which does not cover the "
+            f"{fig['remaining_principal']:.2f} still to pay on it: ask more than {floor:.2f} "
+            "a unit."
+        )
+    blocking += _bound_notes(sett, reference, price)
+    if kyc := kyc_note(ctx.kyc_status):
+        blocking.append(kyc)
+    move = fig["gain"]
+    change = (
+        f"plus the price increase on all the units ({move:.2f})"
+        if move > 0
+        else f"less the price decrease on all the units ({-move:.2f})"
+        if move < 0
+        else "with no price change on top"
+    )
+    info.append(
+        f"The whole position is sold: {plan.units_total} units, {plan.vested_units} of them "
+        f"yours already. The buyer pays you what you have put in ({fig['cost']:.2f}) {change}, "
+        f"then pays the {fig['installments_left']} remaining installment(s) "
+        f"({fig['remaining_principal']:.2f})."
+    )
+    buyer_fee = _q(max(cash, decimal.Decimal(0)) * fee_pct / decimal.Decimal(100))
+    vs_reference = _q((price - reference) / reference * 100) if reference else decimal.Decimal(0)
+    return {
+        "property_title": prop.title,
+        "property_id": str(prop.id),
+        "property_slug": prop.slug,
+        "units": plan.units_total,
+        "price_per_unit": f"{price:.2f}",
+        "reference_price": f"{reference:.2f}",
+        "vs_reference_pct": f"{vs_reference:.2f}",
+        "you_receive": f"{cash:.2f}",
+        "resale_fee_pct": f"{fee_pct.normalize():f}",
+        "buyer_fee": f"{buyer_fee:.2f}",
+        "buyer_pays": f"{(cash + buyer_fee):.2f}",
+        "units_held": held["units"],
+        "sellable_units": held["sellable_units"],
+        "ready": not blocking,
+        "notes": blocking + info,
+        "as_of": _now(),
+        "kind": "position",
+        "plan_id": str(plan.id),
+        "position_value": f"{fig['value']:.2f}",
+        "cost": f"{fig['cost']:.2f}",
+        "remaining_principal": f"{fig['remaining_principal']:.2f}",
+        "installments_left": fig["installments_left"],
+        "gain": f"{fig['gain']:.2f}",
+    }
+
+
 register(
     ToolSpec(
         "prepare_sale",
-        "Prepare a secondary-market listing of units the signed-in user holds: checks sellable "
-        "units, lock-up, price limits and verification, and works out what the seller receives "
-        "(the buyer pays the resale fee on top). The user then sees a sale card whose button "
-        "opens the listing form pre-filled, stopping at their own Create Listing click.",
+        "Prepare a secondary-market listing of what the signed-in user holds: units they own "
+        "outright, or a whole installment plan position (units on a running plan are sold "
+        "with the plan: the buyer pays the seller what was paid plus the price increase on "
+        "all its units, and takes over the remaining installments). Checks sellable units, "
+        "lock-up, price limits and verification, and works out what the seller receives (the "
+        "buyer pays the resale fee on top). The user then sees a sale card whose button opens "
+        "the listing form pre-filled, stopping at their own Create Listing click.",
         SalePrepIn,
         SalePrepOut,
         "prepare_only",

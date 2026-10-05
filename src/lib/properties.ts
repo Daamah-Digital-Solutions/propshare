@@ -31,6 +31,19 @@ const milestonesToTimeline = (
       status: m.status === "completed" ? "done" : m.status === "in_progress" ? "active" : "upcoming",
     }));
 
+/**
+ * What the whole property is worth at today's unit price. `total_value` is the OFFERING's
+ * total (what was paid for the units already sold, plus the rest at today's price): the two
+ * are equal until the unit price first moves, and part ways after. Pages show this figure as
+ * the property's value; funding progress keeps using the offering's total.
+ */
+export const assetValue = (
+  p: Pick<PropertySummary, "total_units" | "unit_price" | "total_value" | "launch_price">,
+): number =>
+  // `launch_price` is set from the first price change on: until then the stored total is
+  // the value, whatever it was entered as
+  p.launch_price != null && p.total_units > 0 && p.unit_price > 0 ? p.total_units * p.unit_price : p.total_value;
+
 export const isSampleSlug = (slug: string | null | undefined): boolean =>
   !!slug && slug.startsWith("demo-");
 
@@ -62,7 +75,7 @@ export const toMarketplaceProperty = (s: PropertySummary): Property => ({
   country: s.country ?? "",
   city: s.city ?? "",
   image: assetUrl(s.image ?? ""),
-  price: s.total_value,
+  price: assetValue(s),
   minInvestment: s.minimum_investment,
   yield: s.expected_yield ?? s.target_yield ?? 0,
   funded: Math.round(s.funding_progress),
@@ -99,7 +112,7 @@ export const toSampleProperty = (d: PropertyDetail): SampleProperty => {
     image: assetUrl(d.image ?? d.images[0] ?? ""),
     gallery: (d.images.length ? d.images : d.image ? [d.image] : []).map(assetUrl),
     description: d.description ?? "",
-    propertyValue: d.total_value,
+    propertyValue: assetValue(d),
     minInvestment: d.minimum_investment,
     expectedYield: d.expected_yield ?? d.target_yield ?? undefined,
     capitalAppreciation: d.capital_appreciation ?? undefined,

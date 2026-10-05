@@ -113,7 +113,7 @@ def test_prompt_carries_the_client_standard_and_what_is_not_built():
         "PayPal, Mercury, Revolut Business, Wise Business",
         "a holder register",
         "quoting their own price",
-        "phased funding",
+        "funding released to a developer in tranches",
     ):
         assert phrase in core, phrase
 

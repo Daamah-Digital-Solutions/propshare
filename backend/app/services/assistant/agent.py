@@ -555,6 +555,9 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
         path = f"/property/{result['slug']}?units={int(result['units'])}"
         if result.get("duration_months"):
             path += f"&months={int(result['duration_months'])}"
+        elif "installments" in (result.get("payment_options") or []):
+            # a listing bought either way, and this order is paid in full: open that panel
+            path += "&pay=full"
         return {
             "kind": "checkout",
             "title": result.get("property_title"),
@@ -609,9 +612,13 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
             "path": guard.make_link("statement")["path"],
         }
     if name == "prepare_sale":
-        query = {"tab": "sell", "property": result["property_id"], "units": result["units"]}
+        position = result.get("kind") == "position"
+        if position:  # the whole plan is sold: the form opens on that position
+            query = {"tab": "sell", "plan": result["plan_id"]}
+        else:
+            query = {"tab": "sell", "property": result["property_id"], "units": result["units"]}
         query["price"] = result["price_per_unit"]
-        return {
+        card = {
             "kind": "sale",
             **{
                 k: result[k]
@@ -622,6 +629,13 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
             "ready": bool(result.get("ready")),
             "path": f"/secondary-market?{urlencode(query)}",
         }
+        if position:
+            card["position"] = {
+                k: result[k]
+                for k in ("position_value", "cost", "remaining_principal")
+                + ("installments_left", "gain")
+            }
+        return card
     if name == "prepare_installment_payment":
         return {
             "kind": "installment",

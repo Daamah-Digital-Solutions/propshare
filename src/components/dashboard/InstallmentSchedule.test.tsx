@@ -4,7 +4,7 @@
  * schedule), shows which property each plan is for, reveals the full payment table behind a
  * "View schedule" toggle, and shows an honest empty state when there are none.
  */
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -99,6 +99,116 @@ describe("InstallmentSchedule (real API)", () => {
     expect(await screen.findByText("Downtown Tower")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("url").textContent).toBe("/dashboard?tab=installments"));
     expect(screen.queryByTestId("assistant-installment-banner")).toBeNull();
+  });
+});
+
+describe("InstallmentSchedule: a running plan is a position with a value", () => {
+  beforeEach(() => listMock.mockReset());
+
+  // 12 units locked at $100, $300 of principal paid; the unit price is now $110:
+  // 12 x 110 = 1,320, less the 900 still to pay = 420 (the 300 paid + 120 on all 12 units)
+  const POSITION = {
+    price: "110.00",
+    entry_price: "100.00",
+    value: "1320.00",
+    cost: "300.00",
+    paid_principal: "300.00",
+    remaining_principal: "900.00",
+    remaining_fees: "36.00",
+    equity: "420.00",
+    gain: "120.00",
+    installments_left: 11,
+    overdue: 0,
+    next_due: "2026-07-01",
+  };
+
+  it("values the plan at the unit price of the day and offers to sell it whole", async () => {
+    listMock.mockResolvedValue([{ ...PLAN, position: POSITION }]);
+    wrap(<InstallmentSchedule />);
+    const block = await screen.findByTestId("plan-position");
+    expect(block).toHaveTextContent("Unit price now$110you locked $100");
+    expect(block).toHaveTextContent("Position value now$1,32012 units");
+    expect(block).toHaveTextContent("Your part of it$420$300 you put in + $120");
+    expect(block).toHaveTextContent("+$120 since you started, on all 12 units.");
+    expect(within(block).getByRole("link", { name: /sell this position/i })).toHaveAttribute(
+      "href",
+      "/secondary-market?tab=sell&plan=pl1",
+    );
+    // the old rule ("held until the plan completes") is gone
+    expect(document.body.textContent).not.toMatch(/held until the plan completes/i);
+  });
+
+  it("says when the price fell, and when the position is already for sale", async () => {
+    listMock.mockResolvedValue([
+      {
+        ...PLAN,
+        listing_id: "lst-1",
+        position: { ...POSITION, price: "95.00", value: "1140.00", equity: "240.00", gain: "-60.00" },
+      },
+    ]);
+    wrap(<InstallmentSchedule />);
+    const block = await screen.findByTestId("plan-position");
+    expect(block).toHaveTextContent("−$60 since you started, on all 12 units.");
+    expect(within(block).getByRole("link", { name: /listed for sale/i })).toHaveAttribute(
+      "href",
+      "/secondary-market?tab=activity",
+    );
+    expect(within(block).queryByRole("link", { name: /sell this position/i })).toBeNull();
+    // listed is not "you can list": it says what happens until it sells
+    const note = within(block).getByTestId("plan-position-note");
+    expect(note).toHaveTextContent(/This position is listed for sale\. Until it sells, its installments are still charged/);
+    expect(note).not.toHaveTextContent(/You can list the whole position/);
+  });
+
+  it("measures a plan that was bought from what its buyer paid, not from the first holder's price", async () => {
+    // bought at $110 a unit for $420 (the first holder's $120 gain was paid for): no gain yet
+    listMock.mockResolvedValue([
+      {
+        ...PLAN,
+        acquired_at: "2026-09-20T10:00:00Z",
+        position: { ...POSITION, entry_price: "110.00", cost: "420.00", gain: "0.00" },
+      },
+    ]);
+    wrap(<InstallmentSchedule />);
+    const block = await screen.findByTestId("plan-position");
+    expect(block).toHaveTextContent("Unit price now$110you bought at $110");
+    expect(block).toHaveTextContent("Your part of it$420$420 you put in + $0");
+    expect(block).toHaveTextContent("The unit price has not changed since you bought this position.");
+    expect(block).not.toHaveTextContent(/you locked|since you started/);
+    expect(block).toHaveTextContent(
+      /You took this plan over on Sep 20, 2026; payments before that were made by the previous holder/,
+    );
+  });
+
+  it("says why a position cannot be sold instead of offering the button", async () => {
+    listMock.mockResolvedValue([
+      { ...PLAN, id: "a", position: { ...POSITION, blocked: "pledged" } },
+      {
+        ...PLAN,
+        id: "b",
+        position: { ...POSITION, blocked: "lockup", lockup_until: "2026-12-15T10:00:00Z" },
+      },
+      // worth less than what is still to pay: nothing to sell, and nothing owed for it
+      { ...PLAN, id: "c", position: { ...POSITION, price: "70.00", value: "840.00", equity: "-60.00", gain: "-360.00" } },
+    ]);
+    wrap(<InstallmentSchedule />);
+    const notes = await screen.findAllByTestId("plan-position-note");
+    expect(notes[0]).toHaveTextContent(/pledged to Nova Finance, so the position cannot be sold/);
+    expect(notes[1]).toHaveTextContent(/lock-up until Dec 1[45], 2026/);
+    expect(notes[2]).toHaveTextContent(/worth less than what is still to pay on it/);
+    const blocks = screen.getAllByTestId("plan-position");
+    expect(within(blocks[0]).queryByRole("link", { name: /sell this position/i })).toBeNull();
+    expect(within(blocks[1]).queryByRole("link", { name: /sell this position/i })).toBeNull();
+    expect(within(blocks[2]).queryByRole("link", { name: /sell this position/i })).toBeNull();
+    // never a negative "your part"
+    expect(blocks[2]).toHaveTextContent("Your part of it$0");
+  });
+
+  it("shows no position on a plan that is not running", async () => {
+    listMock.mockResolvedValue([{ ...PLAN, status: "completed", position: null }]);
+    wrap(<InstallmentSchedule />);
+    expect(await screen.findByText("Downtown Tower")).toBeInTheDocument();
+    expect(screen.queryByTestId("plan-position")).toBeNull();
   });
 });
 

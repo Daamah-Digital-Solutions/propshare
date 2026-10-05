@@ -4,6 +4,7 @@ import { ArrowRight, MapPin, TrendingUp, Clock, Building2, Loader2 } from "lucid
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { propertyApi } from "@/lib/api";
+import { assetValue } from "@/lib/properties";
 
 interface Property {
   id: string;
@@ -129,7 +130,7 @@ const FeaturedProperties = () => {
     title: s.title,
     location: s.location,
     image: s.image ?? "",
-    price: s.total_value,
+    price: assetValue(s),
     minInvestment: s.minimum_investment,
     yield: s.expected_yield ?? s.target_yield ?? 0,
     funded: Math.round(s.funding_progress),

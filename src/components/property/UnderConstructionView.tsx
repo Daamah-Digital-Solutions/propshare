@@ -34,8 +34,17 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { apiUrl, assetUrl, documentsApi, type PropertyDetail, type PropertyMilestone } from "@/lib/api";
+import {
+  apiUrl,
+  assetUrl,
+  documentsApi,
+  propertyApi,
+  type PropertyDetail,
+  type PropertyMilestone,
+} from "@/lib/api";
 import { INSTALLMENT_DURATIONS } from "@/lib/installments";
+import { assetValue as valueOf } from "@/lib/properties";
+import UnitPriceHistory from "@/components/property/UnitPriceHistory";
 
 /**
  * Under-construction property page — the design the client knew (the model page removed on
@@ -116,6 +125,28 @@ const MODEL_CFG: Record<string, { title: string; tagline: string; icon: typeof H
   },
 };
 const INSTALLMENT_MODELS = new Set(["installment", "construction-portfolio"]);
+// An under-construction listing is bought by the installment plan, in full (a project sold in
+// phases, each at its own price) or either: the page names it by how it is bought.
+const PAID_IN_FULL: Record<string, { title: string; tagline: string }> = {
+  installment: {
+    title: "Property Sold in Phases",
+    tagline: "Buy at the price of the current phase while the property is built",
+  },
+  "construction-portfolio": {
+    title: "Construction Portfolio Sold in Phases",
+    tagline: "Several projects under construction, bought at the price of the current phase",
+  },
+};
+const EITHER_WAY: Record<string, { title: string; tagline: string }> = {
+  installment: {
+    title: "Under-Construction Property",
+    tagline: "Pay in full or in monthly installments while the property is built",
+  },
+  "construction-portfolio": {
+    title: "Construction Portfolio",
+    tagline: "Several projects under construction, paid in full or through an installment plan",
+  },
+};
 
 const Row = ({ label, value }: { label: string; value: ReactNode }) => (
   <div className="flex items-center justify-between gap-4 border-b border-border pb-1.5 last:border-0">
@@ -178,10 +209,13 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
   const exits = rows<{ name?: string; eta?: string; description?: string }>(c.exitMechanisms).filter((r) => r.name);
   const compliance = lines(c.compliance);
 
-  const cfg = MODEL_CFG[detail.model] ?? MODEL_CFG.installment;
+  const payment = detail.offplan_payment ?? "installments";
+  const offersPlan = payment !== "full" && INSTALLMENT_MODELS.has(detail.model);
+  const offersFull = payment !== "installments";
+  const named = payment === "full" ? PAID_IN_FULL[detail.model] : payment === "both" ? EITHER_WAY[detail.model] : undefined;
+  const cfg = { ...(MODEL_CFG[detail.model] ?? MODEL_CFG.installment), ...named };
   const Icon = cfg.icon;
   const images = (detail.images?.length ? detail.images : detail.image ? [detail.image] : []).map(assetUrl);
-  const baseValue = detail.total_value;
   const appreciation = detail.capital_appreciation;
   const devName = str(dev.name) || detail.developer_name || "";
   const devSlug = detail.developer_slug ?? null;
@@ -200,23 +234,34 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
   const fmtDate = (d: string | null | undefined) =>
     d ? new Date(d).toLocaleDateString(undefined, { year: "numeric", month: "short" }) : "—";
 
-  // Price progression exists only if the admin gave milestones a price index.
+  // --- the unit price: what is recorded, and what each stage is expected to bring ---------
+  // The price now is the listing's real unit price: what units are bought, valued and sold
+  // at. Staff record each change (a monthly revaluation, a new sales phase) and
+  // propertyApi.prices returns them all. A draft being previewed has none yet.
+  const { data: prices } = useQuery({
+    queryKey: ["property-prices", detail.id],
+    queryFn: () => propertyApi.prices(detail.id),
+    enabled: !preview,
+  });
+  const unitNow = detail.unit_price;
+  // the launch price comes with the listing itself (set once its price has changed), so the
+  // figures below never wait for, or depend on, the history request
+  const launchUnit = detail.launch_price ?? unitNow;
+  const priceMoved = detail.launch_price != null;
+  const sinceLaunch = launchUnit > 0 ? Math.round(((unitNow - launchUnit) / launchUnit) * 1000) / 10 : 0;
+  // every unit at the price now; until the price first moves this is the listing's own total
+  const assetValue = valueOf(detail);
+  // A milestone's price index (100 = launch) is the EXPECTED unit price at that stage: an
+  // estimate, shown only while it is still ahead of the real price.
   const indexed = milestones.filter((m) => m.value_index != null);
   const hasPricing = indexed.length > 0 && indexed.some((m) => m.value_index !== 100);
-  const idxOf = (m?: PropertyMilestone) => (m?.value_index != null ? m.value_index : null);
-  const currentIndex =
-    idxOf(current) ??
-    [...milestones].reverse().find((m) => m.status === "completed" && m.value_index != null)?.value_index ??
-    100;
-  const nextIndex = milestones
-    .slice(activeIdx >= 0 ? activeIdx + 1 : 0)
-    .find((m) => m.status !== "completed" && m.value_index != null)?.value_index;
-  const finalIndex = indexed.length ? indexed[indexed.length - 1].value_index! : 100;
-  const currentValue = Math.round((baseValue * currentIndex) / 100);
-  const nextValue = nextIndex != null ? Math.round((baseValue * nextIndex) / 100) : null;
-  const finalValue = Math.round((baseValue * finalIndex) / 100);
-  const upliftPct = Math.round(((currentValue - baseValue) / baseValue) * 1000) / 10;
-  const nextPct = nextValue != null ? Math.round(((nextValue - currentValue) / currentValue) * 1000) / 10 : null;
+  const expectedAt = (m: PropertyMilestone) => (launchUnit * (m.value_index ?? 100)) / 100;
+  const lastStage = indexed.length ? indexed[indexed.length - 1] : undefined;
+  const nextStage = indexed.find((m) => m.status !== "completed" && m !== lastStage && expectedAt(m) > unitNow);
+  const nextPrice = nextStage ? expectedAt(nextStage) : null;
+  const deliveryPrice = lastStage && expectedAt(lastStage) > unitNow ? expectedAt(lastStage) : null;
+  const nextPct = nextPrice != null && unitNow > 0 ? Math.round(((nextPrice - unitNow) / unitNow) * 1000) / 10 : null;
+  const showPricing = hasPricing || priceMoved;
 
   // --- valuation report: the uploaded document of category "valuation", if any ----------
   const { data: docs } = useQuery({
@@ -242,7 +287,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
     `Opportunity Model: ${cfg.title}`,
     `Property Type: ${detail.property_type.replace(/-/g, " ").replace(/^\w/, (x) => x.toUpperCase())}`,
     appreciation != null ? `Projected Appreciation: +${appreciation}%` : null,
-    `Asset Value: ${fmt(baseValue)}`,
+    `Asset Value: ${fmt(assetValue)}`,
     `Minimum Ticket: ${fmt(detail.minimum_investment)}`,
     `Active Investors: ${detail.investors_count}`,
   ].filter((h): h is string => Boolean(h));
@@ -298,7 +343,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="p-3 rounded-lg bg-card border border-border">
                     <div className="text-[10px] uppercase text-muted-foreground">Asset Value</div>
-                    <div className="font-bold text-foreground">{fmt(baseValue)}</div>
+                    <div className="font-bold text-foreground">{fmt(assetValue)}</div>
                   </div>
                   <div className="p-3 rounded-lg bg-card border border-border">
                     <div className="text-[10px] uppercase text-muted-foreground">Min. Ticket</div>
@@ -310,6 +355,8 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                   <div className="p-3 rounded-lg bg-card border border-border">
                     <div className="text-[10px] uppercase text-muted-foreground">Appreciation</div>
                     <div className="font-bold text-success">{appreciation != null ? `+${appreciation}%` : "—"}</div>
+                    {/* the listing's own projection; what the price actually did is in the price card */}
+                    {appreciation != null && <div className="text-[10px] text-muted-foreground">projected</div>}
                   </div>
                   <div className="p-3 rounded-lg bg-card border border-border">
                     <div className="text-[10px] uppercase text-muted-foreground">Investors</div>
@@ -385,7 +432,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                   </div>
                 </SectionCard>
 
-                {INSTALLMENT_MODELS.has(detail.model) && (
+                {offersPlan && (
                   <Card className="border-amber-500/30" data-testid="installment-structure">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2 text-base">
@@ -402,7 +449,25 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                         Your units vest progressively with every installment you pay. An installment
                         fee of {fees.installmentFee}% applies to the down payment and to each installment.
                         Use the calculator to see your exact schedule.
+                        {offersFull && " You can also pay for your units in full, at the unit price of the day."}
                       </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {offersFull && !offersPlan && INSTALLMENT_MODELS.has(detail.model) && (
+                  <Card className="border-amber-500/30" data-testid="phase-structure">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Layers className="h-4 w-4 text-amber-500" /> Sold in Phases
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-sm text-muted-foreground">
+                      This project is sold in phases, each at its own unit price. You pay for your units
+                      in full at the price of the phase open today
+                      {prices?.phase ? ` (${prices.phase})` : ""}: {fmtExact(unitNow)} per unit. The price is
+                      updated as the project advances, and you can offer your units for sale at the price
+                      of the day (a sale needs a buyer).
                     </CardContent>
                   </Card>
                 )}
@@ -493,27 +558,40 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                   </Card>
                 )}
 
-                {hasPricing && (
+                {showPricing && (
                   <Card className="border-success/30 bg-gradient-to-br from-success/5 to-transparent" data-testid="price-appreciation">
                     <CardHeader>
-                      <CardTitle className="flex items-center gap-2 text-base">
+                      <CardTitle className="flex flex-wrap items-center gap-2 text-base">
                         <TrendingUp className="h-4 w-4 text-success" /> Price &amp; Appreciation Indicator
+                        {prices?.phase && <Badge variant="outline">{prices.phase}</Badge>}
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-                        <Tile label="Launch Price" value={fmt(baseValue)} note="Initial offering reference" />
-                        <Tile label="Current Property Price" value={fmt(currentValue)} note={`Price index ${currentIndex}`} accent="primary" />
-                        {nextValue != null && (
+                        <Tile label="Launch Price" value={fmtExact(launchUnit)} note="Per unit, at launch" />
+                        <Tile
+                          label="Unit Price Now"
+                          value={fmtExact(unitNow)}
+                          note={
+                            sinceLaunch === 0
+                              ? "Unchanged since launch"
+                              : `${sinceLaunch > 0 ? "+" : ""}${sinceLaunch}% since launch`
+                          }
+                          accent="primary"
+                        />
+                        {nextPrice != null && nextStage && (
                           <Tile
-                            label="Expected Next Phase Price"
-                            value={fmt(nextValue)}
-                            note={`${next ? `At ${next.title}` : "Next phase"}${nextPct && nextPct > 0 ? ` · +${nextPct}%` : ""}`}
+                            label="Next Expected Price"
+                            value={fmtExact(nextPrice)}
+                            note={`At ${nextStage.title}${nextPct && nextPct > 0 ? ` · +${nextPct}%` : ""} · estimate`}
                             accent="success"
                           />
                         )}
-                        <Tile label="Estimated Delivery Value" value={fmt(finalValue)} note="Projected at handover" accent="success" />
+                        {deliveryPrice != null && (
+                          <Tile label="Estimated Delivery Price" value={fmtExact(deliveryPrice)} note="Per unit, projected at handover" accent="success" />
+                        )}
                       </div>
+                      {prices && priceMoved && <UnitPriceHistory history={prices} />}
                       <div className="relative pt-2">
                         <div className="h-2 rounded-full bg-secondary overflow-hidden">
                           <div className="h-full bg-gradient-to-r from-primary via-primary to-success" style={{ width: `${Math.min(100, Math.max(5, progress))}%` }} />
@@ -525,8 +603,11 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                         </div>
                       </div>
                       <div className="text-xs text-muted-foreground p-3 rounded-lg bg-primary/5 border border-primary/20">
-                        These prices are estimates set per construction stage, not guarantees. Current
-                        uplift from launch: <strong className="text-success">{upliftPct >= 0 ? "+" : ""}{upliftPct}%</strong>.
+                        The unit price now is the price units are bought, valued and sold at. It is updated as
+                        the project advances; until handover that change is the return on this property, and
+                        you can offer your units for sale on the secondary market (a sale needs a buyer).
+                        {(nextPrice != null || deliveryPrice != null) &&
+                          " The later prices are estimates set per construction stage, not guarantees."}
                       </div>
                     </CardContent>
                   </Card>
@@ -615,14 +696,14 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                   </div>
                 )}
 
-                {(hasPricing || str(cashflow.rentalProjection) || str(cashflow.costs) || str(cashflow.exitProjection) || appreciation != null) && (
+                {(showPricing || str(cashflow.rentalProjection) || str(cashflow.costs) || str(cashflow.exitProjection) || appreciation != null) && (
                   <SectionCard icon={Banknote} title="Cash Flow & Return Expectations">
                     <div className="grid sm:grid-cols-3 gap-3 text-sm">
-                      {hasPricing && (
+                      {showPricing && (
                         <>
-                          <Tile label="Current Asset Value" value={fmt(currentValue)} />
-                          <Tile label="Next Phase Value" value={nextValue != null ? fmt(nextValue) : "—"} />
-                          <Tile label="Projected Delivery Value" value={fmt(finalValue)} accent="success" />
+                          <Tile label="Unit Price Now" value={fmtExact(unitNow)} />
+                          <Tile label="Next Expected Price" value={nextPrice != null ? fmtExact(nextPrice) : "—"} />
+                          <Tile label="Estimated Delivery Price" value={deliveryPrice != null ? fmtExact(deliveryPrice) : "—"} accent="success" />
                         </>
                       )}
                       <div className="sm:col-span-3 grid sm:grid-cols-2 gap-3">
@@ -659,7 +740,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                   <div className="space-y-2 text-sm" data-testid="fee-structure">
                     <Row label="Platform Fee (one-time)" value={`${fees.platformFee}%`} />
                     <Row label="Management Fee (annual)" value={`${fees.managementFee}%`} />
-                    {INSTALLMENT_MODELS.has(detail.model) && <Row label="Installment Fee (per payment)" value={`${fees.installmentFee}%`} />}
+                    {offersPlan && <Row label="Installment Fee (per payment)" value={`${fees.installmentFee}%`} />}
                     {fees.performanceFee != null && <Row label="Performance Fee (on profits)" value={`${fees.performanceFee}%`} />}
                     {fees.exitFee != null && <Row label="Exit Fee (on secondary sales)" value={`${fees.exitFee}%`} />}
                   </div>
@@ -747,14 +828,14 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                     <div className="space-y-4" data-testid="timeline">
                       <div className="grid sm:grid-cols-3 gap-3">
                         <Tile label="Current Phase" value={current?.title ?? "—"} note={current ? `${current.progress_pct ?? 0}% complete` : undefined} />
-                        {hasPricing && <Tile label="Current Pricing" value={fmt(currentValue)} note={`Price index ${currentIndex}`} />}
-                        {hasPricing && nextValue != null && (
-                          <Tile label="Next Phase Pricing" value={fmt(nextValue)} note={`Estimated at ${next?.title ?? "next phase"}`} accent="success" />
+                        {showPricing && <Tile label="Current Pricing" value={fmtExact(unitNow)} note="Per unit" />}
+                        {nextPrice != null && nextStage && (
+                          <Tile label="Next Expected Price" value={fmtExact(nextPrice)} note={`Estimated at ${nextStage.title}`} accent="success" />
                         )}
                       </div>
-                      {hasPricing && (
+                      {deliveryPrice != null && (
                         <div className="text-xs text-muted-foreground p-3 rounded-lg bg-primary/5 border border-primary/20">
-                          Estimated delivery valuation: <strong className="text-foreground">{fmt(finalValue)}</strong>. Estimates, not guarantees.
+                          Estimated unit price at delivery: <strong className="text-foreground">{fmtExact(deliveryPrice)}</strong>. Estimates, not guarantees.
                         </div>
                       )}
                       <div className="space-y-3 pt-2">
@@ -902,7 +983,11 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                   </div>
                   <div className="p-3 rounded-lg bg-secondary/30 border border-border">
                     <div className="font-medium text-foreground mb-1">Payment Plans</div>
-                    {INSTALLMENT_MODELS.has(detail.model) ? "Installment plan · 6 to 24 months" : "Full payment"}
+                    {offersPlan && offersFull
+                      ? "Full payment, or an installment plan · 6 to 24 months"
+                      : offersPlan
+                        ? "Installment plan · 6 to 24 months"
+                        : "Full payment"}
                   </div>
                 </div>
                 <Button className="w-full" size="lg" onClick={scrollToInvest}>

@@ -37,11 +37,17 @@ from app.models import (
     KycVerification,
     Property,
 )
-from app.models.base import TransactionType
+from app.models.base import PropertyStatus, TransactionType
 from app.models.compliance import AuditLog
 from app.models.identity import User
 from app.models.investments import OwnershipLedger
-from app.services import notification_service, secondary_service, settings_service, wallet_service
+from app.services import (
+    investment_service,
+    notification_service,
+    secondary_service,
+    settings_service,
+    wallet_service,
+)
 
 _CENTS = decimal.Decimal("0.01")
 _HUNDRED = decimal.Decimal(100)
@@ -569,6 +575,14 @@ async def reinvest(
     ).scalar_one_or_none()
     if prop is None:
         raise AppError("NOT_FOUND", "Property not found", status_code=404)
+    # the same doors as any purchase paid in full (investment_service.reinvest_from_wallet):
+    # an open listing, not a sample, and one that is sold in full at all
+    if prop.status != PropertyStatus.active:
+        raise AppError(
+            "PROPERTY_NOT_OPEN", "This property is not open for investment.", status_code=409
+        )
+    investment_service.refuse_sample(prop)
+    investment_service.require_full_payment(prop)
     if prop.unit_price <= 0:
         raise AppError("INVALID_PROPERTY", "Property has no unit price.", status_code=409)
 

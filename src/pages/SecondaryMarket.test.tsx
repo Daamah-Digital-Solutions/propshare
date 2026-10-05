@@ -42,6 +42,12 @@ vi.mock("@/components/marketplace/SellUnitsForm", () => ({
     <div data-testid="sell-form">{JSON.stringify(prefill ?? null)}</div>
   ),
 }));
+// likewise the form that sells a whole installment plan (SellPositionForm.test)
+vi.mock("@/components/marketplace/SellPositionForm", () => ({
+  default: ({ prefill }: { prefill?: unknown }) => (
+    <div data-testid="sell-position-form">{JSON.stringify(prefill ?? null)}</div>
+  ),
+}));
 
 const LISTING = {
   listing_id: "lst-1",
@@ -127,5 +133,82 @@ describe("SecondaryMarket buy click path", () => {
   it("opens the tab named in the link", async () => {
     renderPage("/secondary-market?tab=sell");
     expect(JSON.parse((await screen.findByTestId("sell-form")).textContent ?? "")).toBeNull();
+    // the position form is offered there too, with nothing prepared
+    expect(JSON.parse(screen.getByTestId("sell-position-form").textContent ?? "")).toBeNull();
+  });
+});
+
+describe("SecondaryMarket: installment positions", () => {
+  // a running plan offered whole: 10 units at $110, the buyer pays the seller $400 now
+  const POSITION_LISTING = {
+    ...LISTING,
+    listing_id: "lst-pos",
+    units_for_sale: 10,
+    units_remaining: 10,
+    price_per_unit: "110.00",
+    plan_id: "plan-1",
+    position: {
+      plan_id: "plan-1",
+      units: 10,
+      vested_units: 3,
+      locked_price: "100.00",
+      entry_price: "100.00",
+      price: "110.00",
+      value: "1100.00",
+      cost: "300.00",
+      paid_principal: "300.00",
+      remaining_principal: "700.00",
+      remaining_fees: "28.00",
+      gain: "100.00",
+      cash: "400.00",
+      resale_fee: "4.00",
+      total_now: "404.00",
+      installments_left: 2,
+      overdue: 0,
+      next_due: "2026-11-01",
+      schedule: [],
+    },
+  };
+
+  beforeEach(() => {
+    buyMock.mockReset();
+    settingsMock.mockResolvedValue({
+      resale_fee_pct: "1.0",
+      lockup_days: 0,
+      price_min_pct: null,
+      price_max_pct: null,
+    });
+    mineMock.mockResolvedValue({ items: [], total: 0 });
+  });
+
+  it("shows a position with its own card: what is paid now and what is taken over", async () => {
+    listMock.mockResolvedValue({ items: [POSITION_LISTING, LISTING], total: 2 });
+    renderPage();
+    const card = await screen.findByTestId("position-listing");
+    expect(card).toHaveTextContent("Installment position");
+    expect(card).toHaveTextContent("You pay the seller now$400.00");
+    expect(card).toHaveTextContent("Then 2 installment(s)$728.00");
+    // it is bought whole from its own sheet, never through the unit count of a normal listing
+    expect(screen.getAllByRole("button", { name: /Buy Units/i })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /view & buy/i })).toBeInTheDocument();
+  });
+
+  it("opens Sell on the position a link prepared, then consumes the link", async () => {
+    listMock.mockResolvedValue({ items: [], total: 0 });
+    renderPage("/secondary-market?tab=sell&plan=plan-1&price=115.00");
+    const form = await screen.findByTestId("sell-position-form");
+    expect(JSON.parse(form.textContent ?? "null")).toEqual({ planId: "plan-1", price: 115 });
+    // loose units are not prepared by a position link
+    expect(JSON.parse(screen.getByTestId("sell-form").textContent ?? "")).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("url").textContent).toBe("/secondary-market?tab=sell"));
+  });
+
+  it("lists the seller's own position under My Listings with what a buyer pays", async () => {
+    listMock.mockResolvedValue({ items: [], total: 0 });
+    mineMock.mockResolvedValue({ items: [POSITION_LISTING], total: 1 });
+    renderPage("/secondary-market?tab=activity");
+    expect(await screen.findByText(/Installment position • 10 units/)).toHaveTextContent(
+      "a buyer pays you $400.00",
+    );
   });
 });

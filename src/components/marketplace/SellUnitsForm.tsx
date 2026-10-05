@@ -156,7 +156,17 @@ const SellUnitsForm = ({ prefill = null }: { prefill?: SellPrefill | null }) => 
             {selected && (
               <p className="text-xs text-muted-foreground">
                 Sellable: {selected.sellable_units} units
-                {selected.listed_units > 0 && ` (${selected.listed_units} already listed)`}
+                {/* listed_units is everything held back; only what is really on sale is "listed" */}
+                {(selected.held_back
+                  ? (selected.held_back.listed ?? 0) + (selected.held_back.lp_exit ?? 0)
+                  : selected.listed_units) > 0 &&
+                  ` (${
+                    selected.held_back
+                      ? (selected.held_back.listed ?? 0) + (selected.held_back.lp_exit ?? 0)
+                      : selected.listed_units
+                  } already listed)`}
+                {(selected.plan_units ?? 0) > 0 &&
+                  ` (${selected.plan_units} on an installment plan: sold with the plan, below)`}
                 {(selected.pledged_units ?? 0) > 0 &&
                   ` (${selected.pledged_units} pledged to Nova Finance)`}
               </p>

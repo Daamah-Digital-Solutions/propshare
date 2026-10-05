@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +19,7 @@ import {
   ArrowRightLeft,
   Zap,
   ArrowLeft,
+  CalendarClock,
   CheckCircle2,
   Clock,
   TrendingUp,
@@ -28,7 +31,8 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ApiError } from "@/lib/api";
+import { ApiError, liquidityApi, secondaryApi, type MyPosition } from "@/lib/api";
+import { money } from "@/lib/money";
 import {
   useCreateExitRequest,
   useCreateListing,
@@ -46,15 +50,71 @@ interface Props {
 
 type Step = "method" | "select" | "summary" | "done";
 
-const FEE_RATES: Record<ExitMethod, number> = {
-  secondary: 0.025, // 2.5%
-  liquidity: 0.035, // 3.5%
+// The platform's own rates (admin-configurable), never literals: a seller on the secondary
+// market is paid in full and the BUYER pays the resale fee on top; a liquidity provider buys
+// below the unit price and the liquidity fee is taken from that price.
+type Rates = {
+  resalePct: number | null;
+  lpDiscountPct: number | null;
+  lpFeePct: number | null;
+  lpMinutes: number | null;
 };
+// The rates need a session (and a moment to load): a sentence must stand without its number.
+const pct = (n: number | null) => (n == null ? "" : `${n}% `);
+/** Cents, rounded half up like the server (97.485 is 97.49, which a binary float misses). */
+const cents = (n: number) => Math.round(n * 100 + 1e-6) / 100;
+const openFor = (minutes: number | null) =>
+  minutes == null
+    ? "a limited time"
+    : minutes >= 120 && minutes % 60 === 0
+      ? `${minutes / 60} hours`
+      : `${minutes} minutes`;
+
+function useExitRates(enabled: boolean): Rates {
+  const { data: sec } = useQuery({
+    queryKey: ["secondary", "settings"],
+    queryFn: () => secondaryApi.settings(),
+    enabled,
+  });
+  const { data: liq } = useQuery({
+    queryKey: ["liquidity", "settings"],
+    queryFn: () => liquidityApi.settings(),
+    enabled,
+  });
+  return {
+    resalePct: sec ? Number(sec.resale_fee_pct) : null,
+    lpDiscountPct: liq ? Number(liq.discount_pct) : null,
+    lpFeePct: liq ? Number(liq.fee_pct) : null,
+    lpMinutes: liq ? liq.ttl_minutes : null,
+  };
+}
 
 const SETTLEMENT: Record<ExitMethod, string> = {
-  secondary: "T+3 to T+10 days",
-  liquidity: "Within 24 hours",
+  secondary: "When a buyer buys",
+  liquidity: "When a provider funds it",
 };
+
+type Summary = { pricePerUnit: number; proceeds: number; fee: number; net: number; remaining: number };
+
+/** What an exit of `units` brings, with the server's formulas (the server prices the real one). */
+function exitSummary(method: ExitMethod, position: OwnedPosition, units: number, rates: Rates): Summary | null {
+  const gross = cents(units * position.unitPrice);
+  const remaining = position.units - units;
+  if (method === "secondary") {
+    return { pricePerUnit: position.unitPrice, proceeds: gross, fee: 0, net: gross, remaining };
+  }
+  if (rates.lpDiscountPct == null || rates.lpFeePct == null) return null;
+  // liquidity_service._price_for: the discounted price, then the fee on it, each to the cent
+  const proceeds = cents((gross * (100 - rates.lpDiscountPct)) / 100);
+  const fee = cents((proceeds * rates.lpFeePct) / 100);
+  return {
+    pricePerUnit: cents((position.unitPrice * (100 - rates.lpDiscountPct)) / 100),
+    proceeds,
+    fee,
+    net: cents(proceeds - fee),
+    remaining,
+  };
+}
 
 export function ExitFlowDialog({ open, onOpenChange, initialPositionId }: Props) {
   const [step, setStep] = useState<Step>("method");
@@ -62,6 +122,18 @@ export function ExitFlowDialog({ open, onOpenChange, initialPositionId }: Props)
   const [position, setPosition] = useState<OwnedPosition | null>(null);
   const [units, setUnits] = useState(1);
   const positions = useOwnedPositions();
+  const rates = useExitRates(open);
+  // running installment plans: not loose units, each is sold whole as a position
+  const { data: planData } = useQuery({
+    queryKey: ["secondary", "positions"],
+    queryFn: () => secondaryApi.positions(),
+    enabled: open,
+  });
+  const plans = [...(planData?.items ?? [])].sort(
+    (a, b) =>
+      Number(String(b.property_id) === String(initialPositionId)) -
+      Number(String(a.property_id) === String(initialPositionId)),
+  );
   const createListing = useCreateListing();
   const createExitRequest = useCreateExitRequest();
 
@@ -75,17 +147,11 @@ export function ExitFlowDialog({ open, onOpenChange, initialPositionId }: Props)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialPositionId]);
 
-  const summary = useMemo(() => {
-    if (!position || !method) return null;
-    // Liquidity provider exits typically apply a small discount to instant price
-    const liquidityDiscount = method === "liquidity" ? 0.97 : 1;
-    const pricePerUnit = +(position.unitPrice * liquidityDiscount).toFixed(2);
-    const gross = +(units * pricePerUnit).toFixed(2);
-    const fee = +(gross * FEE_RATES[method]).toFixed(2);
-    const net = +(gross - fee).toFixed(2);
-    const remaining = position.units - units;
-    return { pricePerUnit, gross, fee, net, remaining };
-  }, [position, method, units]);
+  const summary = useMemo(
+    () => (position && method ? exitSummary(method, position, units, rates) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [position, method, units, rates.lpDiscountPct, rates.lpFeePct],
+  );
 
   const goBack = () => {
     if (step === "select") setStep("method");
@@ -149,6 +215,7 @@ export function ExitFlowDialog({ open, onOpenChange, initialPositionId }: Props)
           {step === "method" && (
             <MethodStep
               selected={method}
+              rates={rates}
               onSelect={(m) => {
                 setMethod(m);
                 setStep("select");
@@ -162,6 +229,9 @@ export function ExitFlowDialog({ open, onOpenChange, initialPositionId }: Props)
               positions={positions}
               position={position}
               units={units}
+              rates={rates}
+              plans={plans}
+              onLeave={() => onOpenChange(false)}
               onSelectPosition={(p) => {
                 setPosition(p);
                 setUnits(Math.max(1, Math.floor(p.units * 0.25)));
@@ -177,6 +247,7 @@ export function ExitFlowDialog({ open, onOpenChange, initialPositionId }: Props)
               position={position}
               units={units}
               summary={summary}
+              rates={rates}
             />
           )}
 
@@ -190,7 +261,11 @@ export function ExitFlowDialog({ open, onOpenChange, initialPositionId }: Props)
             <Button variant="outline" onClick={goBack} className="gap-1">
               <ArrowLeft className="h-4 w-4" /> Back
             </Button>
-            <Button onClick={handleConfirm} className="gap-1.5">
+            <Button
+              onClick={handleConfirm}
+              className="gap-1.5"
+              disabled={!summary || createListing.isPending || createExitRequest.isPending}
+            >
               Confirm Exit Request <ChevronRight className="h-4 w-4" />
             </Button>
           </DialogFooter>
@@ -229,9 +304,11 @@ function StepDots({ step }: { step: Step }) {
 
 function MethodStep({
   selected,
+  rates,
   onSelect,
 }: {
   selected: ExitMethod | null;
+  rates: Rates;
   onSelect: (m: ExitMethod) => void;
 }) {
   return (
@@ -249,39 +326,46 @@ function MethodStep({
           onClick={() => onSelect("secondary")}
           icon={ArrowRightLeft}
           title="Secondary Market Exit"
-          tag="Lower fees · market price"
+          tag="Your price · no fee for you"
           accent="from-primary to-accent"
           bullets={[
-            "List your allocation on the secondary market",
-            "Wait for a qualified investor to purchase",
-            "Lower platform fees (≈ 2.5%)",
-            "Market-driven settlement price",
+            "List your units on the secondary market",
+            "You are paid in full when an investor buys them",
+            `No fee for you: the buyer pays the ${pct(rates.resalePct)}resale fee`,
+            "You can cancel the listing while it is unsold",
           ]}
-          eta="T+3 to T+10 days"
-          fee="2.5% fee"
+          eta={SETTLEMENT.secondary}
+          fee="No seller fee"
         />
         <MethodCard
           active={selected === "liquidity"}
           onClick={() => onSelect("liquidity")}
           icon={Zap}
           title="Liquidity Provider Exit"
-          tag="Instant · backed liquidity"
+          tag="Faster · below the unit price"
           accent="from-accent via-primary to-accent"
           bullets={[
-            "Instant or fast exit via liquidity providers",
-            "Faster settlement to your wallet",
-            "Immediate liquidity access",
-            "Liquidity-provider backed buy-back",
+            rates.lpDiscountPct == null
+              ? "A liquidity provider buys below the unit price"
+              : `A liquidity provider buys at the unit price less ${rates.lpDiscountPct}%`,
+            `A ${pct(rates.lpFeePct)}liquidity fee is taken from that price`,
+            "Paid to your wallet as soon as a provider funds it",
+            `The request stays open for ${openFor(rates.lpMinutes)}`,
           ]}
-          eta="Within 24 hours"
-          fee="3.5% fee"
+          eta={SETTLEMENT.liquidity}
+          fee={
+            rates.lpDiscountPct == null || rates.lpFeePct == null
+              ? "Below the unit price + a fee"
+              : `${rates.lpDiscountPct}% below + ${rates.lpFeePct}% fee`
+          }
         />
       </div>
 
       <div className="text-xs text-muted-foreground p-3 rounded-lg border bg-muted/30 flex gap-2">
         <Shield className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
         Both exit channels are processed inside the platform under SPV-backed ownership rules.
-        Settlement timelines and pricing are indicative and depend on each opportunity.
+        Units are sold at the property's current unit price; the final amounts are computed by the
+        platform when the request is made.
       </div>
     </div>
   );
@@ -361,6 +445,9 @@ function SelectStep({
   positions,
   position,
   units,
+  rates,
+  plans,
+  onLeave,
   onSelectPosition,
   onUnitsChange,
   onContinue,
@@ -369,10 +456,14 @@ function SelectStep({
   positions: OwnedPosition[];
   position: OwnedPosition | null;
   units: number;
+  rates: Rates;
+  plans: MyPosition[];
+  onLeave: () => void;
   onSelectPosition: (p: OwnedPosition) => void;
   onUnitsChange: (n: number) => void;
   onContinue: () => void;
 }) {
+  const estimate = position ? exitSummary(method, position, units, rates) : null;
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -394,7 +485,39 @@ function SelectStep({
       {/* Position list */}
       {positions.length === 0 && (
         <div className="text-center py-10 text-sm text-muted-foreground border rounded-lg bg-muted/20">
-          You have no sellable units yet. Invest in a property first, or wait for a lock-up to clear.
+          {plans.length > 0
+            ? "You have no fully paid units to sell here."
+            : "You have no sellable units yet. Invest in a property first, or wait for a lock-up to clear."}
+        </div>
+      )}
+      {/* units on a running installment plan are not in the list above: the plan is sold whole */}
+      {plans.length > 0 && (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 p-3" data-testid="exit-plan-positions">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <CalendarClock className="h-4 w-4 text-primary" /> Units on an installment plan
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Units you are still paying for are sold with their plan, as one position, on the secondary
+            market: the buyer pays you the principal you have paid plus the price change on all the units,
+            and takes over the remaining installments.
+            {method === "liquidity" && " Liquidity providers buy fully paid units only."}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {plans.map((plan) => (
+              <Button
+                key={plan.plan_id}
+                asChild
+                size="sm"
+                variant="outline"
+                className="h-auto gap-1.5 whitespace-normal py-1.5 text-left"
+              >
+                <Link to={`/secondary-market?tab=sell&plan=${plan.plan_id}`} onClick={onLeave}>
+                  Sell the {plan.property_title ?? "property"} position
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Link>
+              </Button>
+            ))}
+          </div>
         </div>
       )}
       <div className="grid grid-cols-1 gap-2 max-h-[260px] overflow-y-auto pr-1">
@@ -476,14 +599,23 @@ function SelectStep({
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-            <Stat label="Current valuation" value={`$${(position.units * position.unitPrice).toLocaleString()}`} />
+            <Stat label="Current valuation" value={money(position.units * position.unitPrice)} />
             <Stat
-              label="Estimated exit value"
-              value={`$${(units * position.unitPrice * (method === "liquidity" ? 0.97 : 1)).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+              label="You would receive"
+              value={estimate ? money(estimate.net) : "—"}
               accent
             />
             <Stat label="Settlement" value={SETTLEMENT[method]} />
-            <Stat label="Fee" value={`${(FEE_RATES[method] * 100).toFixed(1)}%`} />
+            <Stat
+              label="Fee"
+              value={
+                method === "secondary"
+                  ? "None for you"
+                  : rates.lpFeePct == null
+                    ? "On the price"
+                    : `${rates.lpFeePct}% of the price`
+              }
+            />
           </div>
 
           <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -524,18 +656,20 @@ function SummaryStep({
   position,
   units,
   summary,
+  rates,
 }: {
   method: ExitMethod;
   position: OwnedPosition;
   units: number;
-  summary: { pricePerUnit: number; gross: number; fee: number; net: number; remaining: number };
+  summary: Summary;
+  rates: Rates;
 }) {
   return (
     <div className="space-y-4">
       <div>
         <h3 className="text-base font-semibold">Review your exit request</h3>
         <p className="text-sm text-muted-foreground">
-          Please review the details below. Final pricing may vary based on market conditions and provider quotes.
+          Please review the details below. The platform computes the final amounts when the request is made.
         </p>
       </div>
 
@@ -558,10 +692,21 @@ function SummaryStep({
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
         <Row label="Units to exit" value={`${units}`} />
-        <Row label="Price per unit" value={`$${summary.pricePerUnit.toFixed(2)}`} />
-        <Row label="Estimated proceeds" value={`$${summary.gross.toLocaleString()}`} />
-        <Row label="Exit fee" value={`-$${summary.fee.toLocaleString()}`} negative />
-        <Row label="Net to wallet" value={`$${summary.net.toLocaleString()}`} accent />
+        <Row label="Price per unit" value={money(summary.pricePerUnit)} />
+        <Row label="Estimated proceeds" value={money(summary.proceeds)} />
+        {method === "secondary" ? (
+          <Row
+            label="Exit fee"
+            value={rates.resalePct == null ? "None (the buyer pays it)" : `None (the buyer pays ${rates.resalePct}%)`}
+          />
+        ) : (
+          <Row
+            label={rates.lpFeePct == null ? "Liquidity fee" : `Liquidity fee (${rates.lpFeePct}%)`}
+            value={`-${money(summary.fee)}`}
+            negative
+          />
+        )}
+        <Row label="Net to wallet" value={money(summary.net)} accent />
         <Row label="Settlement" value={SETTLEMENT[method]} />
         <Row label="Remaining ownership" value={`${summary.remaining} units`} />
         <Row label="Market demand" value={position.demand} />
@@ -570,8 +715,9 @@ function SummaryStep({
 
       <div className="text-xs text-muted-foreground p-3 rounded-lg border bg-primary/5 flex gap-2">
         <Sparkles className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
-        Exit conditions: subject to platform rules, qualified-investor matching (secondary) or
-        provider availability (liquidity). Settlement times are indicative.
+        {method === "secondary"
+          ? "Your units are listed at the current unit price and stay yours until an investor buys them. To ask a different price, list them from the Secondary Market page."
+          : "Your units are held for the request and paid for as soon as a liquidity provider funds it. If the unit price changes meanwhile, the request is closed and you can make a new one."}
       </div>
     </div>
   );

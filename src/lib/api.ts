@@ -472,7 +472,12 @@ export interface PropertySummary {
   image: string | null;
   total_value: number;
   minimum_investment: number;
+  /** the CURRENT price of a unit (its history: propertyApi.prices) */
   unit_price: number;
+  /** how an under-construction listing is bought (ready listings are paid in full) */
+  offplan_payment?: OffplanPayment;
+  /** the price the listing was launched at, once its unit price has changed (else null) */
+  launch_price?: number | null;
   target_yield: number | null;
   expected_yield: number | null;
   capital_appreciation: number | null;
@@ -485,6 +490,32 @@ export interface PropertySummary {
   developer_name: string | null;
   /** URL key of the developer's public profile (/developers/:slug); null when unnamed. */
   developer_slug?: string | null;
+}
+
+/** installments = the plan; full = paid at once (a project sold in phases); both = either */
+export type OffplanPayment = "installments" | "full" | "both";
+
+/** One point of a listing's unit price over time. */
+export interface PricePoint {
+  at: string;
+  price: string;
+  /** the move this change made (0 for the launch price) */
+  change_pct: string;
+  /** a sales phase or stage this price opened, when it named one */
+  label: string | null;
+  note: string | null;
+}
+/** A listing's unit price over time: the launch price, then every change recorded since. */
+export interface PriceHistory {
+  property_id: string;
+  current_price: string;
+  launch_price: string;
+  /** the current price against the launch price */
+  change_pct: string;
+  /** when the price last changed (null = never since launch) */
+  updated_at: string | null;
+  phase: string | null;
+  points: PricePoint[];
 }
 
 export interface PropertyMilestone {
@@ -619,6 +650,12 @@ export const propertyApi = {
   get(idOrSlug: string, preview?: string | null): Promise<PropertyDetail> {
     const q = preview ? `?preview=${encodeURIComponent(preview)}` : "";
     return apiRequest<PropertyDetail>(`/api/v1/properties/${encodeURIComponent(idOrSlug)}${q}`, {
+      auth: false,
+    });
+  },
+  /** The unit price of a published listing over time (public). */
+  prices(idOrSlug: string): Promise<PriceHistory> {
+    return apiRequest<PriceHistory>(`/api/v1/properties/${encodeURIComponent(idOrSlug)}/prices`, {
       auth: false,
     });
   },
@@ -782,17 +819,29 @@ export interface InvestmentListResponse {
 }
 
 export interface PortfolioSummary {
+  /** everything bought so far (held now, or sold since) */
   invested: string;
+  /** holdings at each property's current unit price; a running installment plan counts as
+   * its position: all its units at that price less the principal still to pay */
   current_value: string;
   total_returns: string;
   properties: number;
   units: number;
+  /** what selling units and positions brought in: current_value + sold - invested = the gain */
+  sold?: string;
 }
 
 export const investApi = {
   /** Buy units. The SERVER computes units/fees/charge — we only send amount + method. */
   create(
-    input: { property_id: string; amount: number; method: InvestMethod },
+    input: {
+      property_id: string;
+      amount: number;
+      method: InvestMethod;
+      /** the unit price on screen when the buyer confirmed: a different price now is
+       * answered with 409 PRICE_CHANGED instead of a purchase at an unseen price */
+      expected_unit_price?: number;
+    },
     idempotencyKey: string,
   ): Promise<InvestCreateResponse> {
     return apiRequest<InvestCreateResponse>("/api/v1/investments", {
@@ -1170,6 +1219,31 @@ export interface InstallmentPlan {
   created_at: string;
   completed_at: string | null;
   payments: InstallmentPayment[];
+  /** a running plan valued at the property's current unit price */
+  position?: PlanPosition | null;
+  /** the secondary-market listing that offers this position for sale, if any */
+  listing_id?: string | null;
+  /** when the holder took the plan over from another investor (earlier payments were theirs) */
+  acquired_at?: string | null;
+}
+/** A running plan as a position: equity = value - remaining_principal = cost + gain. */
+export interface PlanPosition {
+  price: string;
+  /** the price per unit the holder got in at: the plan's locked price, or what they bought
+   * the position at from another investor */
+  entry_price: string;
+  value: string;
+  /** what the holder has put in: the installments paid, or what they paid for the position
+   * plus their own installments since */
+  cost: string;
+  paid_principal: string;
+  remaining_principal: string;
+  remaining_fees: string;
+  /** pledged | lockup | listed: why the position cannot be listed now (null = it can) */
+  blocked?: string | null;
+  lockup_until?: string | null;
+  equity: string;
+  gain: string;
 }
 export interface InstallmentPlanPayload {
   property_id: string;
@@ -1177,6 +1251,9 @@ export interface InstallmentPlanPayload {
   duration_months: number; // 6 | 12 | 18 | 24
   /** how the down payment is paid (a Nova certificate goes through createPlanWithSukuk) */
   method?: "wallet" | "card" | "crypto" | "pronova";
+  /** the unit price on screen when the investor confirmed (the plan locks it): a different
+   * price now is answered with 409 PRICE_CHANGED */
+  expected_unit_price?: number;
 }
 
 /** A Nova Sukuk certificate the investor submitted, and where its review stands. */
@@ -1525,6 +1602,61 @@ export interface SecondaryListing {
   unit_price_ref: string | null;
   status: string; // active | sold | cancelled
   created_at: string | null;
+  /** an installment plan position: sold whole, the buyer takes the plan over */
+  plan_id?: string | null;
+  position?: ListingPosition | null;
+  /** a position: what the buyer pays the seller now; once sold, what it was sold for */
+  cash?: string | null;
+}
+
+/** One remaining installment of a position. */
+export interface PositionInstallment {
+  seq: number;
+  kind: string;
+  due_date: string;
+  base_amount: string;
+  fee_amount: string;
+  total_amount: string;
+  status: string;
+}
+/** An installment plan as a position, valued at `price` per unit. `cash` is what a buyer pays
+ * the seller now (value - remaining_principal = the seller's cost + their gain on every unit);
+ * the buyer then pays the schedule. */
+export interface ListingPosition {
+  plan_id: string;
+  units: number;
+  vested_units: number;
+  locked_price: string;
+  /** the price per unit the seller got in at (the plan's locked price, or what they bought
+   * the position at) */
+  entry_price: string;
+  price: string;
+  value: string;
+  /** what the seller has put in: installments paid, or the price of the position plus their
+   * own installments since */
+  cost: string;
+  paid_principal: string;
+  remaining_principal: string;
+  remaining_fees: string;
+  gain: string;
+  cash: string;
+  resale_fee: string;
+  total_now: string;
+  installments_left: number;
+  overdue: number;
+  next_due: string | null;
+  schedule: PositionInstallment[];
+}
+/** One of the caller's running plans as a position they could sell, at the current price. */
+export interface MyPosition extends ListingPosition {
+  property_id: string;
+  property_title: string | null;
+  property_location: string | null;
+  unit_price: string;
+  listing_id: string | null;
+  /** pledged | lockup | listed: why it cannot be listed now (null = it can) */
+  blocked: string | null;
+  lockup_until: string | null;
 }
 
 export interface SecondaryTrade {
@@ -1537,6 +1669,12 @@ export interface SecondaryTrade {
   resale_fee: string;
   total_charged: string;
   created_at: string | null;
+  /** the sale of an installment position: `gross` is the cash paid to the seller */
+  plan_id?: string | null;
+  position_value?: string | null;
+  paid_principal?: string | null;
+  assumed_principal?: string | null;
+  assumed_fees?: string | null;
 }
 
 export interface SecondarySettings {
@@ -1555,7 +1693,18 @@ export interface Holding {
   /** held for Nova Finance until the pledge is released (paid with a Nova Sukuk certificate) */
   pledged_units?: number;
   sellable_units: number;
+  /** the price of a unit now */
   unit_price: string;
+  /** why units cannot be listed, by reason -> units */
+  held_back?: Record<string, number>;
+  /** vested under a running installment plan: sold with the plan, as a position */
+  plan_units?: number;
+  launch_price?: string | null;
+  /** the current price against the launch price */
+  price_change_pct?: string | null;
+  price_updated_at?: string | null;
+  /** what these units cost per unit, on average */
+  average_cost?: string | null;
 }
 
 export const secondaryApi = {
@@ -1568,24 +1717,42 @@ export const secondaryApi = {
   mine(): Promise<{ items: SecondaryListing[]; total: number }> {
     return apiRequest("/api/v1/secondary/listings/mine");
   },
-  /** List units you own. The SERVER validates ownership/lock-up/price bounds. */
-  create(input: { property_id: string; units: number; price_per_unit: number }): Promise<SecondaryListing> {
+  /** List units you own, or a whole installment plan position (`plan_id`). The SERVER
+   * validates ownership/lock-up/price bounds. */
+  create(
+    input:
+      | { property_id: string; units: number; price_per_unit: number }
+      | { plan_id: string; price_per_unit: number },
+  ): Promise<SecondaryListing> {
     return apiRequest<SecondaryListing>("/api/v1/secondary/listings", {
       method: "POST",
       body: input,
     });
   },
-  /** Buy units off a listing. Wallet-funded, atomic; the SERVER computes the fee/total. */
+  /** Buy units off a listing. Wallet-funded, atomic; the SERVER computes the fee/total.
+   * An installment position is bought whole: `expectedCash` is the amount the buyer saw and
+   * agreed to pay the seller (a purchase that no longer matches it is refused). */
   buy(
     listingId: string,
     units: number,
     idempotencyKey: string,
+    expectedCash?: string,
+    /** the resale fee shown with it: confirmed too, so a changed fee is never charged unseen */
+    expectedFee?: string,
   ): Promise<SecondaryTrade> {
     return apiRequest<SecondaryTrade>(`/api/v1/secondary/listings/${listingId}/buy`, {
       method: "POST",
-      body: { units },
+      body: {
+        units,
+        ...(expectedCash === undefined ? {} : { expected_cash: expectedCash }),
+        ...(expectedFee === undefined ? {} : { expected_fee: expectedFee }),
+      },
       headers: { "Idempotency-Key": idempotencyKey },
     });
+  },
+  /** The caller's running installment plans as positions they could sell. */
+  positions(): Promise<{ items: MyPosition[]; total: number }> {
+    return apiRequest("/api/v1/secondary/positions");
   },
   cancel(listingId: string): Promise<{ listing_id: string; status: string }> {
     return apiRequest(`/api/v1/secondary/listings/${listingId}/cancel`, { method: "POST" });

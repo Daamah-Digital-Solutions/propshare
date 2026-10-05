@@ -43,19 +43,25 @@ not own the properties.""",
     ),
     (
         "ownership-models",
-        "The property models: ready income, under construction, installments",
+        "The property models: ready income, under construction, in full or in installments",
         "basics",
         20,
         """Every listing states its model on the property page.
 - Ready property (income): a completed, leased property. Net rental income is distributed to
   holders periodically and lands in your wallet, where you can withdraw or reinvest it.
-- Under construction (development / off-plan): you invest early at the offering price; there
-  is no rental income while the project is being built. The listing shows construction
-  progress, milestones and the expected completion date. Returns come from appreciation when
-  the project completes or is sold.
-- Off-plan paid in installments: the same early investment, paid through a structured plan:
-  a down payment now and monthly instalments after, with no bank interest. The plan and its
-  schedule are shown before you commit and afterwards under your portfolio.
+- Under construction (development / off-plan): there is no rental income while the project is
+  being built; you earn through the price of a unit going up. The platform gives the property
+  a new unit price as the project is revalued, about once a month, and when a new sales phase
+  opens: a later buyer pays the new price, and what you hold is valued at it. The listing
+  shows the price now and its history, construction progress, milestones and the expected
+  completion date.
+- How an under-construction property is bought depends on the listing: paid in full at the
+  current unit price (a project sold in phases, each phase at its own price), through an
+  installment plan (a down payment now and monthly instalments after, with no bank interest,
+  at the unit price locked when the plan starts), or either. The plan and its schedule are
+  shown before you commit and afterwards under your portfolio.
+What you hold in an under-construction property can be offered for sale at any time, like a
+ready one, including a plan you are still paying (see "How to exit").
 Use the property page for the figures of a specific listing (unit price, minimum investment,
 expected yield, fees, exit options); the assistant reads them from the same data.""",
     ),
@@ -116,7 +122,9 @@ person to follow up.""",
 summary, so the total you see is the total you pay. The kinds of fees on the platform:
 - a platform fee when buying units, added on top of the units' price;
 - an annual management fee on income-generating properties, deducted before distributions;
-- an exit fee when selling units on the secondary market, calculated on the trade;
+- a resale fee on a secondary-market trade, paid by the buyer on top of the price (the seller
+  receives the price in full); when an installment position is sold it is calculated on the
+  amount the buyer pays the seller;
 - an installment fee on plans, added to the down payment and to each instalment and shown in
   the schedule;
 - a liquidity-market discount/fee when exiting instantly through a liquidity provider.
@@ -141,16 +149,30 @@ Nobody on the platform, including the assistant, guarantees a return.""",
         "How to exit: secondary market and liquidity market",
         "exit",
         70,
-        """You are not locked into a property forever. Two exit paths exist, and each property
-page states which apply to it and any lock-up period:
+        """You are not locked into a property until it is sold: you can offer what you hold for
+sale at any time, whether the property is ready or still under construction (a lock-up period
+may apply after a purchase). Two exit paths exist:
 - Secondary market: list some or all of your units at a price you set; another investor buys
-  them and the units transfer through the SPV when the buyer pays. Best for maximum value
-  when you are not in a hurry. You can cancel an unsold listing.
-- Liquidity market: request an exit at the platform-quoted price and a liquidity provider
-  funds it, usually faster than waiting for a buyer, in exchange for a discount and a fee.
-Both are done from your portfolio; the assistant can show your holdings, listings and
-requests and take you to the right page, but the listing, sale or request is confirmed by you
-on that page.""",
+  them and the units transfer when the buyer pays. The property's current unit price is the
+  guide price. Best for maximum value when you are not in a hurry. You can cancel an unsold
+  listing.
+- Liquidity market: request an exit at the platform-quoted price (the current unit price less
+  a discount and a fee) and a liquidity provider funds it, usually faster than waiting for a
+  buyer.
+Units you are paying for through an installment plan that is still running are sold with the
+plan, whole, as one position on the secondary market: the buyer pays you the principal you
+have paid (the instalment fees you paid are not returned) plus the increase in the unit price
+on all the plan's units, and takes over the remaining instalments on their dates. If the unit
+price has fallen, the decrease is taken off instead. Example: a plan for units worth one
+thousand, with two hundred
+paid; the unit price has risen by a tenth, so the position is worth eleven hundred; the buyer
+pays you three hundred (the two hundred you paid plus the hundred gained) and then pays the
+remaining eight hundred as the schedule says. If you took the plan over from another investor,
+what you have paid means what you paid for it plus your own instalments since, and the
+increase is counted from the price you bought it at.
+A sale needs a buyer: no buyer, price or date is guaranteed. Both paths are used from your
+portfolio; the assistant can show your holdings, positions, listings and requests and prepare
+a listing for you, but the listing, sale or request is confirmed by you on that page.""",
     ),
     (
         "installment-plans",
@@ -159,17 +181,22 @@ on that page.""",
         80,
         """For properties sold in installments you pay a down payment now and monthly
 instalments afterwards; the platform offers a set of plan lengths and the down payment
-depends on the length chosen. The down payment takes any of the platform's payment methods —
-the wallet, a card (Apple Pay / Google Pay), crypto, Pronova (its discount comes off the down
-payment) or a Nova Sukuk certificate (the plan starts once our team approves it) — and the
-plan's units are held for you until it is paid. The full schedule, with the installment fee
-on each payment, is shown before you commit and afterwards under Portfolio -> Installments.
+depends on the length chosen. The unit price is locked when the plan starts: later changes to
+the property's unit price do not change your schedule, and an increase is your gain. The down
+payment takes any of the platform's payment methods — the wallet, a card (Apple Pay / Google
+Pay), crypto, Pronova (its discount comes off the down payment) or a Nova Sukuk certificate
+(the plan starts once our team approves it). The full schedule, with the installment fee on
+each payment, is shown before you commit and afterwards under Portfolio -> Installments.
 Instalments are taken
 from your wallet automatically on their due dates, and you receive a reminder a few days
 before each one. If the wallet cannot cover an instalment on its due date, it is marked
 overdue and retried automatically once funds are there: there is no late fee and your units
 are not forfeited. Keep your wallet funded ahead of the due date. You can also pay the next
-instalment early; the assistant can show your plans and schedule and prepare that payment.""",
+instalment early; the assistant can show your plans and schedule and prepare that payment.
+The units of a running plan stay with the plan: they are not listed one by one, but you can
+sell the whole plan as a position at any time (see "How to exit"): the buyer pays you what you
+paid plus the price increase and carries on with the remaining instalments. Your Installments
+page shows what the position is worth today.""",
     ),
     (
         "kyc-verification",
@@ -192,8 +219,11 @@ decision. If your check is stuck, ask the assistant to open a support ticket."""
         """When selling or buying units between investors: list at a fair price within the
 platform's price band, honour accepted offers, keep enough wallet balance to settle, and pay
 the applicable fees shown at confirmation. Price manipulation, wash trading and artificial
-volume are prohibited and lead to suspension. Some properties have a lock-up period before
-units can be listed; the property page and your holdings show it.""",
+volume are prohibited and lead to suspension. A lock-up period may apply before units can be
+listed; the Sell form says when it ends. A position on an installment plan that is still running is
+listed and bought whole: the listing shows its price, what has been paid and the remaining
+instalments with their dates; the buyer confirms the amount paid to the seller, takes the plan
+over and pays those instalments from their wallet on their dates.""",
     ),
     (
         "platform-rules",
@@ -346,17 +376,22 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
     ),
     (
         "ownership-models",
-        "نماذج العقارات: جاهز بدخل، تحت الإنشاء، بالأقساط",
+        "نماذج العقارات: جاهز بدخل، تحت الإنشاء، بالدفع الكامل أو بالأقساط",
         "basics",
         20,
         """كل إدراج يذكر نموذجه في صفحة العقار.
 - عقار جاهز (دخل): عقار مكتمل ومؤجَّر. يُوزَّع صافي دخل الإيجار على الملاك دوريًا ويصل إلى
   محفظتك، ومنها تسحب أو تعيد الاستثمار.
-- تحت الإنشاء (تطوير / على الخريطة): تستثمر مبكرًا بسعر الطرح ولا يوجد دخل إيجاري أثناء البناء.
-  يعرض الإدراج نسبة الإنجاز والمراحل وتاريخ الاكتمال المتوقع، والعائد يأتي من ارتفاع القيمة
-  عند الاكتمال أو البيع.
-- على الخريطة بالأقساط: نفس الاستثمار المبكر لكن بخطة منظّمة: دفعة أولى الآن وأقساط شهرية
-  بعدها، بلا فوائد بنكية. تُعرض الخطة وجدولها قبل التأكيد وبعده في محفظتك.
+- تحت الإنشاء (تطوير / على الخريطة): لا يوجد دخل إيجاري أثناء البناء، وعائدك من ارتفاع سعر
+  الوحدة. تحدّد المنصة للعقار سعر وحدة جديدًا كلما أُعيد تقييم المشروع، شهريًا تقريبًا، وعند
+  فتح مرحلة بيع جديدة: المشتري اللاحق يدفع السعر الجديد، وما تملكه يُقيَّم به. يعرض الإدراج
+  السعر الحالي وسجله ونسبة الإنجاز والمراحل وتاريخ الاكتمال المتوقع.
+- طريقة شراء العقار تحت الإنشاء يحددها الإدراج: دفع كامل بسعر الوحدة الحالي (مشروع يُباع على
+  مراحل، لكل مرحلة سعرها)، أو خطة أقساط (دفعة أولى الآن وأقساط شهرية بعدها بلا فوائد بنكية،
+  بسعر الوحدة المثبَّت عند بدء الخطة)، أو أيهما. تُعرض الخطة وجدولها قبل التأكيد وبعده في
+  محفظتك.
+ما تملكه في عقار تحت الإنشاء يمكن عرضه للبيع في أي وقت مثل العقار الجاهز، حتى الخطة التي ما
+زلت تسدد أقساطها (انظر «كيف تخرج»).
 للأرقام الخاصة بإدراج معيّن (سعر الوحدة، الحد الأدنى، العائد المتوقع، الرسوم، خيارات الخروج)
 ارجع لصفحة العقار؛ المساعد يقرأها من البيانات نفسها.""",
     ),
@@ -408,7 +443,8 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 تدفعه. أنواع الرسوم في المنصة:
 - رسوم منصة عند شراء الوحدات، تُضاف على سعر الوحدات؛
 - رسوم إدارة سنوية على العقارات المدرّة للدخل، تُخصم قبل التوزيعات؛
-- رسوم خروج عند بيع الوحدات في السوق الثانوي، تُحسب على الصفقة؛
+- رسوم إعادة بيع على صفقة السوق الثانوي، يدفعها المشتري فوق السعر (البائع يستلم السعر كاملًا)؛
+  وعند بيع مركز أقساط تُحسب على المبلغ الذي يدفعه المشتري للبائع؛
 - رسوم أقساط على الخطط، تُضاف للدفعة الأولى ولكل قسط وتظهر في الجدول؛
 - خصم/رسوم سوق السيولة عند الخروج الفوري عبر مزوّد سيولة.
 بعض العقارات أو البرامج تحمل خصمًا (مثل إعادة استثمار التوزيعات). النسب الحالية إعدادات في
@@ -431,14 +467,24 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
         "كيف تخرج: السوق الثانوي وسوق السيولة",
         "exit",
         70,
-        """لست مقيّدًا بعقار للأبد. يوجد مساران للخروج، وتذكر صفحة كل عقار أيهما ينطبق عليه وأي
-فترة حظر:
-- السوق الثانوي: تعرض بعض وحداتك أو كلها بسعر تحدده؛ يشتريها مستثمر آخر وتنتقل الوحدات عبر
-  الـ SPV عند دفع المشتري. الأنسب لأقصى قيمة عندما لا تكون مستعجلًا. يمكنك إلغاء عرض لم يُبَع.
-- سوق السيولة: تطلب الخروج بالسعر الذي تحدده المنصة ويموّله مزوّد سيولة، عادةً أسرع من انتظار
-  مشترٍ، مقابل خصم ورسوم.
-كلاهما من محفظتك؛ يستطيع المساعد عرض حيازاتك وعروضك وطلباتك وإرشادك للصفحة الصحيحة، لكن
-العرض أو البيع أو الطلب تؤكده أنت في تلك الصفحة.""",
+        """لست مقيّدًا بعقار حتى يُباع: يمكنك عرض ما تملكه للبيع في أي وقت، سواء كان العقار جاهزًا أو
+ما زال تحت الإنشاء (قد توجد فترة حظر بعد الشراء). يوجد مساران للخروج:
+- السوق الثانوي: تعرض بعض وحداتك أو كلها بسعر تحدده؛ يشتريها مستثمر آخر وتنتقل الوحدات عند دفع
+  المشتري. سعر الوحدة الحالي للعقار هو السعر الاسترشادي. الأنسب لأقصى قيمة عندما لا تكون
+  مستعجلًا. يمكنك إلغاء عرض لم يُبَع.
+- سوق السيولة: تطلب الخروج بالسعر الذي تحدده المنصة (سعر الوحدة الحالي ناقص خصم ورسوم) ويموّله
+  مزوّد سيولة، عادةً أسرع من انتظار مشترٍ.
+الوحدات التي تسددها بخطة أقساط ما زالت جارية تُباع مع الخطة كلها كمركز واحد في السوق الثانوي:
+يدفع لك المشتري أصل ما سددته (رسوم التقسيط التي دفعتها لا تُرد) مضافًا إليه زيادة سعر الوحدة
+على كل وحدات الخطة، ثم يكمل هو الأقساط المتبقية في مواعيدها. وإذا انخفض سعر الوحدة يُخصم
+الانخفاض بدل الزيادة. مثال: خطة لوحدات قيمتها ألف، سُدِّد منها مئتان؛ ارتفع سعر الوحدة بمقدار
+العُشر فصارت قيمة المركز ألفًا ومئة؛ يدفع لك المشتري ثلاثمئة (المئتان اللتان سددتهما والمئة
+التي زادت) ثم يسدد الثمانمئة المتبقية حسب الجدول. وإذا كنت قد اشتريت الخطة من مستثمر آخر
+فالمقصود بما سددته هو ما دفعته ثمنًا لها مضافًا إليه أقساطك بعد ذلك، وتُحسب الزيادة من السعر
+الذي اشتريت به.
+البيع يحتاج مشتريًا: لا ضمان لمشترٍ أو سعر أو موعد. المساران من محفظتك؛ يستطيع المساعد عرض
+حيازاتك ومراكزك وعروضك وطلباتك وتجهيز عرض البيع لك، لكن العرض أو البيع أو الطلب تؤكده أنت في
+تلك الصفحة.""",
     ),
     (
         "installment-plans",
@@ -446,15 +492,19 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
         "installments",
         80,
         """في العقارات المباعة بالأقساط تدفع دفعة أولى الآن وأقساطًا شهرية بعدها؛ تقدّم المنصة
-مجموعة مدد للخطط وتعتمد الدفعة الأولى على المدة المختارة. تُدفع الدفعة الأولى بأي طريقة دفع في
-المنصة — المحفظة، أو بطاقة (Apple Pay / Google Pay)، أو عملة رقمية، أو Pronova (خصمها على
-الدفعة الأولى)، أو شهادة صكوك نوفا (تبدأ الخطة بعد موافقة فريقنا) — وتبقى وحدات الخطة محجوزة لك
-حتى يكتمل الدفع. يُعرض الجدول الكامل، مع رسوم الأقساط
+مجموعة مدد للخطط وتعتمد الدفعة الأولى على المدة المختارة. سعر الوحدة يُثبَّت عند بدء الخطة:
+تغيّر سعر وحدة العقار بعد ذلك لا يغيّر جدولك، وأي زيادة هي ربح لك. تُدفع الدفعة الأولى بأي طريقة
+دفع في المنصة — المحفظة، أو بطاقة (Apple Pay / Google Pay)، أو عملة رقمية، أو Pronova (خصمها
+على الدفعة الأولى)، أو شهادة صكوك نوفا (تبدأ الخطة بعد موافقة فريقنا). يُعرض الجدول الكامل، مع
+رسوم الأقساط
 على كل دفعة، قبل التأكيد وبعده في المحفظة ← الأقساط. تُخصم الأقساط من محفظتك تلقائيًا في
 مواعيدها، ويصلك تذكير قبل كل قسط بأيام. إذا لم يكفِ رصيد المحفظة يوم الاستحقاق يُسجَّل القسط
 متأخرًا ويُعاد خصمه تلقائيًا عند توفر الرصيد: لا توجد غرامة تأخير ولا تُسحب منك وحداتك. احرص على
 شحن محفظتك قبل موعد الاستحقاق. ويمكنك أيضًا دفع القسط التالي مبكرًا؛ يستطيع المساعد عرض خططك
-وجدولك وتجهيز هذه الدفعة.""",
+وجدولك وتجهيز هذه الدفعة.
+وحدات الخطة الجارية تبقى مع الخطة: لا تُعرض وحدةً وحدة، لكن يمكنك بيع الخطة كلها كمركز واحد في
+أي وقت (انظر «كيف تخرج»): يدفع لك المشتري ما سددته مضافًا إليه زيادة السعر ويكمل هو الأقساط
+المتبقية. صفحة الأقساط تعرض قيمة مركزك اليوم.""",
     ),
     (
         "kyc-verification",
@@ -474,8 +524,11 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
         100,
         """عند بيع أو شراء الوحدات بين المستثمرين: اعرض بسعر عادل ضمن نطاق أسعار المنصة، التزم
 بالعروض المقبولة، احتفظ برصيد كافٍ في المحفظة للتسوية، وادفع الرسوم المعروضة عند التأكيد. التلاعب
-بالأسعار والتداول الوهمي وافتعال الأحجام ممنوعة وتؤدي إلى الإيقاف. بعض العقارات لها فترة حظر قبل
-إمكانية عرض الوحدات؛ تظهر في صفحة العقار وفي حيازاتك.""",
+بالأسعار والتداول الوهمي وافتعال الأحجام ممنوعة وتؤدي إلى الإيقاف. قد توجد فترة حظر قبل إمكانية
+عرض الوحدات؛ يوضح نموذج البيع موعد انتهائها. مركز خطة الأقساط الجارية يُعرض ويُشترى كاملًا:
+يوضح العرض سعره
+والمسدَّد منه والأقساط المتبقية بتواريخها؛ يؤكد المشتري المبلغ الذي يدفعه للبائع، ويستلم الخطة،
+ويسدد تلك الأقساط من محفظته في مواعيدها.""",
     ),
     (
         "platform-rules",

@@ -52,6 +52,16 @@ class SecondaryTrade(Base):
     gross: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     resale_fee: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     total_charged: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
+    # 0034 — the sale of an installment plan position. ``gross`` is then the cash the buyer
+    # paid the seller (the position's value less the principal still to pay); these columns
+    # keep the position as it was at the trade.
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("installment_plans.id", ondelete="SET NULL")
+    )
+    position_value: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
+    paid_principal: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
+    assumed_principal: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
+    assumed_fees: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
     idempotency_key: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW

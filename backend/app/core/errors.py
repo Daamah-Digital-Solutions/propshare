@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -52,9 +53,13 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        # encoded first: a schema's own validator reports its ValueError inside the error's
+        # context, which plain JSON cannot carry (the response would be a 500, not a 422)
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content=_envelope("VALIDATION_ERROR", "Request validation failed", exc.errors()),
+            content=_envelope(
+                "VALIDATION_ERROR", "Request validation failed", jsonable_encoder(exc.errors())
+            ),
         )
 
     @app.exception_handler(Exception)

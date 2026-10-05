@@ -37,6 +37,7 @@ import {
   type InstallmentPlan,
   type WalletResponse,
 } from "@/lib/api";
+import UnitPriceReport from "@/components/dashboard/UnitPriceReport";
 
 const monthLabel = (ym: string) => {
   const [y, m] = ym.split("-").map(Number);
@@ -104,7 +105,13 @@ const Reports = () => {
   // Return-on-investment (net returns / invested), only when there's an invested base.
   const investedNum = num(p.invested);
   const roiPct = investedNum > 0 ? (num(p.total_returns) / investedNum) * 100 : null;
-  const gainNum = num(p.current_value) - investedNum;
+  // "invested" is everything bought so far, held or sold since: what was sold counts on the
+  // value side, or a sale would read as a loss
+  const soldNum = num(p.sold);
+  const gainNum = num(p.current_value) + soldNum - investedNum;
+  const gainText = `${gainNum >= 0 ? "+" : "−"}${money(Math.abs(gainNum))} vs invested${
+    soldNum > 0 ? `, with ${money(soldNum)} from sales` : ""
+  }`;
 
   const monthlyReturns = r.monthly.map((m) => ({ month: monthLabel(m.month), returns: num(m.net) }));
   let running = 0;
@@ -125,7 +132,7 @@ const Reports = () => {
 
   const kpis = [
     { title: "Total Invested", value: money(p.invested), icon: Building2, sub: `${p.properties} ${p.properties === 1 ? "property" : "properties"} · ${p.units} units` },
-    { title: "Current Value", value: money(p.current_value), icon: PieChart, sub: `${gainNum >= 0 ? "+" : ""}${money(gainNum)} vs invested` },
+    { title: "Current Value", value: money(p.current_value), icon: PieChart, sub: gainText },
     { title: "Total Returns (net)", value: money(p.total_returns), icon: TrendingUp, sub: roiPct !== null ? `${roiPct.toFixed(1)}% ROI` : "No returns yet" },
     { title: "Wallet Balance", value: w ? money(w.balance) : "—", icon: Wallet, sub: w ? `${money(w.pending_balance)} pending` : "Live balance" },
   ];
@@ -249,6 +256,9 @@ const Reports = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* The unit price of what the investor holds, over time */}
+        <UnitPriceReport plans={installmentPlans} />
 
         {/* Distribution history */}
         <Card className="bg-card border-border">

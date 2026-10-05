@@ -29,7 +29,7 @@ import datetime as dt
 import decimal
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
@@ -248,6 +248,16 @@ async def fund_exit_request(
     ).scalar_one_or_none()
     if prop is None:
         raise AppError("NOT_FOUND", "Property not found", status_code=404)
+    # The request was priced at the unit price of its day. Recording a new price closes the
+    # open requests (price_service), but one made in the same instant can slip past that:
+    # a seller is never bought out at a price the property no longer has.
+    if decimal.Decimal(req.unit_price_snapshot) != decimal.Decimal(prop.unit_price):
+        raise AppError(
+            "PRICE_CHANGED",
+            "The unit price of this property changed after this request was made, so it can "
+            "no longer be funded. The seller can make a new request at the new price.",
+            status_code=409,
+        )
 
     # Seller price-lock: pay from the SNAPSHOT rates (never re-priced). The fresh
     # re-derive below is a sanity BAND check only — it can reject a stale fill but
@@ -398,7 +408,12 @@ async def list_open_requests(
     stmt = (
         select(LpExitRequest, Property)
         .join(Property, LpExitRequest.property_id == Property.id)
-        .where(LpExitRequest.status == "open", LpExitRequest.units_remaining > 0)
+        .where(
+            LpExitRequest.status == "open",
+            LpExitRequest.units_remaining > 0,
+            # one priced at a price the property no longer has cannot be funded
+            LpExitRequest.unit_price_snapshot == Property.unit_price,
+        )
         .order_by(LpExitRequest.created_at.desc())
     )
     if property_id is not None:
@@ -466,7 +481,8 @@ async def expire_open_requests(session: AsyncSession, *, now: dt.datetime | None
     """Flip lapsed ``open`` exit requests to ``expired`` so their units stop being
     reserved across both markets (``secondary_service.reserved_units`` counts only
     ``status='open'``). A reservation is purely that count — no units were ever debited —
-    so changing the status releases them with no money/ledger move.
+    so changing the status releases them with no money/ledger move. A request priced at a
+    unit price the property no longer has (it slipped past a price change) lapses too.
 
     Cron-able + idempotent: ``FOR UPDATE SKIP LOCKED`` (a concurrent fund on the same row
     is never blocked or double-processed); already-expired rows aren't reselected.
@@ -478,7 +494,13 @@ async def expire_open_requests(session: AsyncSession, *, now: dt.datetime | None
                 select(LpExitRequest)
                 .where(
                     LpExitRequest.status == "open",
-                    LpExitRequest.expires_at < cutoff,
+                    or_(
+                        LpExitRequest.expires_at < cutoff,
+                        LpExitRequest.unit_price_snapshot
+                        != select(Property.unit_price)
+                        .where(Property.id == LpExitRequest.property_id)
+                        .scalar_subquery(),
+                    ),
                 )
                 .with_for_update(skip_locked=True)
             )

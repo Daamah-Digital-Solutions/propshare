@@ -39,8 +39,17 @@ import UnderConstructionView from "@/components/property/UnderConstructionView";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { Loader2 } from "lucide-react";
 import { assetUrl, propertyApi, type PropertyDetail } from "@/lib/api";
+import { assetValue } from "@/lib/properties";
 
 const READY_MODELS = new Set(["ready-income", "ready-portfolio"]);
+
+// How an under-construction listing is bought (properties.offplan_payment): by the installment
+// plan, in full (a project sold in phases), or whichever the investor picks.
+type PayMode = "installments" | "full";
+const PAY_MODES: { id: PayMode; label: string; hint: string }[] = [
+  { id: "installments", label: "Installment plan", hint: "A down payment, then monthly" },
+  { id: "full", label: "Pay in full", hint: "All your units now" },
+];
 
 // Build the view-model the page renders from a live PropertyDetail. Rich fields
 // not held as columns live in `content`; everything degrades gracefully when a
@@ -71,7 +80,7 @@ const toViewModel = (d: PropertyDetail) => {
     bathrooms: asNum(details.bathrooms),
     area: asNum(details.area),
     parking: asNum(details.parking),
-    propertyValue: d.total_value,
+    propertyValue: assetValue(d),
     unitPrice: d.unit_price,
     minInvestment: d.minimum_investment,
     maxInvestment: asNum(details.maxInvestment) ?? d.total_value,
@@ -139,6 +148,8 @@ const PropertyDetails = () => {
 
   const propertyData = data ? toViewModel(data) : null;
   const [investmentAmount, setInvestmentAmount] = useState(0);
+  // the investor's pick on a listing that offers both; ?pay=full arrives with a prepared order
+  const [payChoice, setPayChoice] = useState<PayMode | null>(null);
 
   // An order prepared by the assistant arrives as ?units=N(&months=M): pre-fill the calculator,
   // bring it into view and (signed in, ready listing) open the review step — the last one
@@ -148,9 +159,12 @@ const PropertyDetails = () => {
   const orderMonths = searchParams.get("months") ?? undefined;
   const hasOrder = Number.isInteger(orderUnits) && orderUnits >= 1;
   const [orderApplied, setOrderApplied] = useState(false);
+  // the review step of a prepared order opens once, not again each time the form remounts
+  const [reviewShown, setReviewShown] = useState(false);
   useEffect(() => {
     if (!data || !hasOrder || orderApplied) return;
-    setInvestmentAmount(orderUnits * Number(data.unit_price));
+    // cents exactly: 3 units at $110.10 are 330.30, not 330.29999999999995
+    setInvestmentAmount(Math.round(orderUnits * Number(data.unit_price) * 100) / 100);
     setOrderApplied(true);
     requestAnimationFrame(() =>
       document.getElementById("invest-panel")?.scrollIntoView?.({ behavior: "smooth", block: "start" }),
@@ -205,8 +219,14 @@ const PropertyDetails = () => {
     ) : null;
 
   // Under-construction listings get their own page (the design the client knew, restored on
-  // real data); ready listings keep this layout. Investing is the same calculator in both.
+  // real data); ready listings keep this layout. Investing is the same calculators in both:
+  // the installment plan, full payment, or the investor's pick of the two.
   if (data && propertyData.type === "under_construction") {
+    const offered = data.offplan_payment ?? "installments";
+    const payMode: PayMode =
+      offered === "both"
+        ? (payChoice ?? (searchParams.get("pay") === "full" ? "full" : "installments"))
+        : offered;
     return (
       <>
         {previewBanner}
@@ -218,14 +238,63 @@ const PropertyDetails = () => {
           investPanel={
             <div id="invest-panel" className="scroll-mt-24">
               {orderBanner}
-              <InstallmentCalculator
-                propertyId={propertyData.id}
-                propertyData={propertyData}
-                investmentAmount={investmentAmount || propertyData.minInvestment}
-                setInvestmentAmount={setInvestmentAmount}
-                propertyTitle={propertyData.title}
-                initialDuration={orderMonths}
-              />
+              {offered === "both" && (
+                <div
+                  className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-border bg-card p-1"
+                  data-testid="pay-mode-switch"
+                >
+                  {PAY_MODES.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      aria-pressed={payMode === m.id}
+                      onClick={() => setPayChoice(m.id)}
+                      className={`rounded-lg px-3 py-2 text-left transition-colors ${
+                        payMode === m.id ? "bg-primary text-primary-foreground" : "hover:bg-secondary"
+                      }`}
+                    >
+                      <div className="text-sm font-semibold">{m.label}</div>
+                      <div
+                        className={`text-[11px] ${
+                          payMode === m.id ? "text-primary-foreground/80" : "text-muted-foreground"
+                        }`}
+                      >
+                        {m.hint}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {payMode === "full" ? (
+                <InvestmentCalculator
+                  propertyId={propertyData.id}
+                  propertyData={propertyData}
+                  investmentAmount={investmentAmount || propertyData.minInvestment}
+                  setInvestmentAmount={setInvestmentAmount}
+                  // a prepared FULL-payment order only: an order prepared for the plan
+                  // (?months=) must not open a full-payment confirmation when the investor
+                  // merely looks at the other way to pay
+                  openReview={
+                    orderApplied &&
+                    !reviewShown &&
+                    isAuthenticated &&
+                    data.status === "active" &&
+                    !orderMonths &&
+                    (offered !== "both" || searchParams.get("pay") === "full")
+                  }
+                  onReviewOpened={() => setReviewShown(true)}
+                  offplan
+                />
+              ) : (
+                <InstallmentCalculator
+                  propertyId={propertyData.id}
+                  propertyData={propertyData}
+                  investmentAmount={investmentAmount || propertyData.minInvestment}
+                  setInvestmentAmount={setInvestmentAmount}
+                  propertyTitle={propertyData.title}
+                  initialDuration={orderMonths}
+                />
+              )}
             </div>
           }
           sidebarExtra={
@@ -617,7 +686,8 @@ const PropertyDetails = () => {
                     propertyData={propertyData}
                     investmentAmount={investmentAmount || propertyData.minInvestment}
                     setInvestmentAmount={setInvestmentAmount}
-                    openReview={orderApplied && isAuthenticated && data?.status === "active"}
+                    openReview={orderApplied && !reviewShown && isAuthenticated && data?.status === "active"}
+                    onReviewOpened={() => setReviewShown(true)}
                   />
                 )}
 

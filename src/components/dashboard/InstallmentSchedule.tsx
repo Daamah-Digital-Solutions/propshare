@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -35,8 +35,12 @@ import {
   Building2,
   Landmark,
   Loader2,
+  Tag,
+  TrendingDown,
+  TrendingUp,
 } from "lucide-react";
 import { format } from "date-fns";
+import { shortDate } from "@/lib/money";
 import { PaymentReturnStatus } from "@/components/dashboard/PaymentReturnStatus";
 import { toast } from "sonner";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -54,6 +58,10 @@ import {
  * a full summary (contract value, paid to date, remaining, next payment, ownership vested), a
  * "View schedule" toggle that reveals the complete payment table, and a "Download" button that
  * fetches a branded PDF (official design + logo). A due/overdue installment can be paid early.
+ *
+ * A running plan is also a POSITION with a value: all its units at the property's current
+ * unit price, less what is still to pay. The card shows it and offers to sell the whole
+ * position on the secondary market (the buyer takes the plan over).
  */
 
 const statusMeta: Record<
@@ -324,6 +332,80 @@ function PlanCard({
             <Progress value={vestedPct} />
           </div>
 
+          {plan.status === "active" && plan.position && (
+            <div
+              className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2"
+              data-testid="plan-position"
+            >
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <Stat
+                  label="Unit price now"
+                  value={fmtUSD(num(plan.position.price))}
+                  sub={
+                    plan.acquired_at
+                      ? `you bought at ${fmtUSD(num(plan.position.entry_price))}`
+                      : `you locked ${fmtUSD(num(plan.unit_price))}`
+                  }
+                />
+                <Stat
+                  label="Position value now"
+                  value={fmtUSD(num(plan.position.value))}
+                  sub={`${plan.units_total} units`}
+                />
+                <Stat
+                  label="Your part of it"
+                  value={fmtUSD(Math.max(0, num(plan.position.equity)))}
+                  sub={`${fmtUSD(num(plan.position.cost))} you put in ${
+                    num(plan.position.gain) < 0 ? "−" : "+"
+                  } ${fmtUSD(Math.abs(num(plan.position.gain)))}`}
+                  accent
+                />
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span
+                  className={`inline-flex items-center gap-1 ${
+                    num(plan.position.gain) < 0 ? "text-destructive" : "text-primary"
+                  }`}
+                >
+                  {num(plan.position.gain) < 0 ? <TrendingDown size={13} /> : <TrendingUp size={13} />}
+                  {num(plan.position.gain) === 0
+                    ? `The unit price has not changed since you ${plan.acquired_at ? "bought this position" : "started"}.`
+                    : `${num(plan.position.gain) > 0 ? "+" : "−"}${fmtUSD(Math.abs(num(plan.position.gain)))} since you ${
+                        plan.acquired_at ? "bought this position" : "started"
+                      }, on all ${plan.units_total} units.`}
+                </span>
+                {plan.listing_id ? (
+                  <Button asChild size="sm" variant="outline" className="gap-1.5">
+                    <Link to="/secondary-market?tab=activity">
+                      <Tag className="h-4 w-4" /> Listed for sale · manage
+                    </Link>
+                  </Button>
+                ) : plan.position.blocked === "pledged" ||
+                  plan.position.blocked === "lockup" ||
+                  num(plan.position.equity) <= 0 ? null : (
+                  <Button asChild size="sm" className="gap-1.5">
+                    <Link to={`/secondary-market?tab=sell&plan=${plan.id}`}>
+                      <Tag className="h-4 w-4" /> Sell this position
+                    </Link>
+                  </Button>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground" data-testid="plan-position-note">
+                {plan.listing_id
+                  ? "This position is listed for sale. Until it sells, its installments are still charged from your wallet, and what a buyer pays you grows by the principal of each one you pay (installment fees are not returned)."
+                  : plan.position.blocked === "pledged"
+                    ? "This plan was started with a Nova Sukuk certificate: its units are pledged to Nova Finance, so the position cannot be sold until the pledge is released."
+                    : plan.position.blocked === "lockup"
+                      ? `This position is in a lock-up until ${shortDate(plan.position.lockup_until ?? null)}: it can be listed for sale after that.`
+                      : num(plan.position.equity) <= 0
+                        ? "At today's unit price the position is worth less than what is still to pay on it, so it cannot be sold for now. Nothing more is owed because of that: installments are paid as before."
+                        : "You can list the whole position for sale: a buyer pays you your part (the principal you paid plus the price change; installment fees are not returned) and carries on with the remaining installments."}
+                {plan.acquired_at &&
+                  ` You took this plan over on ${format(new Date(plan.acquired_at), "MMM dd, yyyy")}; payments before that were made by the previous holder.`}
+              </p>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <Button
               size="sm"
@@ -360,8 +442,9 @@ function PlanCard({
             <div className="flex items-start gap-2 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
               <AlertCircle size={14} className="mt-0.5 shrink-0" />
               <span>
-                Rental income begins at handover (final payment). Vested units appreciate with the
-                property NAV but are held until the plan completes.
+                Rental income begins at handover (final payment). The units of this plan are sold
+                together with it: you can sell the whole position at any time, and the buyer carries on
+                with the remaining installments.
               </span>
             </div>
           )}

@@ -115,6 +115,36 @@ describe("InstallmentCalculator — the down payment takes every method", () => 
     expect(createPlan.mock.calls[0][0].method).toBe("pronova");
   });
 
+  it("builds the plan on the whole units the amount covers, at the price shown", async () => {
+    createPlan.mockResolvedValue(plan);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <InstallmentCalculator
+          propertyId="p1"
+          propertyTitle="Creek Rise"
+          propertyData={{ ...property, unitPrice: 110 } as never}
+          investmentAmount={1000}
+          setInvestmentAmount={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    // $1,000 at $110 a unit covers 9 units = $990: 25% down is $247.50 + 4% fee = $257.40
+    expect(screen.getByTestId("plan-units-hint")).toHaveTextContent(
+      "Units cost $110 each. This amount covers 9 whole units ($990.00): the plan is for those.",
+    );
+    expect(screen.getAllByText("$257.40").length).toBeGreaterThan(0);
+    fireEvent.click(await screen.findByRole("button", { name: /Credit \/ Debit Card/i }));
+    await pay(/Continue to pay/i);
+    await waitFor(() => expect(createPlan).toHaveBeenCalledTimes(1));
+    expect(createPlan.mock.calls[0][0]).toEqual({
+      property_id: "p1",
+      amount: 990,
+      duration_months: 12,
+      method: "card",
+      expected_unit_price: 110,
+    });
+  });
+
   it("sends a Nova Sukuk certificate for the down payment to review", async () => {
     createPlanWithSukuk.mockResolvedValue({ certificate_id: "c-1", amount_due: "2600.00" });
     renderCalc();

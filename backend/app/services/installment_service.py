@@ -35,7 +35,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.core.errors import AppError
-from app.models import InstallmentPayment, InstallmentPlan, Payment, Property, Wallet
+from app.models import (
+    InstallmentPayment,
+    InstallmentPlan,
+    Payment,
+    Property,
+    SecondaryListing,
+    SecondaryTrade,
+    Wallet,
+)
 from app.models.base import PropertyStatus, TransactionType
 from app.models.identity import User
 from app.models.investments import OwnershipLedger
@@ -51,8 +59,14 @@ from app.services.investment_service import (
     RESERVATION_TTL,
     _recompute_progress,
     below_minimum,
+    hold_lapsed,
     minimum_error,
+    price_moved,
     refuse_sample,
+    require_installments,
+    require_price,
+    retake_units,
+    return_units,
 )
 
 _CENTS = decimal.Decimal("0.01")
@@ -187,12 +201,124 @@ async def _payments_for(session: AsyncSession, plan_id: uuid.UUID) -> list[Insta
     return list(res.scalars().all())
 
 
+def position_figures(
+    plan: InstallmentPlan,
+    payments: list[InstallmentPayment],
+    price: decimal.Decimal,
+    entry_price: decimal.Decimal | None = None,
+) -> dict:
+    """A plan as a POSITION valued at ``price`` per unit (0034). Whoever holds it owns the
+    right to all its units for the principal still to pay, so it is worth
+
+        value  = units x price
+        equity = value - principal still to pay
+               = cost + gain
+
+    "what was paid, plus the increase on the WHOLE position" (client, 2026-10-01: a $100 unit
+    with $30 paid that rises 10% earns $10 on the $30). ``equity`` is what a buyer pays the
+    seller; the buyer then pays the rest of the schedule. Also the honest value of a running
+    plan in a portfolio: the units vested so far are whole units and can be worth more, or
+    less, than the money actually paid in.
+
+    ``cost`` and ``gain`` are the HOLDER's, measured from the price per unit the holder got in
+    at (``entry_price``): the plan's locked price for the investor who started it, so cost is
+    the principal paid; for an investor who bought the position (see ``holder_entry``) the
+    price they bought it at, so cost is what they paid for it plus their installments since
+    (cost = units x entry price - principal still to pay) and the gain starts at zero."""
+    entry = decimal.Decimal(entry_price) if entry_price is not None else plan.unit_price
+    unpaid = sorted((p for p in payments if p.status != "paid"), key=lambda p: p.seq)
+    paid = sum((p.base_amount for p in payments if p.status == "paid"), decimal.Decimal("0"))
+    remaining = sum((p.base_amount for p in unpaid), decimal.Decimal("0"))
+    fees = sum((p.fee_amount for p in unpaid), decimal.Decimal("0"))
+    today = _utcnow().date()
+    value = _q(decimal.Decimal(price) * plan.units_total)
+    return {
+        "plan_id": plan.id,
+        "units": plan.units_total,
+        "vested_units": plan.vested_units,
+        "locked_price": _q(plan.unit_price),
+        "entry_price": _q(entry),
+        "price": _q(decimal.Decimal(price)),
+        "value": value,
+        "paid_principal": _q(paid),
+        "remaining_principal": _q(remaining),
+        "remaining_fees": _q(fees),
+        "equity": _q(value - remaining),
+        "cost": _q(entry * plan.units_total - remaining),
+        "gain": _q((decimal.Decimal(price) - entry) * plan.units_total),
+        "installments_left": len(unpaid),
+        "overdue": sum(1 for p in unpaid if p.due_date < today),
+        "next_due": min((p.due_date for p in unpaid), default=None),
+        "schedule": unpaid,
+    }
+
+
+async def holder_entry(
+    session: AsyncSession, plan: InstallmentPlan
+) -> tuple[dt.datetime, decimal.Decimal] | None:
+    """When the plan's current holder took it over from another investor, and the price per
+    unit they bought it at (None = they started the plan: their price is the one it locked).
+    Payments made before that were the previous holder's."""
+    row = (
+        await session.execute(
+            select(SecondaryTrade.created_at, SecondaryTrade.price_per_unit)
+            .where(SecondaryTrade.plan_id == plan.id, SecondaryTrade.buyer_id == plan.investor_id)
+            .order_by(SecondaryTrade.created_at.desc(), SecondaryTrade.id.desc())
+            .limit(1)
+        )
+    ).first()
+    return (row[0], decimal.Decimal(row[1])) if row is not None else None
+
+
+async def holder_position(
+    session: AsyncSession,
+    plan: InstallmentPlan,
+    payments: list[InstallmentPayment],
+    price: decimal.Decimal,
+) -> dict:
+    """``position_figures`` for the plan's current holder, from their own entry price."""
+    entry = await holder_entry(session, plan)
+    return position_figures(plan, payments, price, entry[1] if entry else None)
+
+
+async def _active_listing_id(session: AsyncSession, plan_id: uuid.UUID) -> uuid.UUID | None:
+    """The secondary-market listing that offers this plan's position, if it is for sale."""
+    return await session.scalar(
+        select(SecondaryListing.id).where(
+            SecondaryListing.plan_id == plan_id, SecondaryListing.status == "active"
+        )
+    )
+
+
 async def _plan_dict(session: AsyncSession, plan: InstallmentPlan) -> dict:
     """Serialize a plan with its payments AND its property (title/location/image/SPV), so the
     client can present the schedule under the property it belongs to."""
     payments = await _payments_for(session, plan.id)
     prop = await session.get(Property, plan.property_id)
     out = serialize_plan(plan, payments, prop)
+    if plan.status == "active" and prop is not None:
+        # what the position is worth today, and whether it is offered for sale
+        entry = await holder_entry(session, plan)
+        fig = position_figures(plan, payments, prop.unit_price, entry[1] if entry else None)
+        out["position"] = {
+            "price": str(fig["price"]),
+            "entry_price": str(fig["entry_price"]),
+            "value": str(fig["value"]),
+            "cost": str(fig["cost"]),
+            "paid_principal": str(fig["paid_principal"]),
+            "remaining_principal": str(fig["remaining_principal"]),
+            "remaining_fees": str(fig["remaining_fees"]),
+            "equity": str(fig["equity"]),
+            "gain": str(fig["gain"]),
+        }
+        out["listing_id"] = await _active_listing_id(session, plan.id)
+        out["acquired_at"] = entry[0] if entry else None
+        # what stands in the way of listing it now (a Nova pledge, a lock-up, a listing)
+        from app.services import secondary_service  # it imports this module
+
+        blocked, unlock = await secondary_service.position_block(session, plan, out["listing_id"])
+        out["position"]["blocked"] = blocked
+        out["position"]["lockup_until"] = unlock
     # A down-payment checkout still open: where to pay it (an Idempotency-Key replay gets it too).
     if plan.status == "pending_payment" and plan.payment_id:
         pay = await session.get(Payment, plan.payment_id)
@@ -212,6 +338,7 @@ async def open_plan(
     idempotency_key: str,
     status: str,
     method: str,
+    expected_unit_price: float | None = None,
 ) -> tuple[InstallmentPlan, Property, InstallmentPayment]:
     """Validate, lock the property, RESERVE the whole allocation and write the plan with its
     schedule — nothing paid yet. Returns the plan, the LOCKED property and the down payment."""
@@ -221,7 +348,9 @@ async def open_plan(
             f"Duration must be one of {sorted(_DOWN_PCT)} months.",
             status_code=422,
         )
-    amount_dec = decimal.Decimal(str(amount))
+    # an amount is money: cents first, or 3 units at 110.10 sent as the float
+    # 330.29999999999995 would buy 2
+    amount_dec = _q(decimal.Decimal(str(amount)))
     if amount_dec <= 0:
         raise AppError("INVALID_AMOUNT", "Amount must be positive.", status_code=422)
 
@@ -236,6 +365,8 @@ async def open_plan(
             "PROPERTY_NOT_OPEN", "This property is not open for funding.", status_code=409
         )
     refuse_sample(prop)
+    require_installments(prop)
+    require_price(prop, expected_unit_price)  # the price a plan locks is one its investor saw
     if prop.unit_price <= 0:
         raise AppError("INVALID_PROPERTY", "Property has no unit price.", status_code=409)
 
@@ -338,6 +469,7 @@ async def create_plan(
     success_url: str = "",
     cancel_url: str = "",
     ipn_url: str = "",
+    expected_unit_price: float | None = None,
 ) -> dict:
     # Idempotency-Key replay -> the existing plan (no double reserve / double charge).
     existing = (
@@ -346,6 +478,13 @@ async def create_plan(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        if existing.investor_id != investor_id:
+            # the plan was sold since (or the key is someone else's): it is not theirs to read
+            raise AppError(
+                "IDEMPOTENCY_KEY_REUSED",
+                "This request key was already used for another plan.",
+                status_code=409,
+            )
         return await _plan_dict(session, existing)
 
     if method not in PLAN_METHODS:
@@ -370,6 +509,7 @@ async def create_plan(
         idempotency_key=idempotency_key,
         status="active" if method == "wallet" else "pending_payment",
         method=method,
+        expected_unit_price=expected_unit_price,
     )
     if method == "wallet":
         # Pay the down payment now (atomic). INSUFFICIENT_FUNDS propagates -> the whole plan
@@ -475,8 +615,12 @@ async def _charge_payment(
     # the portfolio's current_value, so without this the portfolio reports a phantom gain.
     inv_wallet.total_invested = inv_wallet.total_invested + payment.base_amount
 
-    # Vest this payment's units into the append-only ledger (real ownership; NAV appreciation
-    # is inherent from the milestone value_index that values these rows).
+    # Vest this payment's units into the append-only ledger (real ownership), at the price
+    # per unit their holder got in at: the plan's locked price, or, for an investor who bought
+    # the position, the price they bought it at (they paid the seller the difference on every
+    # unit, vested or not). It is what the holding's average cost is computed from.
+    entry = await holder_entry(session, plan)
+    vest_price = entry[1] if entry else plan.unit_price
     if payment.vest_units > 0:
         session.add(
             OwnershipLedger(
@@ -484,7 +628,7 @@ async def _charge_payment(
                 property_id=plan.property_id,
                 investment_id=None,
                 units=payment.vest_units,
-                unit_price=plan.unit_price,
+                unit_price=vest_price,
                 reason="installment_vest",
                 fee_rate=plan.management_fee_rate,  # Decision-2: consented rate
             )
@@ -525,7 +669,7 @@ async def _charge_payment(
                     property_id=plan.property_id,
                     investment_id=None,
                     units=short,
-                    unit_price=plan.unit_price,
+                    unit_price=vest_price,
                     reason="installment_vest",
                     fee_rate=plan.management_fee_rate,
                 )
@@ -668,9 +812,7 @@ async def _release_plan(
     """A plan that never started gives its units back (its checkout failed or expired, or its
     Nova certificate was rejected). Caller holds the payment, plan and property locks."""
     restored = plan.units_total - plan.vested_units
-    prop.available_units += restored
-    if prop.status == PropertyStatus.funded and prop.available_units > 0:
-        prop.status = PropertyStatus.active
+    return_units(prop, restored, plan.unit_price)
     plan.status = status
     plan.failure_reason = reason
     plan.cancelled_at = _utcnow()
@@ -739,14 +881,35 @@ async def confirm_down_payment(session: AsyncSession, *, payment: Payment) -> di
     prop = await _lock_property(session, plan.property_id)
     funded_by = payment.payment_method or "card"
     reference = f"payment:{payment.id}"
+    repriced = price_moved(prop, plan.unit_price)
     if plan.status == "pending_payment":
-        await _start_plan(
-            session, plan=plan, prop=prop, payments=rows, funded_by=funded_by, reference=reference
+        if not (hold_lapsed(plan.reservation_expires_at) and repriced):
+            await _start_plan(
+                session,
+                plan=plan,
+                prop=prop,
+                payments=rows,
+                funded_by=funded_by,
+                reference=reference,
+            )
+            return {"status": "processed", "result": "plan_started"}
+        # Paid after the hold ran out (not swept yet) and the unit price has changed since:
+        # the hold is over, exactly as if the sweep had already released it.
+        await _release_plan(
+            session,
+            plan=plan,
+            prop=prop,
+            payments=rows,
+            status="expired",
+            reason="reservation_expired",
         )
-        return {"status": "processed", "result": "plan_started"}
 
-    if prop.status == PropertyStatus.active and prop.available_units >= plan.units_total:
-        prop.available_units -= plan.units_total
+    # A hold lasts 30 minutes, a hosted checkout can be paid for a day. A plan paid late
+    # starts only at the price it locked: once the unit price has moved (0034), an old
+    # checkout must not lock yesterday's price for the whole plan. The money is refunded.
+    free = prop.status == PropertyStatus.active and prop.available_units >= plan.units_total
+    if free and not repriced:
+        retake_units(prop, plan.units_total, plan.unit_price)
         await _start_plan(
             session, plan=plan, prop=prop, payments=rows, funded_by=funded_by, reference=reference
         )
@@ -759,13 +922,18 @@ async def confirm_down_payment(session: AsyncSession, *, payment: Payment) -> di
         )
         return {"status": "processed", "result": "reconciled_started"}
 
-    plan.failure_reason = "units_unavailable_refunded"
+    plan.failure_reason = "price_changed_refunded" if free else "units_unavailable_refunded"
     await _refund_down_payment(
         session,
         payment=payment,
         user_id=plan.investor_id,
         title=prop.title,
-        why=f"The units of {prop.title} were taken before your down payment confirmed.",
+        why=(
+            f"The unit price of {prop.title} changed before your down payment confirmed, so "
+            "the plan did not start. You can start a new plan at the new price."
+            if free
+            else f"The units of {prop.title} were taken before your down payment confirmed."
+        ),
     )
     return {"status": "processed", "result": "refunded"}
 
@@ -1087,6 +1255,55 @@ async def build_schedule_xlsx(
     return f"installment-schedule-{f['slug']}.xlsx", buf.getvalue()
 
 
+async def close_stale_position_listings(
+    session: AsyncSession, *, now: dt.datetime | None = None
+) -> int:
+    """Close the listings of positions whose plan is no longer running. Such a listing cannot
+    be bought anyway (the purchase checks the plan); this keeps the seller's list honest, and
+    tells the seller."""
+    running = select(InstallmentPlan.id).where(InstallmentPlan.status == "active")
+    stale = (
+        await session.execute(
+            select(SecondaryListing, InstallmentPlan.status, Property.title)
+            .join(InstallmentPlan, InstallmentPlan.id == SecondaryListing.plan_id)
+            .join(Property, Property.id == SecondaryListing.property_id)
+            .where(
+                SecondaryListing.plan_id.is_not(None),
+                SecondaryListing.status == "active",
+                SecondaryListing.plan_id.not_in(running),
+            )
+            .with_for_update(skip_locked=True, of=SecondaryListing)
+        )
+    ).all()
+    for listing, plan_status, title in stale:
+        listing.status = "cancelled"
+        listing.cancelled_at = now or _utcnow()
+        await write_audit(
+            session,
+            action="secondary.position_listing_closed",
+            entity_type="secondary_listing",
+            entity_id=str(listing.id),
+            after={"plan_id": str(listing.plan_id), "plan_status": plan_status},
+        )
+        why = (
+            "is now fully paid: its units are ordinary units, which you can list for sale like "
+            "any others"
+            if plan_status == "completed"
+            else "is no longer running"
+        )
+        await notification_service.notify(
+            session,
+            user_id=listing.seller_id,
+            type="secondary",
+            title="Position listing closed",
+            message=(
+                f"Your listing of the installment position in {title} was closed: the plan {why}."
+            ),
+            email_category="investment_updates",
+        )
+    return len(stale)
+
+
 # --- due-payment cron (admin OR X-Cron-Secret) ------------------------------ #
 async def run_due(session: AsyncSession, *, now: dt.datetime | None = None) -> dict:
     """Idempotent sweep (FOR UPDATE SKIP LOCKED): send due-soon reminders, then charge due
@@ -1097,11 +1314,18 @@ async def run_due(session: AsyncSession, *, now: dt.datetime | None = None) -> d
     today = now.date()
     remind_cutoff = today + dt.timedelta(days=_REMINDER_DAYS)
 
+    # Pass 0 — a position offered for sale whose plan has since been paid off is no longer a
+    # position (its units are ordinary units now): its listing closes. Done first, before any
+    # plan row is locked: a purchase locks the listing before the plan, so must this.
+    await close_stale_position_listings(session, now=now)
+
     # Pass 1 — reminders for upcoming (not-yet-due) installments of active plans.
     reminders = 0
     rows = (
         await session.execute(
-            select(InstallmentPayment, InstallmentPlan)
+            # the plan's holder as a column, not the plan itself: an entity loaded here would
+            # stay in the session and Pass 2 would get it back without its row being re-read
+            select(InstallmentPayment, InstallmentPlan.investor_id)
             .join(InstallmentPlan, InstallmentPayment.plan_id == InstallmentPlan.id)
             .where(
                 InstallmentPayment.status == "scheduled",
@@ -1114,10 +1338,10 @@ async def run_due(session: AsyncSession, *, now: dt.datetime | None = None) -> d
             .with_for_update(skip_locked=True, of=InstallmentPayment)
         )
     ).all()
-    for payment, plan in rows:
+    for payment, investor_id in rows:
         await notification_service.notify(
             session,
-            user_id=plan.investor_id,
+            user_id=investor_id,
             type="installment",
             title="Upcoming installment payment",
             message=(
@@ -1157,6 +1381,9 @@ async def run_due(session: AsyncSession, *, now: dt.datetime | None = None) -> d
                 select(InstallmentPlan)
                 .where(InstallmentPlan.id == payment.plan_id, InstallmentPlan.status == "active")
                 .with_for_update()
+                # the row as it is NOW, under its lock: its holder may have paid an installment
+                # early, or sold the position, since this session first saw the plan
+                .execution_options(populate_existing=True)
             )
         ).scalar_one_or_none()
         if plan is None:

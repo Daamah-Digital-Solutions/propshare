@@ -35,6 +35,7 @@ from app.models.base import InvestmentStatus, PaymentMethod, PropertyStatus, Tra
 from app.models.investments import OwnershipLedger
 from app.services import (
     broker_service,
+    listing_service,
     notification_service,
     payment_service,
     settings_service,
@@ -92,6 +93,93 @@ def minimum_error(prop: Property) -> AppError:
     )
 
 
+def is_offplan(prop: Property) -> bool:
+    """Under construction: no rent yet, the investor earns by the unit price going up."""
+    return listing_service.profile_of(prop.model) in listing_service.OFFPLAN_PROFILES
+
+
+def payment_modes(prop: Property) -> tuple[str, ...]:
+    """How units of this listing are bought: ``full`` (paid at once) and/or ``installments``
+    (the plan). A ready listing is paid in full. An under-construction one says which (0034:
+    ``properties.offplan_payment``): installments, full (a project sold in phases, each at
+    its own price) or both."""
+    if not is_offplan(prop):
+        return ("full",)
+    choice = prop.offplan_payment or "installments"
+    return ("full", "installments") if choice == "both" else (choice,)
+
+
+def require_full_payment(prop: Property) -> None:
+    if "full" not in payment_modes(prop):
+        raise AppError(
+            "INSTALLMENTS_ONLY",
+            "This property is bought through its installment plan, not paid in full.",
+            status_code=409,
+        )
+
+
+def require_installments(prop: Property) -> None:
+    if is_offplan(prop) and "installments" not in payment_modes(prop):
+        raise AppError(
+            "FULL_PAYMENT_ONLY",
+            "This property is paid in full: it has no installment plan.",
+            status_code=409,
+        )
+
+
+def require_price(prop: Property, expected: decimal.Decimal | float | str | None) -> None:
+    """The buyer confirmed an order at the unit price on their screen. If the price has changed
+    since (a page left open across a price change), refuse and say the new price, so the screen
+    shows the new amounts for a fresh confirmation: nobody buys, or locks a plan, at a price
+    they have not seen. Without ``expected`` (an older client) nothing is checked."""
+    if expected is None:
+        return
+    try:
+        seen = _q(decimal.Decimal(str(expected)))
+    except (decimal.InvalidOperation, ValueError):
+        seen = None
+    now = _q(decimal.Decimal(prop.unit_price))
+    if seen != now:
+        raise AppError(
+            "PRICE_CHANGED",
+            f"The unit price of this property is now ${now}. Review the new amounts and "
+            "confirm again.",
+            status_code=409,
+            details={"unit_price": str(now)},
+        )
+
+
+def price_moved(prop: Property, priced_at: decimal.Decimal | None) -> bool:
+    """The unit price is no longer the one a held purchase or plan was priced at."""
+    return priced_at is not None and decimal.Decimal(prop.unit_price) != decimal.Decimal(priced_at)
+
+
+def hold_lapsed(expires_at: dt.datetime | None) -> bool:
+    """A hold with a time limit whose time is up (a hold with no limit never lapses)."""
+    return expires_at is not None and expires_at <= dt.datetime.now(dt.UTC)
+
+
+def return_units(prop: Property, units: int, priced_at: decimal.Decimal | None) -> None:
+    """Units held for a purchase or a plan that did not go through are on sale again, at
+    TODAY's price. If the price moved since they were priced, the offering's total follows
+    (see price_service.record_price), so funding progress still ends at exactly 100%."""
+    prop.available_units += units
+    if priced_at is not None and prop.unit_price != priced_at:
+        prop.total_value = _q(prop.total_value + (prop.unit_price - priced_at) * units)
+        _recompute_progress(prop)
+    if prop.status == PropertyStatus.funded and prop.available_units > 0:
+        prop.status = PropertyStatus.active
+
+
+def retake_units(prop: Property, units: int, priced_at: decimal.Decimal | None) -> None:
+    """The reverse: a payment that arrived late takes its units back out of the pool at the
+    price it was made at."""
+    prop.available_units -= units
+    if priced_at is not None and prop.unit_price != priced_at:
+        prop.total_value = _q(prop.total_value - (prop.unit_price - priced_at) * units)
+        _recompute_progress(prop)
+
+
 _HUNDRED = decimal.Decimal(100)
 RESERVATION_TTL = dt.timedelta(minutes=30)
 # Direct-pay rails (reserve units -> hosted checkout -> webhook confirms). "pronova" is a
@@ -133,7 +221,11 @@ def _quote(unit_price: decimal.Decimal, amount: decimal.Decimal, rates: dict) ->
 
 
 async def _lock_and_quote(
-    session: AsyncSession, *, property_id: uuid.UUID, amount: float
+    session: AsyncSession,
+    *,
+    property_id: uuid.UUID,
+    amount: float,
+    expected_unit_price: float | None = None,
 ) -> tuple[Property, dict, dict]:
     """Lock the property (serializes concurrent buyers: oversell protection), check it is
     open and has the units, and price the purchase. Returns (property, fee rates, quote)."""
@@ -147,8 +239,12 @@ async def _lock_and_quote(
             "PROPERTY_NOT_OPEN", "This property is not open for investment.", status_code=409
         )
     refuse_sample(prop)
+    require_full_payment(prop)
+    require_price(prop, expected_unit_price)
 
-    amount_dec = decimal.Decimal(str(amount))
+    # an amount is money: cents first, or 3 units at 110.10 sent as the float
+    # 330.29999999999995 would buy 2
+    amount_dec = _q(decimal.Decimal(str(amount)))
     rates = await settings_service.get_fee_rates(session)
     quote = _quote(prop.unit_price, amount_dec, rates)
     if below_minimum(prop, quote["units"]):
@@ -175,6 +271,7 @@ async def create_investment(
     success_url: str,
     cancel_url: str,
     ipn_url: str,
+    expected_unit_price: float | None = None,
 ) -> dict:
     # Idempotency-Key replay -> return the existing investment (and its checkout, if any).
     existing = (
@@ -192,7 +289,9 @@ async def create_investment(
             "PAYMENTS_NOT_CONFIGURED", f"{provider} is not configured yet.", status_code=503
         )
 
-    prop, rates, quote = await _lock_and_quote(session, property_id=property_id, amount=amount)
+    prop, rates, quote = await _lock_and_quote(
+        session, property_id=property_id, amount=amount, expected_unit_price=expected_unit_price
+    )
 
     snapshot = {
         "platform_fee_pct": str(rates["platform_fee_pct"]),
@@ -412,6 +511,17 @@ async def confirm_investment(session: AsyncSession, *, payment) -> dict:
         )
     ).scalar_one()
 
+    if (
+        inv.status == InvestmentStatus.pending
+        and hold_lapsed(inv.reservation_expires_at)
+        and price_moved(prop, inv.unit_price_snapshot)
+    ):
+        # Paid after the hold ran out (the sweep has not released it yet) and the unit price
+        # has changed since: the hold is over, exactly as if the sweep had already run.
+        return_units(prop, inv.units, inv.unit_price_snapshot)
+        inv.status = InvestmentStatus.expired
+        inv.reservation_expires_at = None
+
     if inv.status == InvestmentStatus.pending:
         # Units already reserved at creation — just book the money + ledger.
         _allocate_units(session, prop, inv, confirmed_via=payment.payment_method or "card")
@@ -435,9 +545,14 @@ async def _reconcile_late_payment(
     session: AsyncSession, *, inv: Investment, prop: Property, payment
 ) -> dict:
     captured = payment.amount_captured or payment.amount
-    if prop.status == PropertyStatus.active and prop.available_units >= inv.units:
+    free = prop.status == PropertyStatus.active and prop.available_units >= inv.units
+    # A hold lasts 30 minutes, a hosted checkout can be paid for a day. Paying late is honoured
+    # only at the price the purchase was made at: once the unit price has moved (0034), an old
+    # checkout must not buy at yesterday's price. The money goes back to the wallet instead.
+    repriced = free and price_moved(prop, inv.unit_price_snapshot)
+    if free and not repriced:
         # Units still free — re-acquire and confirm.
-        prop.available_units -= inv.units
+        retake_units(prop, inv.units, inv.unit_price_snapshot)
         _allocate_units(session, prop, inv, confirmed_via=payment.payment_method or "card")
         await _count_invested(session, inv)
         await _notify_confirmed(session, inv, prop)
@@ -451,7 +566,7 @@ async def _reconcile_late_payment(
         await _accrue_broker_commission(session, inv)
         return {"status": "processed", "result": "reconciled_confirmed"}
 
-    # Units gone — refund the captured amount to the buyer's wallet.
+    # Units gone, or the price changed — refund the captured amount to the buyer's wallet.
     await wallet_service.credit(
         session,
         user_id=inv.user_id,
@@ -460,16 +575,19 @@ async def _reconcile_late_payment(
         tx_type=TransactionType.deposit,
         description="Refund — investment could not be fulfilled",
     )
-    inv.failure_reason = "units_unavailable_refunded"
+    inv.failure_reason = "price_changed_refunded" if repriced else "units_unavailable_refunded"
+    why = (
+        f"The unit price of {prop.title} changed before your payment confirmed, so the "
+        "purchase was not completed. You can buy at the new price from your wallet."
+        if repriced
+        else "Those units sold out before your payment confirmed."
+    )
     await notification_service.notify(
         session,
         user_id=inv.user_id,
         type="investment",
         title="Investment refunded",
-        message=(
-            "Those units sold out before your payment confirmed. "
-            f"We refunded {captured} {payment.currency} to your wallet."
-        ),
+        message=f"{why} We refunded {captured} {payment.currency} to your wallet.",
         email_category="investment_updates",
     )
     await write_audit(
@@ -477,7 +595,11 @@ async def _reconcile_late_payment(
         action="investment.reconciled_refunded",
         entity_type="investment",
         entity_id=str(inv.id),
-        after={"refunded": str(captured), "payment_id": str(payment.id)},
+        after={
+            "refunded": str(captured),
+            "payment_id": str(payment.id),
+            "reason": inv.failure_reason,
+        },
     )
     return {"status": "processed", "result": "refunded"}
 
@@ -492,9 +614,7 @@ async def release_reservation_for_payment(
     return await _release_pending(session, investment_id=inv_id, reason=reason)
 
 
-async def _release_pending(
-    session: AsyncSession, *, investment_id: uuid.UUID, reason: str
-) -> dict:
+async def _release_pending(session: AsyncSession, *, investment_id: uuid.UUID, reason: str) -> dict:
     """A pending purchase ends unpaid (its checkout failed, or its Nova certificate was
     rejected): its units go back on sale (idempotent)."""
     inv = (
@@ -509,9 +629,7 @@ async def _release_pending(
             select(Property).where(Property.id == inv.property_id).with_for_update()
         )
     ).scalar_one()
-    prop.available_units += inv.units
-    if prop.status == PropertyStatus.funded and prop.available_units > 0:
-        prop.status = PropertyStatus.active
+    return_units(prop, inv.units, inv.unit_price_snapshot)
     inv.status = InvestmentStatus.cancelled
     inv.failure_reason = reason
     inv.reservation_expires_at = None
@@ -640,9 +758,7 @@ async def expire_reservations(session: AsyncSession, *, now: dt.datetime | None 
                 select(Property).where(Property.id == inv.property_id).with_for_update()
             )
         ).scalar_one()
-        prop.available_units += inv.units
-        if prop.status == PropertyStatus.funded and prop.available_units > 0:
-            prop.status = PropertyStatus.active
+        return_units(prop, inv.units, inv.unit_price_snapshot)
         inv.status = InvestmentStatus.expired
         inv.failure_reason = "reservation_expired"
         inv.reservation_expires_at = None
@@ -718,6 +834,7 @@ async def reinvest_from_wallet(
             "PROPERTY_NOT_OPEN", "This property is not open for investment.", status_code=409
         )
     refuse_sample(prop)
+    require_full_payment(prop)
     if prop.unit_price <= 0:
         raise AppError("INVALID_PROPERTY", "Property has no unit price.", status_code=409)
 
@@ -806,8 +923,20 @@ async def reinvest_from_wallet(
 async def portfolio_summary(session: AsyncSession, user_id: uuid.UUID) -> dict:
     """Server-authoritative portfolio for the caller. Holdings + current value come from
     the append-only ``ownership_ledger`` (net units per property × the property's current
-    unit_price); invested + returns come from the wallet totals. No client-side math."""
-    from app.models import Wallet
+    unit_price); invested + returns come from the wallet totals. No client-side math.
+
+    A running installment plan (0034) is valued as the POSITION it is: all its units at the
+    current price, less the principal still to pay (what a buyer would pay for it), instead
+    of its vested units alone. ``sold`` is what selling units and positions has brought in,
+    so that ``current_value + sold - invested`` is the gain on everything bought so far,
+    whether it is still held or was sold."""
+    from app.models import (
+        InstallmentPayment,
+        InstallmentPlan,
+        LpExitRequest,
+        Transaction,
+        Wallet,
+    )
 
     rows = (
         await session.execute(
@@ -831,6 +960,55 @@ async def portfolio_summary(session: AsyncSession, user_id: uuid.UUID) -> dict:
         properties += 1
         total_units += u
         current_value += decimal.Decimal(u) * decimal.Decimal(unit_price)
+    # running plans: swap "vested units x price" for the position's equity
+    unpaid = (
+        select(
+            InstallmentPayment.plan_id,
+            func.coalesce(func.sum(InstallmentPayment.base_amount), 0).label("remaining"),
+        )
+        .where(InstallmentPayment.status != "paid")
+        .group_by(InstallmentPayment.plan_id)
+        .subquery()
+    )
+    plans = (
+        await session.execute(
+            select(
+                InstallmentPlan.units_total,
+                InstallmentPlan.vested_units,
+                Property.unit_price,
+                func.coalesce(unpaid.c.remaining, 0),
+            )
+            .join(Property, Property.id == InstallmentPlan.property_id)
+            .outerjoin(unpaid, unpaid.c.plan_id == InstallmentPlan.id)
+            .where(InstallmentPlan.investor_id == user_id, InstallmentPlan.status == "active")
+        )
+    ).all()
+    for units_total, vested, unit_price, remaining in plans:
+        price = decimal.Decimal(unit_price)
+        equity = price * int(units_total) - decimal.Decimal(remaining)
+        # Never below zero: nobody is made to pay the rest of a plan, so a position worth
+        # less than what is still to pay on it is worth nothing, not a debt.
+        current_value += max(equity, decimal.Decimal(0)) - price * int(vested)
+    sold = await session.scalar(
+        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+            Transaction.user_id == user_id,
+            Transaction.type == TransactionType.secondary_sale,
+            Transaction.amount > 0,
+        )
+    )
+    # An exit to a liquidity provider credits the provider's price and then takes the
+    # liquidity fee as its own line: what the sale brought is the price less that fee.
+    exit_fees = await session.scalar(
+        select(func.coalesce(func.sum(-Transaction.amount), 0)).where(
+            Transaction.user_id == user_id,
+            Transaction.type == TransactionType.fee,
+            Transaction.amount < 0,
+            Transaction.reference_id.in_(
+                select(LpExitRequest.id).where(LpExitRequest.seller_id == user_id)
+            ),
+        )
+    )
+    sold = decimal.Decimal(sold or 0) - decimal.Decimal(exit_fees or 0)
     wallet = (
         await session.execute(select(Wallet).where(Wallet.user_id == user_id))
     ).scalar_one_or_none()
@@ -842,6 +1020,7 @@ async def portfolio_summary(session: AsyncSession, user_id: uuid.UUID) -> dict:
         "total_returns": str(_q(decimal.Decimal(returns))),
         "properties": properties,
         "units": total_units,
+        "sold": str(_q(decimal.Decimal(sold or 0))),
     }
 
 

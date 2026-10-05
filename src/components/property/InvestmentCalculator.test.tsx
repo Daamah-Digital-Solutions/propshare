@@ -8,6 +8,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import InvestmentCalculator from "./InvestmentCalculator";
+import { ApiError } from "@/lib/api";
 import { ReinvestProvider } from "@/contexts/ReinvestContext";
 
 // Mock the API client — keep ApiError a real class so `instanceof` checks work.
@@ -90,6 +91,110 @@ describe("InvestmentCalculator unit price", () => {
     expect(screen.getByTestId("unit-price-hint")).toHaveTextContent(
       "Units cost $300 each. This amount buys 3 whole units",
     );
+  });
+});
+
+describe("InvestmentCalculator on an under-construction listing paid in full", () => {
+  const mount = (offplan: boolean) =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReinvestProvider>
+          <InvestmentCalculator
+            propertyId="prop-123"
+            propertyData={propertyData}
+            investmentAmount={1000}
+            setInvestmentAmount={() => {}}
+            offplan={offplan}
+          />
+        </ReinvestProvider>
+      </QueryClientProvider>,
+    );
+
+  it("promises no rent before handover: the return is the unit price", () => {
+    mount(true);
+    expect(screen.getByTestId("offplan-returns")).toHaveTextContent(/pays no rent before handover/i);
+    expect(screen.getByTestId("offplan-returns")).toHaveTextContent(/the change in the unit price/i);
+    expect(screen.queryByText("Gross Annual Rental")).toBeNull();
+    expect(screen.queryByText("Net Annual Income")).toBeNull();
+    expect(screen.getByText(/rental distributions, which start after handover/i)).toBeInTheDocument();
+  });
+
+  it("keeps the rental figures on a ready property", () => {
+    mount(false);
+    expect(screen.queryByTestId("offplan-returns")).toBeNull();
+    expect(screen.getByText("Gross Annual Rental")).toBeInTheDocument();
+  });
+});
+
+describe("InvestmentCalculator: what is shown is what is charged", () => {
+  const mount = () =>
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReinvestProvider>
+          <InvestmentCalculator
+            propertyId="prop-123"
+            propertyData={{ ...propertyData, unitPrice: 110 }}
+            investmentAmount={1000}
+            setInvestmentAmount={() => {}}
+          />
+        </ReinvestProvider>
+      </QueryClientProvider>,
+    );
+  // a block body: `() => spy.mockReset()` returns the spy, which vitest would then call as
+  // a cleanup function after each test
+  beforeEach(() => {
+    createMock.mockReset();
+  });
+
+  it("prices the whole units the amount buys, not the amount typed", async () => {
+    // $1,000 at $110 a unit is 9 units = $990; the 2.5% fee is on that: $24.75
+    createMock.mockResolvedValue({ units: 9, total_charged: "1014.75", checkout_url: null });
+    mount();
+    expect(screen.getByText(/Investment Amount \(9 units\)/)).toBeInTheDocument();
+    expect(screen.getByText("+$24.75")).toBeInTheDocument();
+    expect(screen.getByText("$1014.75")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Invest \$990/i }));
+    expect(screen.getByText(/You are about to invest \$\s*990 in this property/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Confirm & Pay/i }));
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
+    // the amount of those units, and the price they were shown at
+    expect(createMock.mock.calls[0][0]).toEqual({
+      property_id: "prop-123",
+      amount: 990,
+      method: "wallet",
+      expected_unit_price: 110,
+    });
+  });
+
+  it("asks again when the unit price changed while the page was open", async () => {
+    // what the API client raises for 409 PRICE_CHANGED (this file's ApiError takes the code
+    // and the message)
+    const Raised = ApiError as unknown as new (code: string, message: string) => Error;
+    createMock.mockImplementation(async () => {
+      throw new Raised("PRICE_CHANGED", "The unit price of this property is now $121.");
+    });
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /Invest \$990/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirm & Pay/i }));
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
+    // the confirmation closes: the page reloads the listing and shows the new amounts
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Confirm & Pay/i })).toBeNull());
+  });
+
+  it("cannot be confirmed for less than one unit", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReinvestProvider>
+          <InvestmentCalculator
+            propertyId="prop-123"
+            propertyData={{ ...propertyData, unitPrice: 110 }}
+            investmentAmount={100}
+            setInvestmentAmount={() => {}}
+          />
+        </ReinvestProvider>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("button", { name: /Invest \$0/i })).toBeDisabled();
   });
 });
 

@@ -35,12 +35,16 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import SellUnitsForm, { type SellPrefill } from "@/components/marketplace/SellUnitsForm";
+import SellPositionForm, { type PositionPrefill } from "@/components/marketplace/SellPositionForm";
+import PositionListingCard from "@/components/marketplace/PositionListingCard";
+import { money } from "@/lib/money";
 import { ApiError, secondaryApi, type SecondaryListing } from "@/lib/api";
 
 // Tabs the page opens from ?tab= (the assistant links /secondary-market?tab=sell).
 const MARKET_TABS = ["buy", "sell", "activity"];
-// Parameters of a sale the assistant prepared: ?tab=sell&property=<id>&units=N&price=P
-const SALE_KEYS = ["property", "units", "price"];
+// Parameters of a sale prepared elsewhere: ?tab=sell&property=<id>&units=N&price=P for units,
+// ?tab=sell&plan=<plan id>&price=P for a whole installment position
+const SALE_KEYS = ["property", "units", "price", "plan"];
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "—";
@@ -58,19 +62,26 @@ const SecondaryMarket = () => {
   const tabParam = searchParams.get("tab") ?? "";
   const [tab, setTab] = useState(MARKET_TABS.includes(tabParam) ? tabParam : "buy");
   const [salePrefill, setSalePrefill] = useState<SellPrefill | null>(null);
+  const [positionPrefill, setPositionPrefill] = useState<PositionPrefill | null>(null);
   // A sale prepared by the assistant: open Sell with it filled in, then consume the link so a
   // refresh does not bring it back. Creating the listing stays the user's own click.
   useEffect(() => {
     if (MARKET_TABS.includes(tabParam)) setTab(tabParam);
     const propertyId = searchParams.get("property");
-    if (!propertyId) return;
+    const planId = searchParams.get("plan");
+    if (!propertyId && !planId) return;
     const units = Number(searchParams.get("units"));
     const price = Number(searchParams.get("price"));
-    setSalePrefill({
-      propertyId,
-      units: Number.isInteger(units) && units > 0 ? units : undefined,
-      price: Number.isFinite(price) && price > 0 ? price : undefined,
-    });
+    const asking = Number.isFinite(price) && price > 0 ? price : undefined;
+    if (planId) {
+      setPositionPrefill({ planId, price: asking });
+    } else if (propertyId) {
+      setSalePrefill({
+        propertyId,
+        units: Number.isInteger(units) && units > 0 ? units : undefined,
+        price: asking,
+      });
+    }
     setTab("sell");
     const rest = new URLSearchParams(searchParams);
     SALE_KEYS.forEach((k) => rest.delete(k));
@@ -240,6 +251,17 @@ const SecondaryMarket = () => {
                       const ref = listing.unit_price_ref ? Number(listing.unit_price_ref) : 0;
                       const price = Number(listing.price_per_unit);
                       const change = ref > 0 ? ((price - ref) / ref) * 100 : 0;
+                      if (listing.position) {
+                        // a whole installment plan, sold together: its own card and purchase
+                        return (
+                          <PositionListingCard
+                            key={listing.listing_id}
+                            listing={listing}
+                            feePct={feePct}
+                            listedAgo={timeAgo(listing.created_at)}
+                          />
+                        );
+                      }
                       return (
                         <Card
                           key={listing.listing_id}
@@ -401,7 +423,11 @@ const SecondaryMarket = () => {
               </TabsContent>
 
               <TabsContent value="sell" className="space-y-6">
+                {positionPrefill && (
+                  <SellPositionForm key={JSON.stringify(positionPrefill)} prefill={positionPrefill} />
+                )}
                 <SellUnitsForm key={salePrefill ? JSON.stringify(salePrefill) : "blank"} prefill={salePrefill} />
+                {!positionPrefill && <SellPositionForm />}
               </TabsContent>
 
               <TabsContent value="activity" className="space-y-4">
@@ -412,7 +438,8 @@ const SecondaryMarket = () => {
                   <CardContent>
                     {(mine?.items ?? []).length === 0 ? (
                       <div className="py-10 text-center text-sm text-muted-foreground">
-                        You have no listings yet. Use the “Sell Units” tab to list units you own.
+                        You have no listings yet. Use the “Sell Units” tab to list units you own, or an
+                        installment position you are still paying.
                       </div>
                     ) : (
                       <div className="space-y-4">
@@ -427,10 +454,18 @@ const SecondaryMarket = () => {
                               </div>
                               <div>
                                 <p className="font-medium">{l.property_title ?? "Property"}</p>
-                                <p className="text-sm text-muted-foreground">
-                                  {l.units_remaining}/{l.units_for_sale} units left • $
-                                  {Number(l.price_per_unit).toLocaleString()}/unit
-                                </p>
+                                {l.plan_id ? (
+                                  <p className="text-sm text-muted-foreground">
+                                    Installment position • {l.units_for_sale} units • $
+                                    {Number(l.price_per_unit).toLocaleString()}/unit
+                                    {l.position && ` • a buyer pays you ${money(l.position.cash)}`}
+                                  </p>
+                                ) : (
+                                  <p className="text-sm text-muted-foreground">
+                                    {l.units_remaining}/{l.units_for_sale} units left • $
+                                    {Number(l.price_per_unit).toLocaleString()}/unit
+                                  </p>
+                                )}
                               </div>
                             </div>
                             <div className="text-right flex items-center gap-3">

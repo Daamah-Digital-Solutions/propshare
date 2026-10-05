@@ -2,6 +2,8 @@
 
 - GET  /properties                 PUBLIC marketplace list (active/funded only).
 - GET  /properties/{id_or_slug}    PUBLIC detail (active/funded only).
+- GET  /properties/{id_or_slug}/prices   PUBLIC: the unit price over time (launch price,
+                                   then every change recorded since).
 - GET  /developers/{slug}          PUBLIC developer profile (its public listings only).
 - POST /properties                 owner: create a draft.
 - PATCH /properties/{id}           owner: edit while draft/under_review.
@@ -21,6 +23,7 @@ from app.api.deps import Principal, SessionDep, require_active_role_db
 from app.schemas.property import (
     DeveloperProfileOut,
     OwnerPropertyOut,
+    PriceHistoryOut,
     PropertyCreateIn,
     PropertyDetailOut,
     PropertyListOut,
@@ -30,6 +33,7 @@ from app.schemas.property import (
 from app.services import (
     listing_media_service,
     milestone_service,
+    price_service,
     property_service,
     settings_service,
 )
@@ -112,6 +116,14 @@ async def get_property(id_or_slug: str, session: SessionDep, preview: str | None
     data["milestones"] = [milestone_service.serialize(m) for m in milestones]
     data["construction_progress"] = milestone_service.construction_progress_from_rows(milestones)
     return PropertyDetailOut(**data)
+
+
+@router.get("/properties/{id_or_slug}/prices", response_model=PriceHistoryOut)
+async def get_property_prices(id_or_slug: str, session: SessionDep):
+    """The unit price of a published listing over time: what an investor bought at, what it
+    is now, and each change in between (a monthly revaluation or a new sales phase)."""
+    prop = await property_service.get_public_detail(session, id_or_slug)
+    return PriceHistoryOut(**await price_service.history(session, prop))
 
 
 @router.get("/developers/{slug}", response_model=DeveloperProfileOut)

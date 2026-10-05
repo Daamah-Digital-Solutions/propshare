@@ -99,6 +99,10 @@ def serialize_summary(prop: Property, owner_names: dict[uuid.UUID, str | None]) 
         "total_value": _num(prop.total_value),
         "minimum_investment": _num(prop.minimum_investment),
         "unit_price": _num(prop.unit_price),
+        # how an under-construction listing is bought: installments | full | both
+        "offplan_payment": prop.offplan_payment or "installments",
+        # set once the unit price has changed: what the listing was launched at
+        "launch_price": _num(prop.launch_price) if prop.launch_price is not None else None,
         "target_yield": _num(prop.target_yield),
         "expected_yield": _num(prop.expected_yield),
         "capital_appreciation": _num(prop.capital_appreciation),

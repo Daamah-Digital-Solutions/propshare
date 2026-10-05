@@ -190,3 +190,44 @@ Locked product/engineering decisions, newest groups appended. Companion to `PROG
   nothing fakes a cancel/refund and nothing needed honest-disabling. When built, cancellation
   must define the refund policy for already-paid installments + the fate of already-vested
   units (both riba/legal-sensitive) — needs an explicit owner rule before implementation.
+
+---
+
+## Off-plan exit (2026-10-05, migration 0034)
+Client meeting 2026-10-01. The full model, with the client's examples: `plan/OFFPLAN_EXIT_MODEL_AR.md`.
+- **Supersedes the Group 6 rule "a plan's vested units cannot change hands before handover".**
+  They still cannot be listed loose, LP-exited, family-allocated or gifted while the plan runs,
+  but the plan is sold WHOLE as one position on the secondary market: the buyer pays the seller
+  `units x price - principal still to pay` (what the seller put in plus the price change on
+  every unit), takes the vested units and the plan, and pays the remaining installments on
+  their dates. The pre-handover rental exclusion is unchanged.
+- **One current price.** `properties.unit_price` is the price everything reads; staff record
+  each new price (monthly revaluation, new sales phase) in Admin -> Unit prices, full admins
+  only, kept in the append-only `property_prices`. A change of more than 25% in one step needs
+  an explicit confirmation. An open LP exit request priced at the old price is closed.
+- **How an under-construction listing is bought** is per listing (`properties.offplan_payment`:
+  installments | full | both). A "phase" is a recorded price with a label; phases have no unit
+  quota.
+- **A position's cost and gain are its holder's own**, from the price the holder got in at (the
+  plan's locked price, or the price they bought the position at).
+- **Chosen in implementation, to confirm with the client:** the resale fee on a position is
+  buyer-side and on the cash paid to the seller only; the buyer pays the plan's installment fee
+  on the remaining installments; a position is never split; liquidity providers do not buy
+  positions; prices are recorded by hand (no automatic schedule); an overdue installment goes
+  to the buyer, who is told before buying.
+- **Nobody pays a price they did not see** (added after the code review). A purchase or a new
+  plan carries the unit price on the investor's screen (`expected_unit_price`; a mismatch is
+  409 `PRICE_CHANGED`); buying a position carries the cash and the fee shown
+  (`POSITION_CHANGED`). A payment that arrives after its 30-minute hold lapsed AND after the
+  unit price changed is refunded to the wallet (`price_changed_refunded`), never honoured at
+  the old price; with the price unchanged and units free it is honoured as before.
+- **What the market shows about a position is the plan's**: paid on the plan and the change
+  since the plan started. The seller's own cost and gain are shown to the seller only. The
+  installment fees a seller paid are not returned by the sale (principal + price change only).
+- **`properties.launch_price`** is written at the first price change. Once a price has moved,
+  the asset value shown is `total_units x unit_price`; `total_value` stays the denominator of
+  the funding progress only (sold units at their price + unsold units at today's).
+- **A success answer means the work is committed.** `api.deps.SessionDep` is function-scoped
+  (needs FastAPI >= 0.121): the commit happens when the route returns, before the response.
+  A route that streams or runs a background task must not use the request session after it
+  returns (the assistant stream and the instant payout already use their own).

@@ -89,6 +89,7 @@ async def create_investment(
         amount=body.amount,
         method=body.method,
         idempotency_key=idempotency_key,
+        expected_unit_price=body.expected_unit_price,
         # Back to the Investments tab, which follows the payment until the units are confirmed
         # (the service appends the payment id).
         success_url=f"{app_base}/dashboard?tab=investments&invest=success",

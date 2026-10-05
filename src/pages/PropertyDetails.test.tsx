@@ -4,7 +4,7 @@
  * "Secondary Market (after 6 months)"), a stock Unsplash developer logo, "0 projects completed",
  * and fee rows (performance 10% / exit 1%) that no admin field controlled.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -14,17 +14,50 @@ const getMock = vi.fn();
 const { auth } = vi.hoisted(() => ({ auth: { isAuthenticated: false } }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => auth }));
 vi.mock("@/lib/api", () => ({
-  propertyApi: { get: (...a: unknown[]) => getMock(...a) },
+  propertyApi: {
+    get: (...a: unknown[]) => getMock(...a),
+    // the under-construction page reads the unit price history; none recorded here
+    prices: async () => ({
+      property_id: "p1",
+      current_price: "100.00",
+      launch_price: "100.00",
+      change_pct: "0.00",
+      updated_at: null,
+      phase: null,
+      points: [{ at: "2026-01-01T00:00:00Z", price: "100.00", change_pct: "0.00", label: "Launch price", note: null }],
+    }),
+  },
   documentsApi: { listForProperty: async () => [] },
   assetUrl: (u: string) => u,
   apiUrl: (u: string) => u,
 }));
 vi.mock("@/components/property/PropertyGallery", () => ({ default: () => <div data-testid="gallery" /> }));
-vi.mock("@/components/property/InvestmentCalculator", () => ({
-  default: (p: { investmentAmount: number; openReview?: boolean }) => (
-    <div data-testid="invest-calc" data-amount={p.investmentAmount} data-review={String(!!p.openReview)} />
-  ),
-}));
+vi.mock("@/components/property/InvestmentCalculator", async () => {
+  const { useEffect, useRef } = await import("react");
+  // like the real one: the review opens once per mount, and the page is told
+  function InvestCalcStub(p: {
+    investmentAmount: number;
+    openReview?: boolean;
+    offplan?: boolean;
+    onReviewOpened?: () => void;
+  }) {
+    const opened = useRef(false);
+    if (p.openReview) opened.current = true;
+    useEffect(() => {
+      if (p.openReview) p.onReviewOpened?.();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [p.openReview]);
+    return (
+      <div
+        data-testid="invest-calc"
+        data-amount={p.investmentAmount}
+        data-review={String(opened.current)}
+        data-offplan={String(!!p.offplan)}
+      />
+    );
+  }
+  return { default: InvestCalcStub };
+});
 vi.mock("@/components/property/InstallmentCalculator", () => ({
   default: (p: { investmentAmount: number; initialDuration?: string }) => (
     <div data-testid="installment-calc" data-amount={p.investmentAmount} data-duration={p.initialDuration ?? ""} />
@@ -228,6 +261,74 @@ describe("PropertyDetails — an order prepared by the assistant", () => {
     const calc = await screen.findByTestId("installment-calc");
     await waitFor(() => expect(calc).toHaveAttribute("data-amount", "2000"));
     expect(calc).toHaveAttribute("data-duration", "18");
+  });
+
+  it("pays a project sold in phases in full, on the under-construction page", async () => {
+    auth.isAuthenticated = true;
+    getMock.mockResolvedValue({ ...base, model: "installment", offplan_payment: "full" });
+    renderIt("/property/p1?units=20");
+    expect(await screen.findByTestId("under-construction-view")).toBeInTheDocument();
+    const calc = await screen.findByTestId("invest-calc");
+    await waitFor(() => expect(calc).toHaveAttribute("data-amount", "2000"));
+    expect(calc).toHaveAttribute("data-offplan", "true"); // no rent before handover
+    expect(calc).toHaveAttribute("data-review", "true");
+    expect(screen.queryByTestId("installment-calc")).toBeNull();
+    expect(screen.queryByTestId("pay-mode-switch")).toBeNull(); // nothing to choose
+  });
+
+  it("lets the investor choose when a listing offers both ways", async () => {
+    getMock.mockResolvedValue({ ...base, model: "installment", offplan_payment: "both" });
+    renderIt();
+    // the plan first, as the page always opened
+    expect(await screen.findByTestId("installment-calc")).toBeInTheDocument();
+    const [plan, full] = within(screen.getByTestId("pay-mode-switch")).getAllByRole("button");
+    expect(plan).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(full);
+    expect(await screen.findByTestId("invest-calc")).toHaveAttribute("data-offplan", "true");
+    expect(screen.queryByTestId("installment-calc")).toBeNull();
+    fireEvent.click(plan);
+    expect(await screen.findByTestId("installment-calc")).toBeInTheDocument();
+  });
+
+  it("opens on full payment when the prepared order asks for it", async () => {
+    getMock.mockResolvedValue({ ...base, model: "installment", offplan_payment: "both" });
+    renderIt("/property/p1?units=20&pay=full");
+    const calc = await screen.findByTestId("invest-calc");
+    await waitFor(() => expect(calc).toHaveAttribute("data-amount", "2000"));
+    expect(screen.queryByTestId("installment-calc")).toBeNull();
+  });
+
+  it("turns prepared units into an amount in exact cents", async () => {
+    // 3 x 110.10 is 330.29999999999995 as a float: the server would have bought 2 units
+    getMock.mockResolvedValue({ ...base, unit_price: 110.1, minimum_investment: 110.1 });
+    renderIt("/property/p1?units=3");
+    const calc = await screen.findByTestId("invest-calc");
+    await waitFor(() => expect(calc).toHaveAttribute("data-amount", "330.3"));
+  });
+
+  it("does not open a full-payment confirmation for an order prepared for the plan", async () => {
+    auth.isAuthenticated = true;
+    getMock.mockResolvedValue({ ...base, model: "installment", offplan_payment: "both" });
+    renderIt("/property/p1?units=20&months=18");
+    const plan = await screen.findByTestId("installment-calc");
+    await waitFor(() => expect(plan).toHaveAttribute("data-duration", "18"));
+    // the investor only looks at the other way to pay: nothing pops open
+    const [, full] = within(screen.getByTestId("pay-mode-switch")).getAllByRole("button");
+    fireEvent.click(full);
+    expect(await screen.findByTestId("invest-calc")).toHaveAttribute("data-review", "false");
+  });
+
+  it("opens the review of a prepared full payment once, not again on every switch", async () => {
+    auth.isAuthenticated = true;
+    getMock.mockResolvedValue({ ...base, model: "installment", offplan_payment: "both" });
+    renderIt("/property/p1?units=20&pay=full");
+    const calc = await screen.findByTestId("invest-calc");
+    await waitFor(() => expect(calc).toHaveAttribute("data-review", "true"));
+    const [plan, full] = within(screen.getByTestId("pay-mode-switch")).getAllByRole("button");
+    fireEvent.click(plan);
+    await screen.findByTestId("installment-calc");
+    fireEvent.click(full);
+    expect(await screen.findByTestId("invest-calc")).toHaveAttribute("data-review", "false");
   });
 
   it("ignores a malformed order", async () => {

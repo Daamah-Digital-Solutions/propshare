@@ -340,6 +340,7 @@ async def test_portfolio_zero_state_and_auth(client, db):
         "total_returns": "0.00",
         "properties": 0,
         "units": 0,
+        "sold": "0.00",
     }
     assert (await client.get("/api/v1/investments/portfolio")).status_code == 401
 

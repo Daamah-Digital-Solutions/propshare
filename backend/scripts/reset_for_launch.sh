@@ -118,6 +118,10 @@ UPDATE wallets SET balance = 0, pending_balance = 0, total_invested = 0, total_r
 -- property funding counters back to a fresh offering
 UPDATE properties SET funded_amount = 0, investors_count = 0, available_units = total_units,
        status = CASE WHEN status = 'funded' THEN 'active' ELSE status END;
+-- a recorded unit price moved the offering's total only for the units unsold at the time
+-- (0034): with every unit for sale again, the total is every unit at today's price
+UPDATE properties SET total_value = total_units * unit_price
+ WHERE id IN (SELECT property_id FROM property_prices);
 
 $( [ $DROP_DEMO = 1 ] && cat <<DEMO
 -- demo properties
