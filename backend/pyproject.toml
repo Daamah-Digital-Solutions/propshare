@@ -4,7 +4,8 @@ version = "0.0.1"
 description = "Capimax PropShare — Python (FastAPI) backend. Phase 0: foundation & schema adoption."
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.115",
+    # 0.121 added Depends(scope="function"): the request session commits before the response
+    "fastapi>=0.121",
     "uvicorn[standard]>=0.30",
     "gunicorn>=22.0",
     "pydantic>=2.7",

@@ -259,7 +259,10 @@ async def test_return_urls_carry_the_payment_id_and_the_roles_wallet(client, db,
     async def fake_checkout(**kwargs):
         captured.update(kwargs)
         return CheckoutResult(
-            provider_payment_id="cs_ret", checkout_url="https://s/c", status="pending"
+            # one Checkout Session per payment, as at Stripe (the pair is unique in `payments`)
+            provider_payment_id=f"cs_ret_{kwargs['payment_id']}",
+            checkout_url="https://s/c",
+            status="pending",
         )
 
     monkeypatch.setattr(stripe, "is_configured", lambda: True)

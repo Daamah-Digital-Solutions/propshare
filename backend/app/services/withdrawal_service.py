@@ -271,9 +271,11 @@ async def request_withdrawal(
     )
     if status == "approved":
         # Make the row + its hold durable NOW. The instant submitter runs on its own session
-        # (and so does the cron): until this commits, they would see nothing — and the FastAPI
-        # dependency does not commit until after background tasks have run. Everything written
-        # in this call still commits as one unit; nothing after this point can fail money.
+        # (and so does the cron): until this commits, they would see nothing. The request
+        # session now commits before the response as well (api.deps.SessionDep); committing
+        # here keeps that guarantee in the money path itself, however the caller's session is
+        # scoped. Everything written in this call still commits as one unit; nothing after
+        # this point can fail money.
         await session.commit()
     if status == "pending_review":
         await notification_service.notify(

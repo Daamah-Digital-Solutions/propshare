@@ -27,7 +27,11 @@ from app.core.security import decode_access_token
 from app.models import KycVerification, UserRole
 from app.models.base import AppRole
 
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
+# scope="function": the session commits when the route returns, BEFORE the response is sent.
+# FastAPI's default (since 0.118) runs it after the response, so a client was told "done"
+# before the transaction was committed: its next request could read the old state, a commit
+# that failed was reported as a success, and a background task started before the commit.
+SessionDep = Annotated[AsyncSession, Depends(get_session, scope="function")]
 
 
 @dataclass(frozen=True)

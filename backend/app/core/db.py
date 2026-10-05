@@ -58,7 +58,9 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency: a request-scoped session in a single transaction.
 
     Commits on success, rolls back on exception. Services called within the
-    request share this session so a handler's writes are one atomic unit.
+    request share this session so a handler's writes are one atomic unit. The route
+    dependency (``api.deps.SessionDep``) is function-scoped, so the commit happens before
+    the response leaves: a success answer always means the work is saved.
     """
     maker = get_sessionmaker()
     async with maker() as session:

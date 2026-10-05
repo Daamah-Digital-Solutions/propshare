@@ -269,7 +269,10 @@ async def test_card_checkout_lists_saved_cards_once_there_is_one(
     async def fake_checkout(**kwargs):
         seen.append(kwargs.get("customer_id"))
         return CheckoutResult(
-            provider_payment_id="cs_x", checkout_url="https://pay.t", status="pending"
+            # one Checkout Session per payment, as at Stripe (the pair is unique in `payments`)
+            provider_payment_id=f"cs_{kwargs['payment_id']}",
+            checkout_url="https://pay.t",
+            status="pending",
         )
 
     monkeypatch.setattr(gw, "is_configured", lambda: True)
