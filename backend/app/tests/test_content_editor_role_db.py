@@ -38,6 +38,17 @@ async def _user_with_role(client, db, email: str, role: str) -> tuple[str, str]:
     return str(uid), login.json()["access_token"]
 
 
+def _api_routes():
+    """Every route of the app as (path, methods). FastAPI used to copy an included router's
+    routes onto ``app.routes``; newer releases (seen with 0.139) keep the router nested and
+    offer ``iter_route_contexts`` to walk it, so a plain loop over ``app.routes`` finds none."""
+    from fastapi import routing
+
+    walk = getattr(routing, "iter_route_contexts", None)
+    for route in walk(app.routes) if walk else app.routes:
+        yield getattr(route, "path", None) or "", getattr(route, "methods", None) or set()
+
+
 async def _panel_login(client, email: str) -> None:
     r = await client.post("/admin/login", data={"username": email, "password": PW})
     assert r.status_code in (200, 302, 303) and "session" in client.cookies, r.text[:200]
@@ -144,11 +155,10 @@ async def test_content_editor_has_no_admin_api_and_cannot_be_self_requested(clie
     _uid, tok = await _user_with_role(client, db, "editor3@x.com", "content_editor")
     h = {"Authorization": f"Bearer {tok}"}
     swept, failures = 0, []
-    for route in app.routes:
-        path = getattr(route, "path", "")
+    for path, methods in _api_routes():
         if not path.startswith("/api/v1/admin"):
             continue
-        for method in getattr(route, "methods", set()) - {"HEAD", "OPTIONS"}:
+        for method in methods - {"HEAD", "OPTIONS"}:
             swept += 1
             url = re.sub(r"\{[^}]+\}", str(uuid.uuid4()), path)  # any id will do: 403 first
             r = await client.request(method, url, headers=h, json={})
