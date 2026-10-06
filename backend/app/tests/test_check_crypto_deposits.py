@@ -163,6 +163,9 @@ def test_a_payment_is_judged_by_what_nowpayments_reports():
     assert check.leading([waiting, partial, done]) is done
     assert check.leading([waiting, partial]) is partial and check.leading([]) is None
     assert "an extra deposit on payment 1" in check.describe(done)
+    # the whole record is shown for the unusual ones only, never with the payer's email
+    assert check.unusual(partial) and check.unusual(done) and not check.unusual(waiting)
+    assert check.whole({"payment_id": 2, "customer_email": "a@b.c"}) == '{"payment_id":2}'
     # sandbox is the API's default until the flag says otherwise
     assert check.sandbox(None) and check.sandbox("true") and not check.sandbox("false")
     assert (
@@ -234,7 +237,7 @@ def test_a_notification_that_matched_no_payment_is_looked_up(monkeypatch, tmp_pa
     assert "1 notification(s) in 14 days matched no payment of the platform" in text
     assert "2026-10-06 10:30  'finished'  NOWPayments 7770: finished; coin usdterc20" in text
     assert "received 12.98; an extra deposit on payment 5001" in text
-    assert "its order: None; invoice: 4455" in text
+    assert '"invoice_id":4455,"order_id":null,"parent_payment_id":5001' in text
     assert "could not match" in text.split("== Summary")[1]
 
 

@@ -150,6 +150,19 @@ def describe(payment: dict) -> str:
     return f"{line}; updated {payment.get('updated_at')}"
 
 
+def unusual(payment: dict) -> bool:
+    """An under-paid payment or an extra deposit: the ones whose whole record is worth reading."""
+    return payment.get("payment_status") == "partially_paid" or bool(
+        payment.get("parent_payment_id")
+    )
+
+
+def whole(payment: dict) -> str:
+    """Everything NOWPayments holds on a payment, on one line, without the payer's email."""
+    kept = {name: value for name, value in payment.items() if "email" not in name.lower()}
+    return json.dumps(kept, separators=(",", ":"), sort_keys=True)
+
+
 def leading(records: list[dict]) -> dict | None:
     """The record that decides a payment: a finished one, else an under-paid one, else the
     one furthest on (an invoice can hold several: extra and recovered deposits)."""
@@ -309,6 +322,8 @@ def main() -> int:
         info(f"notifications received: {row['events'] or 'none'}")
         for record in records:
             info(f"NOWPayments {describe(record)}")
+            if unusual(record):
+                info(f"   whole record: {whole(record)}")
         {"ok": ok, "wait": info, "act": warn}[kind](why)
         if kind == "act":
             attention.append(f"{row['created']} {row['amount']} USD ({row['member']}): {why}")
@@ -320,7 +335,7 @@ def main() -> int:
             _status, found = np_get(base, f"/payment/{quote(np_id, safe='')}", key)
             info(f"{when}  '{state}'  NOWPayments {describe(found) if found else np_id}")
             if found:
-                info(f"   its order: {found.get('order_id')}; invoice: {found.get('invoice_id')}")
+                info(f"   whole record: {whole(found)}")
         attention.append("NOWPayments reported payment(s) the platform could not match (step 2)")
 
     say("3. How the API answered NOWPayments' notifications")
