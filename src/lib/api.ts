@@ -1689,6 +1689,8 @@ export interface Holding {
   title: string | null;
   location: string | null;
   units: number;
+  /** the share of the whole property, written as on the certificate ("0.04762%") */
+  ownership_pct?: string | null;
   listed_units: number;
   /** held for Nova Finance until the pledge is released (paid with a Nova Sukuk certificate) */
   pledged_units?: number;

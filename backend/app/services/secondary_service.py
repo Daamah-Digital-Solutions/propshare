@@ -63,6 +63,7 @@ from app.models import (
 from app.models.base import TransactionType
 from app.models.investments import OwnershipLedger
 from app.services import (
+    certificate_service,
     installment_service,
     notification_service,
     price_service,
@@ -1099,6 +1100,7 @@ async def my_holdings(session: AsyncSession, user_id: uuid.UUID) -> list[dict]:
                 Property.title,
                 Property.unit_price,
                 Property.location,
+                Property.total_units,
             )
             .join(Property, OwnershipLedger.property_id == Property.id)
             .where(OwnershipLedger.user_id == user_id)
@@ -1107,13 +1109,14 @@ async def my_holdings(session: AsyncSession, user_id: uuid.UUID) -> list[dict]:
                 Property.title,
                 Property.unit_price,
                 Property.location,
+                Property.total_units,
             )
         )
     ).all()
     held_rows = [r for r in rows if int(r[1] or 0) > 0]
     prices = await price_service.summaries(session, [r[0] for r in held_rows])
     out: list[dict] = []
-    for pid, units, title, unit_price, location in held_rows:
+    for pid, units, title, unit_price, location, total_units in held_rows:
         held = int(units or 0)
         held_back = await reservation_breakdown(session, user_id, pid)
         reserved = sum(held_back.values())
@@ -1121,12 +1124,15 @@ async def my_holdings(session: AsyncSession, user_id: uuid.UUID) -> list[dict]:
         price = prices.get(pid, {})
         launch = decimal.Decimal(price.get("launch_price", unit_price))
         average = await _average_cost(session, user_id, pid)
+        share = certificate_service.ownership_pct(held, int(total_units or 0))
         out.append(
             {
                 "property_id": str(pid),
                 "title": title,
                 "location": location,
                 "units": held,
+                # the share of the property, written as on the certificate (None: no unit count)
+                "ownership_pct": None if share == "-" else share,
                 "listed_units": reserved - pledged,
                 "pledged_units": pledged,
                 "sellable_units": max(0, held - reserved),

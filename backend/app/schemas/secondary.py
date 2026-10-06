@@ -125,6 +125,8 @@ class HoldingOut(BaseModel):
     title: str | None
     location: str | None
     units: int
+    # the share of the whole property, written as on the certificate ("0.04762%")
+    ownership_pct: str | None = None
     listed_units: int
     # held for Nova Finance until staff release the pledge (0032)
     pledged_units: int = 0

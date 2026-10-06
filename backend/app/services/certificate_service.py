@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.models import OwnershipLedger, Property
 from app.models.identity import User
+from app.services import verification_partners
 
 _W, _H = 595.0, 842.0  # A4 points
 _CX = _W / 2
@@ -41,6 +42,8 @@ _INK = HexColor("#23302A")
 _MUTED = HexColor("#6B726C")
 _CREAM = HexColor("#FCFBF5")
 _PANEL = HexColor("#F3F8F4")
+# The certificate title's letter-spacing, in points. PDF keeps it for the text drawn after it.
+_TRACKING = 1.2
 
 # Official logo asset (transparent PNG). Embedded in the certificate header when available;
 # rendering falls back to the vector emblem + wordmark if it (or Pillow) is missing.
@@ -294,7 +297,7 @@ def render_certificate_pdf(
     _divider(c, _CX, 712, 150)
 
     # Title + subtitle.
-    _spaced_centred(c, _CX, 668, "Times-Bold", 31, "Certificate of Ownership", 1.2, _GREEN_D)
+    _spaced_centred(c, _CX, 668, "Times-Bold", 31, "Certificate of Ownership", _TRACKING, _GREEN_D)
     c.setFillColor(_MUTED)
     c.setFont("Times-Italic", 12)
     c.drawCentredString(_CX, 648, "Fractional Real-Estate Ownership")
@@ -314,7 +317,13 @@ def render_certificate_pdf(
     _fit_centred(c, _CX, 530, "Times-Bold", 14, property_title, 430, _GREEN)
     c.setFillColor(_INK)
     c.setFont("Times-Roman", 12)
-    c.drawCentredString(_CX, 510, "as recorded in the Capimax PropShare ownership ledger.")
+    ledger_line = "as recorded in the Capimax PropShare ownership ledger."
+    if ownership == "-":  # a listing without a unit count has no share to state
+        c.drawCentredString(_CX, 510, ledger_line)
+    else:
+        # how much of the property the units are (client, 2026-10-01): OWNERSHIP STAKE below
+        c.drawCentredString(_CX, 511, f"representing {ownership} of the property,")
+        c.drawCentredString(_CX, 494, ledger_line)
 
     # Fact panel (2 columns x 4 rows).
     px, py, pw, ph = 82, 292, _W - 164, 170
@@ -364,15 +373,28 @@ def render_certificate_pdf(
         "transferable security or a substitute for the offering documents and SPV agreements "
         "governing this property."
     )
-    # NB: viewers render base-14 Times with a WIDER metric-compatible substitute (~1.4x) than
-    # stringWidth() assumes, so keep the wrap width well under the ~500pt safe area.
+    # NB: the title's letter-spacing stays in the PDF text state, so every later line is drawn
+    # wider than stringWidth() says (~1.3x at this size): keep the wrap width well under the
+    # ~500pt safe area.
     fy = 128
     for ln in _wrap(footer_text, "Times-Roman", 8.5, 290):
         c.drawCentredString(_CX, fy, ln)
         fy -= 12.5
     c.setFillColor(_GOLD)
     c.setFont("Helvetica", 8)
-    c.drawCentredString(_CX, 74, f"{cert_ref}   •   capimaxpropshare.com")
+    ref_line = f"{cert_ref}   •   capimaxpropshare.com"
+    c.drawCentredString(_CX, 74, ref_line)
+    # Under the reference, where it is verified (client, 2026-10-01): the partner's page,
+    # written out for a printed copy and a link in the file. The letter-spacing (NB above)
+    # widens a line by its length, so this longer one is placed by its drawn width to sit
+    # centred under the reference; drawCentredString would run it into the frame.
+    partner = verification_partners.CERTIFICATES
+    verify_line = f"Verify at {partner.provider}   •   {partner.url.removeprefix('https://')}"
+    drawn = stringWidth(verify_line, "Helvetica", 8) + _TRACKING * (len(verify_line) - 1)
+    left = _CX + _TRACKING * (len(ref_line) - 1) / 2 - drawn / 2
+    c.setFillColor(_GREEN_D)
+    c.drawString(left, 61, verify_line)
+    c.linkURL(partner.url, (left, 57, left + drawn, 69), relative=0)
 
     c.showPage()
     c.save()

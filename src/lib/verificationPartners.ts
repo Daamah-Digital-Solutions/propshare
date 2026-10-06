@@ -117,6 +117,10 @@ export const VERIFICATION_PARTNERS: VerificationPartner[] = [
   },
 ];
 
+/** Where a holder verifies the investment certificate PropShare issues, by its reference
+ * (the backend's verification_partners.CERTIFICATES). */
+export const CERTIFICATE_PARTNER = VERIFICATION_PARTNERS[0];
+
 /** "www.example.com/path" for showing where a link goes. */
 export function displayUrl(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "");

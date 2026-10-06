@@ -231,3 +231,25 @@ Client meeting 2026-10-01. The full model, with the client's examples: `plan/OFF
   (needs FastAPI >= 0.121): the commit happens when the route returns, before the response.
   A route that streams or runs a background task must not use the request session after it
   returns (the assistant stream and the instant payout already use their own).
+
+---
+
+## Certificate: share of the property and verify link (2026-10-06)
+Client meeting 2026-10-01, its last two items.
+- **A certificate links to its verification partner's gateway page**, the link the client gave
+  (`verification_partners.CERTIFICATES`: CIM Global Financial's Capimax Verify): under each
+  certificate reference in the dashboard (Verification and Certificates tabs) and under the
+  reference on the PDF, written out for a printed copy and clickable. Not CIM's page per
+  record (`/verification/<reference>` exists on their site): until the client registers the
+  certificates there under PropShare's references it answers "record not found", and that
+  address is theirs to change.
+- **The share of the property is one string from one function**
+  (`certificate_service.ownership_pct`: two decimals from 1% up, else four significant
+  figures, never 0.00%): the certificate's text and fact panel, the holdings API
+  (`ownership_pct`), both dashboard tabs and the assistant's certificate card.
+- **Known and left as it is:** everything the certificate draws after its title carries the
+  title's letter-spacing (PDF keeps it in the text state), so centred lines sit right of
+  centre and a long value in the fact panel runs into the next column (on both live listings
+  the SPV name loses its "Ltd", and on Creek Tower it touches the jurisdiction). The new
+  footer line allows for it; the layout itself was not changed, which needs the owner's eye
+  on a before and after.

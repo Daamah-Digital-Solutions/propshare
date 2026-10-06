@@ -2,7 +2,7 @@
  * Verification tab in the investor dashboard: the same Capimax Trust hand-off as the public
  * page, plus the investor's own certificate references (the exact value printed on each PDF).
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -55,6 +55,34 @@ describe("VerificationTab", () => {
     expect(list).toHaveTextContent("CMX-9F3EABCD");
     expect(list).toHaveTextContent("Marina Loft");
     expect(list).not.toHaveTextContent("Sold Out"); // no units, no certificate
+    expect(list).not.toHaveTextContent("of the property"); // no share given, none shown
+  });
+
+  it("puts the share of the property and the link to Capimax Verify with each certificate", async () => {
+    // Client (2026-10-01): under the certificate number, the link to where it is verified;
+    // and how much of the property the units are (20 of 42,000 used to read 0.05%).
+    holdings.mockResolvedValue({
+      items: [
+        { property_id: "9f3e7777-aaaa", title: "Creek Tower", location: "Dubai", units: 20, ownership_pct: "0.04762%", listed_units: 0, sellable_units: 20, unit_price: "50" },
+        { property_id: "5b21cccc-bbbb", title: "Marina Loft", location: "Dubai", units: 3, ownership_pct: "0.3%", listed_units: 0, sellable_units: 3, unit_price: "100" },
+      ],
+      total: 2,
+    });
+    mount();
+    const list = await screen.findByTestId("certificate-refs");
+    expect(list).toHaveTextContent("20 units · 0.04762% of the property");
+    expect(list).toHaveTextContent("3 units · 0.3% of the property");
+    const links = within(list).getAllByRole("link");
+    expect(links.map((a) => a.getAttribute("aria-label"))).toEqual([
+      "Verify certificate CMX-9F3EABCD at CIM Global Financial",
+      "Verify certificate CMX-5B21ABCD at CIM Global Financial",
+    ]);
+    for (const a of links) {
+      expect(a).toHaveTextContent("Verify at CIM Global Financial");
+      expect(a).toHaveAttribute("href", "https://www.cimglobalfinancial.com/capimax-verify");
+      expect(a).toHaveAttribute("target", "_blank");
+      expect(a).toHaveAttribute("rel", "noopener noreferrer");
+    }
   });
 
   it("copies a reference to the clipboard", async () => {

@@ -5,6 +5,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { VerificationPartners } from "./VerificationPartners";
+import { CERTIFICATE_PARTNER } from "@/lib/verificationPartners";
 
 const PARTNERS: [string, string, string, string][] = [
   ["capimax_documents", "Powered by CIM Global Financial", "Verify Document / Certificate", "https://www.cimglobalfinancial.com/capimax-verify"],
@@ -45,5 +46,11 @@ describe("VerificationPartners", () => {
       /unique Document Number shown on the document/,
     );
     expect(screen.getByRole("heading", { name: "Independent Verification" })).toBeInTheDocument();
+  });
+
+  it("names the partner a certificate's own link goes to", () => {
+    // the link under each certificate reference (dashboard tabs) and on the PDF
+    expect(CERTIFICATE_PARTNER.key).toBe("capimax_documents");
+    expect(CERTIFICATE_PARTNER.url).toBe("https://www.cimglobalfinancial.com/capimax-verify");
   });
 });

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { certificateRef, saveBlob } from "@/lib/certificates";
+import { CERTIFICATE_PARTNER } from "@/lib/verificationPartners";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +10,7 @@ import {
   Building2,
   CheckCircle2,
   Download,
+  ExternalLink,
   Eye,
   FileArchive,
   FileText,
@@ -21,7 +23,6 @@ import {
   certificateApi,
   documentsApi,
   holdingsApi,
-  propertyApi,
   returnsApi,
   type Holding,
 } from "@/lib/api";
@@ -45,18 +46,12 @@ export const InvestmentCertificates = () => {
     queryKey: ["cert-holdings"],
     queryFn: () => holdingsApi.mine(),
   });
-  const { data: propsResp } = useQuery({ queryKey: ["cert-props"], queryFn: () => propertyApi.list() });
   const { data: returns } = useQuery({ queryKey: ["cert-returns"], queryFn: returnsApi.getMine });
 
   const rows = useMemo(
     () => (holdingsResp?.items ?? []).filter((h) => h.units > 0),
     [holdingsResp],
   );
-  const totalUnitsById = useMemo(() => {
-    const m = new Map<string, number>();
-    (propsResp?.items ?? []).forEach((p) => m.set(p.id, p.total_units));
-    return m;
-  }, [propsResp]);
   const propIds = useMemo(() => rows.map((r) => r.property_id), [rows]);
 
   // Real document count across the held properties (best-effort; a failed one counts 0).
@@ -206,8 +201,6 @@ export const InvestmentCertificates = () => {
             <div className="space-y-4">
               {rows.map((h) => {
                 const value = h.units * Number(h.unit_price || 0);
-                const tu = totalUnitsById.get(h.property_id);
-                const ownership = tu && tu > 0 ? (h.units / tu) * 100 : null;
                 const certRef = certificateRef(h.property_id, user?.id);
                 const spv = `${h.title ?? "Property"} SPV`;
                 return (
@@ -223,6 +216,16 @@ export const InvestmentCertificates = () => {
                             <MapPin className="h-3 w-3" /> {h.location ?? "—"}
                           </p>
                           <p className="text-xs text-muted-foreground mt-0.5">{certRef}</p>
+                          <a
+                            href={CERTIFICATE_PARTNER.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`Verify certificate ${certRef} at ${CERTIFICATE_PARTNER.provider}`}
+                            className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-4 hover:text-primary/80"
+                          >
+                            Verify at {CERTIFICATE_PARTNER.provider}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
                         </div>
                       </div>
                       <div className="grid grid-cols-3 gap-6 text-sm flex-1">
@@ -233,9 +236,8 @@ export const InvestmentCertificates = () => {
                         </div>
                         <div>
                           <p className="text-xs text-muted-foreground">Ownership</p>
-                          <p className="font-semibold text-foreground">
-                            {ownership != null ? ownership.toFixed(2) + "%" : "—"}
-                          </p>
+                          {/* the share as the certificate prints it: never rounded to 0.00% */}
+                          <p className="font-semibold text-foreground">{h.ownership_pct ?? "—"}</p>
                           <p className="text-xs text-muted-foreground truncate">{spv}</p>
                         </div>
                         <div>
@@ -246,7 +248,7 @@ export const InvestmentCertificates = () => {
                           </Badge>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
                           variant="outline"
                           size="sm"

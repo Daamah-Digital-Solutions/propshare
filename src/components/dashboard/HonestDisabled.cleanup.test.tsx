@@ -17,7 +17,6 @@ const walletGetMe = vi.fn();
 const walletTxns = vi.fn();
 const connectStatus = vi.fn();
 const holdingsMine = vi.fn();
-const propsList = vi.fn();
 const returnsGetMine = vi.fn();
 const docsList = vi.fn();
 const pmList = vi.fn();
@@ -43,7 +42,6 @@ vi.mock("@/lib/api", () => ({
     }),
   },
   holdingsApi: { mine: (...a: unknown[]) => holdingsMine(...a) },
-  propertyApi: { list: (...a: unknown[]) => propsList(...a) },
   returnsApi: { getMine: (...a: unknown[]) => returnsGetMine(...a) },
   documentsApi: { listForProperty: (...a: unknown[]) => docsList(...a) },
   certificateApi: { download: vi.fn(), downloadAllZip: vi.fn() },
@@ -80,7 +78,6 @@ function wrap(node: React.ReactNode) {
 
 describe("InvestmentCertificates (real per-holding certificates)", () => {
   beforeEach(() => {
-    propsList.mockResolvedValue({ items: [{ id: "p1", total_units: 100 }], total: 1 });
     returnsGetMine.mockResolvedValue({
       total_net: "0",
       total_management_fee: "0",
@@ -99,6 +96,7 @@ describe("InvestmentCertificates (real per-holding certificates)", () => {
           title: "Marina Loft",
           location: "Dubai",
           units: 8,
+          ownership_pct: "0.01905%",
           listed_units: 0,
           sellable_units: 8,
           unit_price: "100",
@@ -111,6 +109,12 @@ describe("InvestmentCertificates (real per-holding certificates)", () => {
     expect(screen.getByText(/8 units/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /download all/i })).toBeEnabled();
     expect(screen.queryByText(/CERT-2024-001/)).toBeNull(); // no fabricated cert ids
+    // the share as the certificate prints it (it was rounded to two decimals: "0.02%")
+    expect(screen.getByText("0.01905%")).toBeInTheDocument();
+    // under the reference, where it is verified
+    expect(
+      screen.getByRole("link", { name: /verify certificate CMX-P1USER at CIM Global Financial/i }),
+    ).toHaveAttribute("href", "https://www.cimglobalfinancial.com/capimax-verify");
   });
 
   it("shows an honest empty state when there are no holdings", async () => {

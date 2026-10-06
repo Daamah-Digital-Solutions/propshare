@@ -10,11 +10,13 @@ rejects non-public prefixes.
 from __future__ import annotations
 
 import io
+import re
 import uuid
 
 import pytest
 from PIL import Image
 
+from app.services import certificate_service
 from app.services.integrations import storage
 
 PW = "Passw0rd!23"
@@ -198,6 +200,44 @@ async def test_certificate_prints_the_registered_spv_never_a_made_up_one(client,
     _ledger(db, uid, bare, 2)
     pdf = (await client.get(f"/api/v1/investments/certificate/{bare}", headers=_h(tok))).content
     assert pdf.startswith(b"%PDF") and b"Prop SPV" not in pdf
+
+
+async def test_certificate_states_the_share_and_where_it_is_verified(client, db):
+    """Client (2026-10-01): the certificate says how much of the property the units are and,
+    under its reference, where it is verified (CIM Global Financial's Capimax Verify). The
+    dashboard is given the same share, which it used to round itself (20 of 42,000: 0.05%)."""
+    tok, uid = await _user(client, db, "cert-verify@x.com")
+    pid = _seed_property(db, None, slug="cert-verify")
+    db("UPDATE properties SET total_units=42000 WHERE id=:p", p=pid)
+    _ledger(db, uid, pid, 20)
+    pdf = (await client.get(f"/api/v1/investments/certificate/{pid}", headers=_h(tok))).content
+    assert b"(representing 0.04762% of the property,) Tj" in pdf
+    assert b"(as recorded in the Capimax PropShare ownership ledger.) Tj" in pdf
+    # written out for a printed copy, and a link in the file
+    line = rb"\(Verify at CIM Global Financial .* www\.cimglobalfinancial\.com/capimax-verify\) Tj"
+    assert re.search(line, pdf)
+    assert b"/URI (https://www.cimglobalfinancial.com/capimax-verify)" in pdf
+
+    held = (await client.get("/api/v1/secondary/holdings", headers=_h(tok))).json()["items"][0]
+    assert (held["units"], held["ownership_pct"]) == (20, "0.04762%")
+
+
+def test_certificate_without_a_unit_count_states_no_share():
+    pdf = certificate_service.render_certificate_pdf(
+        holder="U",
+        property_title="Prop",
+        location="Dubai",
+        units=3,
+        ownership=certificate_service.ownership_pct(3, 0),
+        value="$300.00",
+        spv="-",
+        jurisdiction="-",
+        cert_ref="CMX-12AB34CD",
+        issued="Oct 06, 2026",
+    )
+    assert b"representing" not in pdf
+    assert b"(as recorded in the Capimax PropShare ownership ledger.) Tj" in pdf
+    assert b"/URI (https://www.cimglobalfinancial.com/capimax-verify)" in pdf
 
 
 async def test_certificate_404_without_holding(client, db):
