@@ -23,14 +23,15 @@
 #   4. assistant knowledge base: how crypto works now (EN + AR, approved as the platform admin)
 #   5. new site live
 #
-# AFTER it, for the 13 USD deposit of 2026-10-06 (NOWPayments payment 4870885867):
-#   a. look at it:   /opt/capimax/venv/bin/python backend/scripts/check_crypto_deposits.py 4870885867
-#   b. NOWPayments dashboard -> Payments -> open 4870885867 -> press "IPN" (send it again).
-#      Do NOT change its status. The platform credits what arrived (12.99 USD) and tells the member.
-#   c. run the check again: the payment reads "settled" and "the platform settled it at 12.99".
-#   If step 3 of the check shows a NEW 401 instead, the notification was refused again; what it
-#   carried is now in the log, for the developer:
-#      journalctl -u capimax --since "30 min ago" | grep "notification refused"
+# A crypto payment a member says is missing (the 13 USD of 2026-10-06 was settled this way, that
+# same day):
+#   a. look at it:   /opt/capimax/venv/bin/python backend/scripts/check_crypto_deposits.py
+#      (add the NOWPayments payment id, from its dashboard, when the platform never heard of it)
+#   b. NOWPayments dashboard -> Payments -> open the payment -> press "IPN" (send it again).
+#      Do NOT change its status. The platform credits what arrived and tells the member.
+#   c. run the check again: under the payment it reads "the platform settled it at <amount>".
+#   A notification that was refused, or money the platform could not value, is in the log:
+#      journalctl -u capimax --since "30 min ago" | grep -E "notification refused|could not be valued"
 #
 # Rollback: sudo -u deploy git -C /opt/capimax/app checkout <previous commit>, systemctl restart
 # capimax and rebuild the site; the previous site stays in dist.old-<stamp> meanwhile. Payments
@@ -162,10 +163,10 @@ echo "   the coin and its network here; the payment page then asks for that coin
 echo "   A crypto payment still on its way shows at the top of the wallet."
 echo "   Money that arrives short or in another coin is credited to the wallet at what arrived."
 echo
-echo "   NEXT, for the 13 USD deposit of 2026-10-06:"
-echo "     1) $VENV/bin/python $BE/scripts/check_crypto_deposits.py 4870885867"
-echo "     2) NOWPayments dashboard -> Payments -> 4870885867 -> press IPN (do not change its status)"
-echo "     3) run 1) again: it reads 'settled' and 'the platform settled it at 12.99'"
-echo "        (a NEW 401 in its step 3 instead? send the developer:"
-echo "         journalctl -u $SERVICE --since '30 min ago' | grep 'notification refused')"
+echo "   A crypto payment a member says is missing:"
+echo "     1) $VENV/bin/python $BE/scripts/check_crypto_deposits.py"
+echo "     2) NOWPayments dashboard -> Payments -> the payment -> press IPN (do not change its status)"
+echo "     3) run 1) again: under the payment it reads 'the platform settled it at <amount>'"
+echo "        (not settled? send the developer:"
+echo "         journalctl -u $SERVICE --since '30 min ago' | grep -E 'notification refused|could not be valued')"
 echo "   Previous site: $APP/dist.old-$STAMP"

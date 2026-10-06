@@ -172,6 +172,19 @@ def test_a_payment_is_judged_by_what_nowpayments_reports():
     # an under-payment still pending was never settled: its notification is sent again
     kind, why = check.verdict(chosen, {"payment_status": "partially_paid"})
     assert kind == "act" and "Send it again" in why and "do not change its status" in why
+    # the platform WAS notified of the money and could not value it: said as that, not as a
+    # notification refused or lost (2026-10-06: the summary sent staff to press IPN again)
+    partial = {"payment_id": 7, "payment_status": "partially_paid", "actually_paid": 13}
+    partial["pay_currency"] = "usdtbsc"
+    kind, why = check.verdict(chosen, partial, {"7": {"status": "partially_paid", "review": True}})
+    assert kind == "act" and "could not tell what it is worth" in why and "13 usdtbsc" in why
+    assert "refused or lost" not in why
+    kind, why = check.verdict(chosen, partial, {"7": {"status": "partially_paid"}})
+    assert kind == "act" and "settled nothing" in why
+    # noted only as waiting: the notification of the money itself never arrived
+    kind, why = check.verdict(chosen, partial, {"7": {"status": "waiting"}})
+    assert "refused or lost" in why
+    assert "refused or lost" in check.verdict(chosen, partial, {"8": {"review": True}})[1]
     # what the platform did with each NOWPayments payment under an invoice
     kept = check.kept_records(
         '{"1": {"status": "partially_paid", "credited": "12.99"},'
@@ -212,7 +225,7 @@ def test_the_report_names_what_needs_a_person_and_shows_no_key(monkeypatch, tmp_
         f"NOWPAYMENTS_API_KEY={KEY}\nNOWPAYMENTS_IPN_SECRET={IPN}\nNOWPAYMENTS_SANDBOX=false\n"
     )
     env = _setup(monkeypatch, tmp_path, env_text)
-    assert check.main() == 0
+    assert check.main(["--minimums"]) == 0
     out = capsys.readouterr()
     text = out.out
     assert "mode: production" in text and "3 coin(s) switched on" in text
@@ -262,7 +275,7 @@ def test_an_account_with_no_coin_switched_on_is_called_out(monkeypatch, tmp_path
         return _http(method, url, body=body, headers=headers)
 
     monkeypatch.setattr(envtools, "_http", no_coins)
-    assert check.main() == 0
+    assert check.main(["--minimums"]) == 0
     text = capsys.readouterr().out
     assert "NO coin is switched on: every invoice page is empty" in text
     assert "no coin to ask about" in text
@@ -297,6 +310,32 @@ def test_a_payment_the_platform_never_heard_of_is_shown_by_its_id(monkeypatch, t
     assert "NOWPayments payment 404404: not found with this key" in text
 
 
+def test_the_coins_minimums_are_asked_only_on_request(monkeypatch, tmp_path, capsys):
+    """Seen on the server, 2026-10-06: NOWPayments answers 429 to whoever asks it a few times
+    in a second, the site's own requests included. A routine check asks about the payments
+    only, each question paced, and one refused for that reason is asked once more."""
+    _setup(monkeypatch, tmp_path, ENV)
+    asked: list[str] = []
+    waits: list[float] = []
+
+    def counting(method, url, *, body=None, headers=None):
+        asked.append(url)
+        if url.endswith("/payment/5001") and asked.count(url) == 1:
+            return 429, ""
+        return _http(method, url, body=body, headers=headers)
+
+    monkeypatch.setattr(envtools, "_http", counting)
+    monkeypatch.setattr(check.time, "sleep", waits.append)
+    assert check.main() == 0
+    text = capsys.readouterr().out
+    assert "not asked: add --minimums" in text and "an invoice of" not in text
+    assert not [url for url in asked if "/min-amount" in url]
+    # the payment refused once was asked again after a longer wait, and its record read
+    assert len([url for url in asked if url.endswith("/payment/5001")]) == 2
+    assert "NOWPayments 5001: partially_paid" in text
+    assert check.BUSY_PAUSE in waits and waits.count(check.PAUSE) >= 3
+
+
 def test_every_notification_refused_means_a_wrong_ipn_secret(monkeypatch, tmp_path, capsys):
     _setup(monkeypatch, tmp_path, ENV)
     refused = "\n".join(line.replace('" 200 ', '" 401 ') for line in LOG.splitlines())
@@ -316,5 +355,5 @@ def test_the_minimum_is_asked_again_with_the_pair_spelled_out(monkeypatch, tmp_p
         return _http(method, url, body=body, headers=headers)
 
     monkeypatch.setattr(envtools, "_http", wants_the_pair)
-    assert check.main() == 0
+    assert check.main(["--minimums"]) == 0
     assert "an invoice of 13 USD: 2 of 3 coin(s) take it" in capsys.readouterr().out

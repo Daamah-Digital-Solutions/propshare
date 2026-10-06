@@ -7,6 +7,7 @@ import decimal
 import hashlib
 import hmac
 import json
+import time
 import types
 import uuid
 
@@ -357,19 +358,25 @@ def test_nowpayments_values_what_arrived() -> None:
 
 
 @pytest.mark.asyncio
-async def test_nowpayments_is_asked_what_unvalued_money_is_worth(monkeypatch) -> None:
-    """A notification that carries no fiat value: NOWPayments' record of the payment, then its
-    rate for the coin. Nothing it cannot be asked is guessed."""
+async def test_nowpayments_is_asked_what_unvalued_money_is_worth(monkeypatch, caplog) -> None:
+    """A notification that carries no fiat value: NOWPayments' rate for the coin tells what the
+    amount that arrived is worth. Its record of a payment carries no value (seen on the server,
+    2026-10-06), so it is read only for what a notification leaves out. Asked too often it
+    answers 429: it is asked again. Nothing it cannot be asked is guessed."""
     answers: dict = {}
     asked: list[str] = []
 
     async def fake_get(path: str):
         asked.append(path)
-        if isinstance(answers.get(path), Exception):
-            raise answers[path]
-        return (200, answers[path]) if path in answers else (404, None)
+        answer = answers.get(path)
+        if isinstance(answer, Exception):
+            raise answer
+        if isinstance(answer, list):  # answers in turn, the last one from then on
+            return answer.pop(0) if len(answer) > 1 else answer[0]
+        return (200, answer) if path in answers else (404, None)
 
     monkeypatch.setattr(nowp, "_get", fake_get)
+    monkeypatch.setattr(nowp, "RETRY_PAUSES", (0, 0))
     rate = "/estimate?amount=13&currency_from=usd&currency_to=usdtbsc"
     extra = {
         "payment_id": 4870885867,
@@ -382,28 +389,22 @@ async def test_nowpayments_is_asked_what_unvalued_money_is_worth(monkeypatch) ->
         "actually_paid_at_fiat": 0,
         "pay_currency": "USDTBSC",
     }
-    assert await nowp.value_now(extra) is None
-    assert asked == ["/payment/4870885867", rate]
-
-    # its record says: believed, and still an extra deposit when the record names no parent
-    # (13 of the 13 it "asked" would otherwise be the whole price)
-    record = {"payment_id": 4870885867, "order_id": "order-1", "price_amount": 13}
-    answers["/payment/4870885867"] = {**record, "pay_amount": 13, "actually_paid": 13}
-    assert await nowp.value_now(extra) is None
-    answers["/payment/4870885867"]["actually_paid_at_fiat"] = 12.98513924
-    assert await nowp.value_now(extra) == (decimal.Decimal("12.99"), "record")
-    # a record of another payment or another order is not believed
-    for wrong in ({"payment_id": 1}, {"order_id": "order-2"}):
-        answers["/payment/4870885867"] = {**record, "actually_paid_at_fiat": 50, **wrong}
+    with caplog.at_level("WARNING"):
         assert await nowp.value_now(extra) is None
+    # the record is not read: the notification has all a rate needs
+    assert asked == [rate]
+    # why it could not be valued is in the server log: what each step answered
+    assert "payment 4870885867 could not be valued" in caplog.text
+    assert "its notification says fiat 0" in caplog.text
+    assert f"its rate {rate} (HTTP 404) answers" in caplog.text
 
-    # no record: 13 USD buys 13.0149 USDT today, 13 arrived; an extra deposit is worth what
-    # arrived even above the invoice, an under-payment never more than its price
-    del answers["/payment/4870885867"]
-    answers[rate] = {"estimated_amount": 13.0149}
+    # what the server was answered on 2026-10-06: 13 USD buys 13.00982534 USDT, 13 arrived
+    answers[rate] = {"currency_from": "usd", "amount_from": 13, "estimated_amount": "13.00982534"}
     assert await nowp.value_now(extra) == (decimal.Decimal("12.99"), "rate")
+    # an extra deposit is worth what arrived even above the invoice, an under-payment never
+    # more than its price
     assert await nowp.value_now({**extra, "actually_paid": 40}) == (
-        decimal.Decimal("39.95"),
+        decimal.Decimal("39.97"),
         "rate",
     )
     under = {k: v for k, v in extra.items() if k not in ("parent_payment_id", "pay_amount")}
@@ -411,12 +412,49 @@ async def test_nowpayments_is_asked_what_unvalued_money_is_worth(monkeypatch) ->
         decimal.Decimal("13.00"),
         "rate",
     )
-    # an answer that is no rate, and NOWPayments out of reach: no value
+
+    # refused for being asked too often, twice, then answered: asked again, valued
+    asked.clear()
+    answers[rate] = [(429, None), (429, None), (200, {"estimated_amount": "13.00982534"})]
+    assert await nowp.value_now(extra) == (decimal.Decimal("12.99"), "rate")
+    assert asked == [rate, rate, rate]
+    # still refused after the pauses: no value, and the log says so
+    answers[rate] = [(429, None)]
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        assert await nowp.value_now(extra) is None
+    assert "(HTTP 429)" in caplog.text
+    # an answer that is no rate, and NOWPayments out of reach: no value, asked once
     for bad in ({"estimated_amount": 0}, {"message": "no"}, nowp.httpx.ConnectError("down")):
         answers[rate] = bad
+        asked.clear()
         assert await nowp.value_now(extra) is None
-    answers["/payment/4870885867"] = nowp.httpx.ConnectError("down")
-    assert await nowp.value_now(extra) is None
+        assert asked == [rate]
+
+    # a notification that leaves out its coin and currency: the record is read for them
+    bare = {k: v for k, v in extra.items() if k not in ("price_currency", "pay_currency")}
+    record = {
+        "payment_id": 4870885867,
+        "order_id": "order-1",
+        "price_amount": 13,
+        "price_currency": "usd",
+        "pay_amount": 13,
+        "actually_paid": 13,
+        "pay_currency": "usdtbsc",
+    }
+    answers["/payment/4870885867"] = record
+    answers[rate] = {"estimated_amount": "13.00982534"}
+    asked.clear()
+    assert await nowp.value_now(bare) == (decimal.Decimal("12.99"), "rate")
+    assert asked == ["/payment/4870885867", rate]
+    # a record that values the payment itself is believed, and the payment stays an extra
+    # deposit when the record names no parent (13 of the 13 it "asked" is not the whole price)
+    answers["/payment/4870885867"] = {**record, "actually_paid_at_fiat": 12.98513924}
+    assert await nowp.value_now(bare) == (decimal.Decimal("12.99"), "record")
+    # a record of another payment or another order is not believed
+    for wrong in ({"payment_id": 1}, {"order_id": "order-2"}):
+        answers["/payment/4870885867"] = {**record, "actually_paid_at_fiat": 50, **wrong}
+        assert await nowp.value_now(bare) is None
     assert await nowp.value_now({"payment_id": None, "price_amount": 13}) is None
 
 
@@ -510,6 +548,101 @@ async def test_nowpayments_invoice_is_made_for_the_coin_chosen(monkeypatch) -> N
     with pytest.raises(AppError) as exc:
         await nowp.create_checkout(amount=decimal.Decimal("7"), pay_currency="usdtbsc", **common)
     assert exc.value.code == "PAYMENT_PROVIDER_ERROR" and exc.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_nowpayments_asked_too_often_is_asked_again(monkeypatch) -> None:
+    """Seen on the server, 2026-10-06: the third of three requests in a row was answered 429.
+    A member's coin list, a coin's minimum and the invoice itself must not fail for that, and
+    a list that came without the coins' details must not be kept as if it were whole."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "nowpayments_api_key", "key_t", raising=False)
+    monkeypatch.setattr(settings, "nowpayments_ipn_secret", "ipn_t", raising=False)
+    monkeypatch.setattr(nowp, "_coins", None)
+    monkeypatch.setattr(nowp, "_minimums", {})
+    monkeypatch.setattr(nowp, "RETRY_PAUSES", (0, 0))
+    busy = (429, None)
+    turns = {
+        "/merchant/coins": [busy, (200, {"selectedCurrencies": ["XRP", "USDTBSC"]})],
+        "/full-currencies": [busy],
+        "/min-amount?currency_from=usdtbsc&fiat_equivalent=usd": [
+            busy,
+            (200, {"fiat_equivalent": 1.2}),
+        ],
+        "/min-amount?currency_from=xrp&fiat_equivalent=usd": [busy],
+        "/min-amount?currency_from=xrp&fiat_equivalent=usd&currency_to=xrp": [busy],
+    }
+    asked: list[str] = []
+
+    async def fake_get(path: str):
+        asked.append(path)
+        answers = turns[path]
+        return answers.pop(0) if len(answers) > 1 else answers[0]
+
+    monkeypatch.setattr(nowp, "_get", fake_get)
+
+    # the list comes on the second asking; its details never do: a stopgap (codes for names,
+    # no memo marks) a member can still pay with, kept for a minute only
+    coins = await nowp.list_coins()
+    assert [(c["code"], c["name"], c["memo"]) for c in coins] == [
+        ("usdtbsc", "USDTBSC", False),
+        ("xrp", "XRP", False),
+    ]
+    assert asked.count("/merchant/coins") == 2 and asked.count("/full-currencies") == 3
+    left = nowp.COINS_TTL - (time.monotonic() - nowp._coins[0])
+    assert left <= nowp.COINS_STOPGAP_TTL + 1
+    # the minute over and the details back: the whole list, memo mark and all
+    monkeypatch.setattr(nowp, "_coins", (time.monotonic() - nowp.COINS_TTL - 1, coins))
+    turns["/full-currencies"] = [
+        (200, {"currencies": [{"code": "XRP", "name": "Ripple", "extra_id_exists": True}]})
+    ]
+    whole = await nowp.list_coins()
+    assert (whole[1]["name"], whole[1]["memo"]) == ("Ripple", True)
+    assert nowp.COINS_TTL - (time.monotonic() - nowp._coins[0]) > nowp.COINS_STOPGAP_TTL + 1
+    # NOWPayments then refusing altogether, or giving no details again, leaves that list
+    monkeypatch.setattr(nowp, "_coins", (time.monotonic() - nowp.COINS_TTL - 1, whole))
+    turns["/full-currencies"] = [busy]
+    assert (await nowp.list_coins())[1]["name"] == "Ripple"
+    monkeypatch.setattr(nowp, "_coins", (time.monotonic() - nowp.COINS_TTL - 1, whole))
+    turns["/merchant/coins"] = [busy]
+    assert (await nowp.list_coins())[1]["name"] == "Ripple"
+
+    # a coin's minimum: refused once, then told; never told is not remembered as "no minimum"
+    assert await nowp.minimum_usd("usdtbsc") == decimal.Decimal("1.20")
+    assert await nowp.minimum_usd("xrp") is None and "xrp" not in nowp._minimums
+
+    # the invoice: refused once for the same reason, made on the second asking
+    sent: list[dict] = []
+
+    class _Busy:
+        def __call__(self, *a, **kw):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            sent.append(json)
+            return types.SimpleNamespace(
+                status_code=429 if len(sent) == 1 else 200,
+                text="",
+                json=lambda: {"id": "77", "invoice_url": "https://nowpayments.io/payment/?iid=77"},
+            )
+
+    monkeypatch.setattr(nowp.httpx, "AsyncClient", _Busy())
+    out = await nowp.create_checkout(
+        payment_id=uuid.uuid4(),
+        amount=decimal.Decimal("13"),
+        currency="USD",
+        success_url="https://app.t/ok",
+        cancel_url="https://app.t/no",
+        ipn_url="https://api.t/ipn",
+        pay_currency="usdtbsc",
+    )
+    assert out.provider_payment_id == "77" and len(sent) == 2
 
 
 class _FakeStripeHTTP:

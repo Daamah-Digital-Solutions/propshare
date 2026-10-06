@@ -15,6 +15,7 @@ coin on one network and never shows a list of its own.
 
 from __future__ import annotations
 
+import asyncio
 import decimal
 import hashlib
 import hmac
@@ -58,6 +59,10 @@ FEATURED = (
 # list changes when staff switch a coin on or off; a minimum moves with network fees.
 COINS_TTL = 900.0
 MINIMUM_TTL = 300.0
+# ... and a coin list that came without the coins' details (names, networks, memo marks)
+COINS_STOPGAP_TTL = 60.0
+# seconds waited before asking NOWPayments again after it refused for being asked too often
+RETRY_PAUSES = (1.5, 3.0)
 _coins: tuple[float, list[dict]] | None = None
 _minimums: dict[str, tuple[float, decimal.Decimal | None]] = {}
 
@@ -84,6 +89,28 @@ async def _get(path: str) -> tuple[int, object]:
         return resp.status_code, None
 
 
+async def _ask(path: str, *, patient: bool = False) -> tuple[int | None, object, str]:
+    """``_get`` that never raises: (status, body, what happened in a few words).
+
+    NOWPayments answers 429 when it is asked a few times within a second or so (seen on the
+    server, 2026-10-06: the third of three requests in a row). ``patient``: such a refusal, or
+    a server error, is asked again after a pause, twice. No answer at all (a timeout) is not:
+    waiting for it again would hold a member's checkout for a minute."""
+    pauses = RETRY_PAUSES if patient else ()
+    status, body, said = None, None, "not asked"
+    for attempt in range(len(pauses) + 1):
+        try:
+            status, body = await _get(path)
+            said = f"HTTP {status}"
+        except httpx.HTTPError as exc:
+            return None, None, type(exc).__name__
+        if status != 429 and status < 500:
+            break
+        if attempt < len(pauses):
+            await asyncio.sleep(pauses[attempt])
+    return status, body, said
+
+
 def _coin(code: str, details: dict | None) -> dict:
     """One coin as the picker shows it. NOWPayments names a token with its network in the
     name ("Tether USD (Tron)"); the code is what an invoice is made for."""
@@ -105,35 +132,40 @@ def _coin_order(coin: dict) -> tuple:
     return (featured, not coin["stable"], not coin["popular"], coin["name"].lower(), coin["code"])
 
 
+def _remember(coins: list[dict], seconds: float, now: float) -> list[dict]:
+    """Keep ``coins`` as the list to answer with for the next ``seconds``."""
+    global _coins
+    _coins = (now - COINS_TTL + seconds, coins)
+    return coins
+
+
 async def list_coins() -> list[dict]:
     """The coins a member can pay with: the ones switched on in the NOWPayments account
     (Settings -> Payments). The most used come first (``FEATURED``), then stablecoins, then
     the popular ones, then the rest by name. Remembered for ``COINS_TTL``; a failure answers
     with the last list when there is one."""
-    global _coins
     if not is_configured():
         raise AppError("PAYMENTS_NOT_CONFIGURED", "NOWPayments is not configured.", status_code=503)
     now = time.monotonic()
     if _coins is not None and now - _coins[0] < COINS_TTL:
         return _coins[1]
-    try:
-        status, body = await _get("/merchant/coins")
-        selected = (body or {}) if isinstance(body, dict) else {}
-        codes = selected.get("selectedCurrencies") or selected.get("currencies") or []
-        if status != 200 or not isinstance(codes, list):
-            raise AppError(
-                "PAYMENT_PROVIDER_ERROR",
-                f"NOWPayments did not give its coins ({status}).",
-                status_code=502,
-            )
-        _status, full = await _get("/full-currencies")
-    except httpx.HTTPError as exc:
+    status, body, said = await _ask("/merchant/coins", patient=True)
+    selected = body if isinstance(body, dict) else {}
+    codes = selected.get("selectedCurrencies") or selected.get("currencies") or []
+    if status != 200 or not isinstance(codes, list):
         if _coins is not None:
-            return _coins[1]
+            # the last list, however old, rather than none; asked for again in a minute
+            return _remember(_coins[1], COINS_STOPGAP_TTL, now)
         raise AppError(
-            "PAYMENT_PROVIDER_ERROR", "NOWPayments cannot be reached.", status_code=502
-        ) from exc
-    listed = full.get("currencies") if isinstance(full, dict) else None
+            "PAYMENT_PROVIDER_ERROR",
+            f"NOWPayments did not give its coins ({said}).",
+            status_code=502,
+        )
+    full_status, full, _said = await _ask("/full-currencies", patient=True)
+    listed = full.get("currencies") if full_status == 200 and isinstance(full, dict) else None
+    if not listed and _coins is not None:
+        # the coins' details did not come: the last full list stays, asked for again soon
+        return _remember(_coins[1], COINS_STOPGAP_TTL, now)
     known = {
         str(item["code"]).lower(): item
         for item in listed or []
@@ -147,8 +179,9 @@ async def list_coins() -> list[dict]:
             continue
         coins.append(_coin(code, details))
     coins.sort(key=_coin_order)
-    _coins = (now, coins)
-    return coins
+    # Without the coins' details the list has codes for names and no memo marks: it is offered
+    # (a member can still pay) but asked for again within a minute.
+    return _remember(coins, COINS_TTL if listed else COINS_STOPGAP_TTL, now)
 
 
 async def minimum_usd(coin: str) -> decimal.Decimal | None:
@@ -159,19 +192,20 @@ async def minimum_usd(coin: str) -> decimal.Decimal | None:
     cached = _minimums.get(code)
     if cached is not None and now - cached[0] < MINIMUM_TTL:
         return cached[1]
-    value = None
+    value, answered = None, True
     path = f"/min-amount?currency_from={code}&fiat_equivalent=usd"
-    try:
-        # towards the account's own outcome currency; else the coin kept as it is
-        for query in (path, f"{path}&currency_to={code}"):
-            status, body = await _get(query)
-            usd = body.get("fiat_equivalent") if status == 200 and isinstance(body, dict) else None
-            if isinstance(usd, int | float) and usd > 0:
-                value = decimal.Decimal(str(usd)).quantize(_CENT, rounding=decimal.ROUND_UP)
-                break
-    except httpx.HTTPError:
-        return None  # not remembered: asked again next time
-    _minimums[code] = (now, value)
+    # towards the account's own outcome currency; else the coin kept as it is
+    for query in (path, f"{path}&currency_to={code}"):
+        status, body, _said = await _ask(query, patient=True)
+        if status is None or status == 429 or status >= 500:
+            answered = False  # no answer is not "no minimum"
+            continue
+        usd = body.get("fiat_equivalent") if status == 200 and isinstance(body, dict) else None
+        if isinstance(usd, int | float) and usd > 0:
+            value = decimal.Decimal(str(usd)).quantize(_CENT, rounding=decimal.ROUND_UP)
+            break
+    if value is not None or answered:
+        _minimums[code] = (now, value)  # an unanswered question is asked again next time
     return value
 
 
@@ -216,12 +250,17 @@ async def create_checkout(
                 details={"coin": coin, "minimum": str(floor)},
             )
         body["pay_currency"] = coin
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.post(
-            f"{settings.nowpayments_base_url}/invoice",
-            json=body,
-            headers={"x-api-key": settings.nowpayments_api_key},
-        )
+    # a refusal for asking too often made nothing: the invoice is asked for again after a pause
+    for pause in (*RETRY_PAUSES, None):
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                f"{settings.nowpayments_base_url}/invoice",
+                json=body,
+                headers={"x-api-key": settings.nowpayments_api_key},
+            )
+        if resp.status_code != 429 or pause is None:
+            break
+        await asyncio.sleep(pause)
     if resp.status_code >= 400:
         said = resp.text.lower()
         if pay_currency and resp.status_code == 400 and ("minimal" in said or "too small" in said):
@@ -396,61 +435,81 @@ def received_value(data: dict) -> decimal.Decimal | None:
 async def fetch_payment(payment_id: str) -> dict | None:
     """One payment as NOWPayments has it now (the API key is enough); None when it cannot be
     read."""
-    try:
-        status, body = await _get(f"/payment/{quote(str(payment_id), safe='')}")
-    except httpx.HTTPError:
-        return None
+    status, body, _said = await _ask(f"/payment/{quote(str(payment_id), safe='')}", patient=True)
     return body if status == 200 and isinstance(body, dict) else None
 
 
 async def value_now(data: dict) -> tuple[decimal.Decimal, str] | None:
     """What received money is worth when its notification does not say: (value, how).
 
-    First NOWPayments' own record of the payment, read again ("record": a notification can
-    leave before the fiat value is worked out). Then its rate for the coin right now ("rate"):
-    how much of the coin the invoice's price buys today, and so what the amount that arrived
-    is worth. None when neither tells: a person decides."""
+    NOWPayments' rate for the coin right now ("rate"): how much of the coin the invoice's
+    price buys today, and so what the amount that arrived is worth. Its record of a payment
+    carries no value of its own (seen on the server, 2026-10-06), so the record is read only
+    when the notification leaves out what a rate needs, to fill that in ("record" when it
+    values the payment itself). None when nothing tells: a person decides, and what each step
+    answered goes to the server log."""
     payment_id = data.get("payment_id")
-    record = await fetch_payment(str(payment_id)) if payment_id is not None else None
-    if record is not None:
-        ours, theirs = data.get("order_id"), record.get("order_id")
-        if str(record.get("payment_id")) != str(payment_id) or (
-            ours and theirs and str(ours) != str(theirs)
-        ):
-            record = None  # not the payment that was asked for: not believed
-    if record is not None:
-        if is_extra(data) and not is_extra(record):
-            # an extra deposit stays one, whatever the record leaves out: what it "asked" is
-            # whatever arrived, so its share of the price says nothing
-            record = {**record, "parent_payment_id": data["parent_payment_id"]}
-        value = received_value(record)
-        if value is not None:
-            return value, "record"
+    steps = [f"its notification says fiat {data.get('actually_paid_at_fiat')!r}"]
+    record: dict | None = None
+
+    def unvalued() -> None:
+        logger.warning(
+            "NOWPayments payment %s could not be valued: %s", payment_id, "; ".join(steps)
+        )
 
     def known(key: str) -> object:
         mine = data.get(key)
         return mine if mine not in (None, "") else (record or {}).get(key)
 
-    price, paid = _dec(known("price_amount")), _dec(known("actually_paid"))
-    coin, fiat = known("pay_currency"), known("price_currency")
-    if not (price and paid and coin and fiat) or price <= 0 or paid <= 0:
-        return None
+    def rate_inputs() -> tuple | None:
+        price, paid = _dec(known("price_amount")), _dec(known("actually_paid"))
+        coin, fiat = known("pay_currency"), known("price_currency")
+        if not (price and paid and coin and fiat) or price <= 0 or paid <= 0:
+            return None
+        return price, paid, str(coin).lower(), str(fiat).lower()
+
+    inputs = rate_inputs()
+    if inputs is None and payment_id is not None:
+        status, body, said = await _ask(f"/payment/{quote(str(payment_id), safe='')}", patient=True)
+        record = body if status == 200 and isinstance(body, dict) else None
+        if record is not None:
+            ours, theirs = data.get("order_id"), record.get("order_id")
+            if str(record.get("payment_id")) != str(payment_id) or (
+                ours and theirs and str(ours) != str(theirs)
+            ):
+                record = None  # not the payment that was asked for: not believed
+                said += ", of another payment"
+        steps.append(f"its record ({said}) was read for what the notification leaves out")
+        if record is not None:
+            if is_extra(data) and not is_extra(record):
+                # an extra deposit stays one, whatever the record leaves out: what it "asked"
+                # is whatever arrived, so its share of the price says nothing
+                record = {**record, "parent_payment_id": data["parent_payment_id"]}
+            value = received_value(record)
+            if value is not None:
+                return value, "record"
+        inputs = rate_inputs()
+    if inputs is None:
+        steps.append("there is no price, amount paid, coin or currency to ask a rate for")
+        return unvalued()
+    price, paid, coin, fiat = inputs
     path = (
-        f"/estimate?amount={price}&currency_from={quote(str(fiat).lower(), safe='')}"
-        f"&currency_to={quote(str(coin).lower(), safe='')}"
+        f"/estimate?amount={price}&currency_from={quote(fiat, safe='')}"
+        f"&currency_to={quote(coin, safe='')}"
     )
-    try:
-        status, body = await _get(path)
-    except httpx.HTTPError:
-        return None
+    status, body, said = await _ask(path, patient=True)
     asked = _dec(body.get("estimated_amount")) if status == 200 and isinstance(body, dict) else None
     if not asked or asked <= 0:
-        return None
+        steps.append(f"its rate {path} ({said}) answers {str(body)[:200]!r}")
+        return unvalued()
     value = price * paid / asked
     if not is_extra(data):
         value = min(price, value)
     value = value.quantize(_CENT, rounding=decimal.ROUND_HALF_UP)
-    return (value, "rate") if value > 0 else None
+    if value <= 0:
+        steps.append(f"at its rate ({asked} {coin} for {price} {fiat}) it rounds to nothing")
+        return unvalued()
+    return value, "rate"
 
 
 class _Literal:

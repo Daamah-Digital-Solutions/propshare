@@ -250,11 +250,8 @@ async def test_money_that_is_not_valued_is_not_guessed(client, db, monkeypatch):
     )
     r = await _ipn(client, **extra)
     assert r.json() == {"status": "processed", "result": "needs_review"}
-    # NOWPayments was asked for the payment, then for its rate: neither told
-    assert answers["asked"] == [
-        "/payment/8002",
-        "/estimate?amount=50&currency_from=usd&currency_to=doge",
-    ]
+    # NOWPayments was asked its rate for the coin, and gave none
+    assert answers["asked"] == ["/estimate?amount=50&currency_from=usd&currency_to=doge"]
     assert _balance(db, uid) == 0 and _payment(db, pid)[0] == "pending"
     cases = db("SELECT subject, priority, context FROM support_tickets WHERE kind='ops_case'")
     assert len(cases) == 1 and cases[0][1] == "high"
@@ -268,25 +265,17 @@ async def test_money_that_is_not_valued_is_not_guessed(client, db, monkeypatch):
     assert db("SELECT count(*) FROM support_tickets WHERE kind='ops_case'")[0][0] == 1
     assert len(_told(db, uid, "Crypto payment received")) == 1 and _balance(db, uid) == 0
 
-    # NOWPayments can say what it is worth after all, and staff press "IPN" on it: credited
-    # once, and the case answers itself so nobody credits it again by hand
-    answers["/payment/8002"] = {
-        "payment_id": 8002,
-        "order_id": pid,
-        "payment_status": "partially_paid",
-        "price_amount": 50,
-        "pay_amount": 3,
-        "actually_paid": 3,
-        "actually_paid_at_fiat": 0.61,  # no parent on the record: it stays an extra deposit
-        "pay_currency": "doge",
-    }
+    # NOWPayments can say what it is worth after all (50 USD buys 245.9 DOGE: 3 arrived), and
+    # staff press "IPN" on it: credited once, and the case answers itself so nobody credits it
+    # again by hand
+    answers["/estimate?amount=50&currency_from=usd&currency_to=doge"] = {"estimated_amount": 245.9}
     r = await _ipn(client, **extra)
     assert r.json() == {"status": "processed", "result": "credited_received"}
     assert _balance(db, uid) == 0.61
     status, captured, raw = _payment(db, pid)
     assert (status, captured) == ("succeeded", 0.61)
     assert raw["nowpayments"]["8002"]["credited"] == "0.61"
-    assert raw["nowpayments"]["8002"]["valued_by"] == "record"
+    assert raw["nowpayments"]["8002"]["valued_by"] == "rate"
     assert "review" not in raw["nowpayments"]["8002"]
     case = db("SELECT id, status, resolved_at FROM support_tickets WHERE kind='ops_case'")[0]
     assert case[1] == "resolved" and case[2] is not None
@@ -305,25 +294,16 @@ async def test_money_that_is_not_valued_is_not_guessed(client, db, monkeypatch):
 async def test_a_notification_without_a_value_is_valued_by_asking_nowpayments(
     client, db, monkeypatch
 ):
-    """NOWPayments' own example of a repeated deposit carries ``actually_paid_at_fiat: 0``. The
-    money is real: its record is read again, then its rate for the coin is used."""
+    """NOWPayments' own example of a repeated deposit carries ``actually_paid_at_fiat: 0``, and
+    its record of a payment carries no value either (seen on the server, 2026-10-06). The money
+    is real: its rate for the coin tells what the amount that arrived is worth."""
+    usdt = "/estimate?amount=60&currency_from=usd&currency_to=usdtbsc"
     answers: dict = {
-        # its record of the first one has the value the notification left out
-        "/payment/8102": {
-            "payment_id": 8102,
-            "parent_payment_id": 8101,
-            "order_id": None,
-            "price_amount": 60,
-            "pay_amount": 20,
-            "actually_paid": 20,
-            "actually_paid_at_fiat": 19.97,
-            "pay_currency": "usdtbsc",
-        },
-        # the second has none anywhere: 60 USD buys 0.024 ETH today, 0.01 ETH arrived
-        "/payment/8103": {"payment_id": 8103, "actually_paid_at_fiat": 0},
+        # 60 USD buys 60.05 USDT today, and 0.024 ETH
+        usdt: {"estimated_amount": "60.05"},
         "/estimate?amount=60&currency_from=usd&currency_to=eth": {"estimated_amount": 0.024},
-        # a record of some other payment is not believed
-        "/payment/8104": {"payment_id": 9999, "actually_paid_at_fiat": 55},
+        # read only for a notification that leaves out its coin and currency
+        "/payment/8104": {"payment_id": 8104, "price_currency": "usd", "pay_currency": "usdtbsc"},
     }
     _crypto_rail(monkeypatch, answers)
     token, uid = await _investor(client, db, "asked@cp.io")
@@ -339,32 +319,41 @@ async def test_a_notification_without_a_value_is_valued_by_asking_nowpayments(
     r = await _ipn(
         client, payment_id=8102, pay_amount=20, actually_paid=20, pay_currency="usdtbsc", **extra
     )
-    assert r.json()["result"] == "credited_received" and _balance(db, uid) == 19.97
+    assert r.json()["result"] == "credited_received" and _balance(db, uid) == 19.98
     r = await _ipn(
         client, payment_id=8103, pay_amount=0.01, actually_paid=0.01, pay_currency="ETH", **extra
     )
-    assert r.json()["result"] == "credited_received" and _balance(db, uid) == 44.97  # + 25.00
+    assert r.json()["result"] == "credited_received" and _balance(db, uid) == 44.98  # + 25.00
+    # the rate was asked, the record was not: it has nothing to add
+    assert answers["asked"] == [usdt, "/estimate?amount=60&currency_from=usd&currency_to=eth"]
     kept = _payment(db, pid)[2]["nowpayments"]
-    assert (kept["8102"]["credited"], kept["8102"]["valued_by"]) == ("19.97", "record")
+    assert (kept["8102"]["credited"], kept["8102"]["valued_by"]) == ("19.98", "rate")
     assert (kept["8103"]["credited"], kept["8103"]["valued_by"]) == ("25.00", "rate")
-    # a coin NOWPayments gives no rate for, and a record that is another payment's: a person
+
+    # a notification without its coin and currency: the record says them, then the rate
+    bare = {k: v for k, v in extra.items() if k != "price_currency"}
+    r = await _ipn(client, payment_id=8104, pay_amount=7, actually_paid=7, **bare)
+    assert r.json()["result"] == "credited_received" and _balance(db, uid) == 51.97  # + 6.99
+    assert answers["asked"][-2:] == ["/payment/8104", usdt]
+
+    # a coin NOWPayments gives no rate for: a person
     r = await _ipn(
-        client, payment_id=8104, pay_amount=7, actually_paid=7, pay_currency="odd", **extra
+        client, payment_id=8105, pay_amount=7, actually_paid=7, pay_currency="odd", **extra
     )
     assert r.json() == {"status": "processed", "result": "needs_review"}
-    assert _balance(db, uid) == 44.97
+    assert _balance(db, uid) == 51.97
     # a notification that says its value asks NOWPayments nothing
     before = len(answers["asked"])
     r = await _ipn(
         client,
-        payment_id=8105,
+        payment_id=8106,
         pay_amount=5,
         actually_paid=5,
         pay_currency="usdtbsc",
         **{**extra, "actually_paid_at_fiat": 4.99},
     )
     assert r.json()["result"] == "credited_received" and len(answers["asked"]) == before
-    assert "valued_by" not in _payment(db, pid)[2]["nowpayments"]["8105"]
+    assert "valued_by" not in _payment(db, pid)[2]["nowpayments"]["8106"]
 
 
 @pytest.mark.asyncio
@@ -569,6 +558,84 @@ async def test_a_short_down_payment_does_not_start_the_plan(client, db, monkeypa
     )
     # a wallet plan is untouched by any of this
     assert (await _plan(client, token, prop, method="card")).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_the_down_payment_that_started_all_this(client, db, monkeypatch):
+    """The client's own payment, as the server showed it on 2026-10-06: a 13 USD down payment
+    whose invoice he opened for BNB and paid with 13 USDT. The recovered deposit's "confirmed"
+    notification passed, its "partially paid" one was refused twice, and when it is sent again
+    the plan's hold has long run out. It carries no fiat value: NOWPayments' rate says 13 USD
+    buys 13.00982534 USDT. The plan does not start; 12.99 reach his wallet, once."""
+    rate = "/estimate?amount=13&currency_from=usd&currency_to=usdtbsc"
+    answers: dict = {rate: {"currency_from": "usd", "estimated_amount": "13.00982534"}}
+    _crypto_rail(monkeypatch, answers)
+    token, uid = await _investor(client, db, "first.case@cp.io")
+    prop = _property(db)
+    db("UPDATE properties SET unit_price=50, minimum_investment=50 WHERE id=:p", p=prop)
+    # one unit of 50 over 12 months: 25% down + 4% fee = 13.00; no coin, as before the release
+    r = await _plan(client, token, prop, method="crypto", amount=50)
+    assert r.status_code == 201, r.text
+    plan = r.json()["id"]
+    pid, due = db("SELECT id, amount FROM payments WHERE related_plan_id=:i", i=plan)[0]
+    pid = str(pid)
+    assert float(due) == 13.0 and _available(db, prop) == 99
+
+    child = dict(
+        payment_id=4870885867,
+        parent_payment_id=6160305429,
+        invoice_id=4730828777,
+        order_id=pid,
+        price_amount=13,
+        price_currency="usd",
+        pay_amount=13,
+        actually_paid=13,
+        actually_paid_at_fiat=0,
+        pay_currency="usdtbsc",
+        outcome_amount=0.01633459,
+        outcome_currency="bnbbsc",
+    )
+    waiting = dict(payment_id=6160305429, order_id=pid, price_amount=13, pay_currency="bnbbsc")
+    assert (await _ipn(client, payment_status="waiting", **waiting)).json()["status"] == "ignored"
+    r = await _ipn(client, payment_status="confirmed", **child)
+    assert r.json() == {"status": "ignored", "result": "pending"} and _balance(db, uid) == 0
+
+    # half an hour later the hold runs out: the plan is released, the payment still pending
+    db("UPDATE installment_plans SET reservation_expires_at = now() - interval '1 minute'")
+    monkeypatch.setattr(get_settings(), "cron_secret", "cron-t", raising=False)
+    r = await client.post(
+        "/api/v1/investments/maintenance/expire-reservations", headers={"X-Cron-Secret": "cron-t"}
+    )
+    assert r.json()["expired_plans"] == 1 and _available(db, prop) == 100
+
+    # the notification that was refused, sent again: the fee is the number that broke the check
+    body = json.dumps(
+        {
+            **child,
+            "payment_status": "partially_paid",
+            "fee": {"currency": "bnbbsc", "depositFee": 0.000083, "serviceFee": 0.000249},
+        }
+    ).encode()
+    assert b"8.3e-05" in body  # Python's spelling: accepted as the same value
+    r = await _send(client, body)
+    assert r.status_code == 200 and r.json() == {
+        "status": "processed",
+        "result": "credited_received",
+    }
+    assert answers["asked"] == [rate]
+    assert _balance(db, uid) == 12.99 and _available(db, prop) == 100
+    status, captured, raw = _payment(db, pid)
+    assert (status, captured) == ("failed", 12.99)
+    assert raw["nowpayments"]["4870885867"]["credited"] == "12.99"
+    assert raw["nowpayments"]["4870885867"]["valued_by"] == "rate"
+    assert db("SELECT status FROM installment_plans WHERE id=:i", i=plan)[0][0] == "expired"
+    told = _told(db, uid, "Crypto payment credited to your wallet")
+    assert len(told) == 1 and "arrived as 12.99 USD, not the 13.00 USD due" in told[0]
+    assert "12.99 USD is in your wallet" in told[0]
+    # pressed again, and the BNB payment he never sent expiring a week later: nothing more
+    assert (await _send(client, body)).json() == {"status": "duplicate"}
+    r = await _ipn(client, payment_status="expired", **waiting)
+    assert r.json() == {"status": "already_processed"} and _balance(db, uid) == 12.99
 
 
 # --- the coin is chosen on the platform ----------------------------------------------------------

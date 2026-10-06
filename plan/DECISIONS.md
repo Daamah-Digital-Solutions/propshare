@@ -278,9 +278,19 @@ refused that notification and, had it passed, ignored it. Later the same page li
   share of the price at the rate quoted (`price x paid / asked`, never above the price). An
   added deposit is worth NOWPayments' own valuation (`actually_paid_at_fiat`): what it "asked"
   is whatever arrived, so a share would always be the whole price. When the notification
-  carries no value, NOWPayments is asked (`value_now`): its record of the payment, then its
-  rate for the coin. When nothing tells, nothing is guessed: a staff case opens at once, the
-  member is told, and the same notification sent again later settles it and resolves the case.
+  carries no value, NOWPayments is asked its rate for the coin (`value_now`: how much of the
+  coin the price buys now, so what the amount that arrived is worth); its record of a payment
+  carries no value of its own and is read only for what a notification leaves out. When
+  nothing tells, nothing is guessed: a staff case opens at once, the member is told, why is
+  logged (`grep "could not be valued"`), and the same notification sent again later settles
+  it and resolves the case.
+- **NOWPayments refuses whoever asks it a few times within a second (HTTP 429)**, seen on the
+  server on 2026-10-06 at the third request in a row. What a member or a settlement needs is
+  asked again after a pause (the coin list, a coin's minimum, the rate, the invoice itself);
+  a coin list that came without the coins' details is kept a minute only; a minimum that was
+  not answered is not remembered as "none". `check_crypto_deposits.py` paces its questions and
+  lists the coins' minimums only with `--minimums`, so a check does not make the site's own
+  requests fail.
 - **A purchase is never completed with less than its price.** A short crypto payment for a
   purchase or a down payment releases the units (`payment_short_credited`), closes the payment
   as failed and credits the wallet; paying the invoice properly afterwards still buys through

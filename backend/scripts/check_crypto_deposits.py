@@ -10,8 +10,9 @@ to pay with. Run this on the VPS as root: it changes nothing and prints no key.
      the notifications that matched no payment (a deposit recovered from another network);
   3. how the API answered NOWPayments' notifications lately, from the nginx access log (a 401
      means the IPN secret is not this account's: nothing can be credited);
-  4. the smallest payment each coin takes right now, and how many coins an invoice of a given
-     amount can be paid with.
+  4. with --minimums: the smallest payment each coin takes right now, and how many coins an
+     invoice of a given amount can be paid with (hundreds of questions to NOWPayments, which
+     then refuses the site's own requests for a while: not part of a routine check).
 
 A crypto payment is settled by NOWPayments' notifications only: "finished" settles the invoice,
 and money that arrived another way (less than asked, a second transfer, another coin or
@@ -23,6 +24,7 @@ or here by its id.
 Usage, on the VPS as root (after ``sudo -u deploy git -C /opt/capimax/app pull``):
     /opt/capimax/venv/bin/python /opt/capimax/app/backend/scripts/check_crypto_deposits.py
     ... check_crypto_deposits.py 4870885867     (also show these NOWPayments payments, by id)
+    ... check_crypto_deposits.py --minimums     (also list each coin's smallest payment)
 """
 
 from __future__ import annotations
@@ -47,8 +49,9 @@ BASES = {False: "https://api.nowpayments.io/v1", True: "https://api-sandbox.nowp
 WEBHOOK_PATH = "/api/v1/payments/webhooks/nowpayments"
 ACCESS_LOGS = os.environ.get("CAPIMAX_ACCESS_LOGS", "/var/log/nginx/*access*log*")
 LATEST = 30  # payments shown
-MAX_COINS = 150  # minimums asked for, one request each
-PAUSE = 0.12  # seconds between those requests
+MAX_COINS = 150  # minimums asked for (with --minimums), one request each
+PAUSE = 0.6  # seconds after every question to NOWPayments
+BUSY_PAUSE = 3.0  # ... and more before asking again what it refused for being asked too often
 AMOUNTS = (5, 10, 13, 20, 25, 50, 100)  # invoice sizes checked against the minimums
 FRESH_MINUTES = 20  # an invoice younger than this may simply not be paid yet
 
@@ -216,11 +219,13 @@ def leading(records: list[dict]) -> dict | None:
     return min(records, key=lambda r: _RANK.get(str(r.get("payment_status")), len(_RANK)))
 
 
-def verdict(row: dict, latest: dict | None) -> tuple[str, str]:
+def verdict(row: dict, latest: dict | None, kept: dict[str, dict] | None = None) -> tuple[str, str]:
     """What one crypto payment needs: ("ok" | "wait" | "act", why). ``latest`` is NOWPayments'
-    own record that decides it (``leading``), None when it could not be asked."""
+    own record that decides it (``leading``), None when it could not be asked; ``kept`` is
+    what the platform noted about each NOWPayments payment under it (``kept_records``)."""
     status = row["status"]
     age = int(float(row["age_min"] or 0))
+    noted = (kept or {}).get(str((latest or {}).get("payment_id")))
     if status == "succeeded":
         return "ok", f"settled: {row['captured'] or row['amount']} USD"
     if status != "pending":
@@ -256,6 +261,24 @@ def verdict(row: dict, latest: dict | None) -> tuple[str, str]:
         )
     if state in _PROCESSING:
         return "wait", f"funds seen; NOWPayments is at '{state}': settled when it says finished"
+    told = noted is not None and (
+        noted.get("review") or noted.get("status") in ("partially_paid", "finished")
+    )
+    if state in ("partially_paid", "finished") and noted is not None and told:
+        # the notification of the money did arrive: the platform could not, or did not, settle it
+        got = (latest or {}).get("actually_paid", "?")
+        coin = (latest or {}).get("pay_currency", "?")
+        if noted.get("review"):
+            return "act", (
+                f"money arrived ({got} {coin}) and the platform was notified, but could not"
+                " tell what it is worth: nothing was credited and a staff case is open. Send"
+                " the developer this payment's 'whole record' line and: journalctl -u capimax"
+                " | grep 'could not be valued'"
+            )
+        return "act", (
+            f"money arrived ({got} {coin}) and the platform was notified (it noted"
+            f" '{noted.get('status')}') but settled nothing: send the developer this block"
+        )
     if state == "partially_paid":
         got = (latest or {}).get("actually_paid", "less")
         asked = (latest or {}).get("pay_amount", "the amount")
@@ -278,7 +301,14 @@ def verdict(row: dict, latest: dict | None) -> tuple[str, str]:
 
 # --- the server ---------------------------------------------------------------------------- #
 def np_get(base: str, path: str, key: str) -> tuple[int | None, dict | None]:
-    status, text = envtools._http("GET", base + path, headers={"x-api-key": key})
+    """One question to NOWPayments, at a pace it accepts: it answers 429 to the third request
+    in a second or so, and then also to the site's own. Refused, it is asked once more."""
+    for last in (False, True):
+        status, text = envtools._http("GET", base + path, headers={"x-api-key": key})
+        time.sleep(PAUSE)
+        if status != 429 or last:
+            break
+        time.sleep(BUSY_PAUSE)
     if status != 200:
         return status, None
     try:
@@ -314,7 +344,9 @@ def read_access_logs() -> tuple[list[tuple[str, int]], int] | None:
 
 def main(argv: list[str] | None = None) -> int:
     """``argv``: NOWPayments payment ids to show as well (the command line's by default)."""
-    asked_for = [arg for arg in (sys.argv[1:] if argv is None else argv) if arg.isdigit()]
+    args = sys.argv[1:] if argv is None else argv
+    asked_for = [arg for arg in args if arg.isdigit()]
+    want_minimums = "--minimums" in args
     say, ok, warn, info, stop = (
         envtools.say,
         envtools.ok,
@@ -373,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
             if found:
                 records.append(found)
         kept = kept_records(row["kept"])
-        kind, why = verdict(row, leading(records))
+        kind, why = verdict(row, leading(records), kept)
         print(
             f"   {row['created']}  {row['amount']:>10} USD  {row['purpose']:<11}"
             f" {row['status']:<9} {row['member']}"
@@ -459,8 +491,13 @@ def main(argv: list[str] | None = None) -> int:
                 ok("every notification was accepted")
 
     say("4. The smallest payment each coin takes now (USD)")
-    asked = coins[:MAX_COINS]
-    if len(coins) > MAX_COINS:
+    # hundreds of questions in a row, and NOWPayments then refuses the site's own for a while:
+    # only when asked for
+    asked = coins[:MAX_COINS] if want_minimums else []
+    if not want_minimums:
+        info("not asked: add --minimums to list them. It takes a few minutes; run it when no")
+        info("member is paying, NOWPayments refuses whoever asks it too often")
+    elif len(asked) < len(coins):
         info(f"asking for the first {MAX_COINS} of the {len(coins)} coins")
     minimums: dict[str, float] = {}
     for coin in asked:
@@ -470,11 +507,12 @@ def main(argv: list[str] | None = None) -> int:
         for query in (path, f"{path}&currency_to={quote(coin, safe='')}"):
             _status, found = np_get(base, query, key)
             usd = (found or {}).get("fiat_equivalent")
-            time.sleep(PAUSE)
             if isinstance(usd, int | float):
                 minimums[coin] = float(usd)
                 break
-    if not minimums:
+    if not want_minimums:
+        pass
+    elif not minimums:
         info("NOWPayments gave no minimum" if asked else "no coin to ask about")
     else:
         ranked = sorted(minimums.items(), key=lambda item: item[1])
