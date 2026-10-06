@@ -64,7 +64,7 @@ export const PAYMENT_METHODS: readonly PayMethod[] = [
   {
     id: "crypto",
     label: "Cryptocurrency",
-    description: "BTC, ETH, USDT, USDC — on NOWPayments' secure page",
+    description: "USDT, USDC, BTC, ETH and more: choose your coin here, pay on NOWPayments' page",
     icon: Bitcoin,
     apiMethod: "crypto",
   },

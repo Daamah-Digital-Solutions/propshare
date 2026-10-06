@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.core.config import get_settings
-from app.models import EmailOutbox, Payment, SupportTicket, UserRole
+from app.models import EmailOutbox, Payment, SupportTicket, SupportTicketMessage, UserRole
 from app.services import (
     manual_deposit_service,
     notification_service,
@@ -266,37 +266,105 @@ async def sweep(session: AsyncSession, *, now: dt.datetime | None = None) -> dic
         )
         seen_keys.add(key)
 
-    if new:
-        admins = [
-            r[0]
-            for r in (
-                await session.execute(select(UserRole.user_id).where(UserRole.role == "admin"))
-            ).all()
-        ]
-        lines = [f"{t.ticket_no} · {t.subject}" for t in new]
-        for admin_id in admins:
-            await notification_service.notify(
-                session,
-                user_id=admin_id,
-                type="ops_case",
-                title=f"{len(new)} new operational case(s)",
-                message="\n".join(lines[:10]),
-            )
-        inbox = get_settings().support_inbox_email
-        if inbox:
-            session.add(
-                EmailOutbox(
-                    user_id=None,
-                    to_email=inbox,
-                    subject=f"[Ops] {len(new)} new case(s) need a person",
-                    body="\n".join(lines),
-                    category="support",
-                    status="pending",
-                )
-            )
-        await session.flush()
+    await _announce(session, new)
     return {
         "opened": len(new),
         "drift_checks_failing": sum(1 for c in report["checks"] if c["drift_count"]),
         "stale_hours": hours,
     }
+
+
+async def _announce(session: AsyncSession, new: list[SupportTicket]) -> None:
+    """Tell the admins (in-app) and the support inbox (one email) about newly opened cases."""
+    if not new:
+        return
+    admins = [
+        r[0]
+        for r in (
+            await session.execute(select(UserRole.user_id).where(UserRole.role == "admin"))
+        ).all()
+    ]
+    lines = [f"{t.ticket_no} · {t.subject}" for t in new]
+    for admin_id in admins:
+        await notification_service.notify(
+            session,
+            user_id=admin_id,
+            type="ops_case",
+            title=f"{len(new)} new operational case(s)",
+            message="\n".join(lines[:10]),
+        )
+    inbox = get_settings().support_inbox_email
+    if inbox:
+        session.add(
+            EmailOutbox(
+                user_id=None,
+                to_email=inbox,
+                subject=f"[Ops] {len(new)} new case(s) need a person",
+                body="\n".join(lines),
+                category="support",
+                status="pending",
+            )
+        )
+    await session.flush()
+
+
+async def open_payment_review(
+    session: AsyncSession, *, payment: Payment, subject: str, summary: str
+) -> bool:
+    """A payment that needs a person NOW (money arrived that the platform cannot value): one
+    case per payment, ever, under the same key the hourly sweep uses, so the sweep does not
+    open a second one. False when the payment already has its case."""
+    key = f"provider_payment:{payment.id}"
+    if key in await _payment_case_keys(session):
+        return False
+    ticket = await _open_case(
+        session,
+        case_key=key,
+        category="payments",
+        priority="high",
+        subject=subject,
+        summary=summary,
+        context={
+            "payment_id": str(payment.id),
+            "provider": payment.provider,
+            "provider_payment_id": payment.provider_payment_id,
+        },
+    )
+    await _announce(session, [ticket])
+    return True
+
+
+async def settle_payment_review(session: AsyncSession, *, payment: Payment, note: str) -> bool:
+    """The payment a case is open for settled by itself: say so on the case (a staff-only
+    note) and resolve it, so nobody credits the member a second time by hand. False when the
+    payment has no open case."""
+    ticket = (
+        await session.execute(
+            select(SupportTicket)
+            .where(
+                SupportTicket.kind == "ops_case",
+                SupportTicket.status.in_(OPEN),
+                SupportTicket.context["case_key"].astext == f"provider_payment:{payment.id}",
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if ticket is None:
+        return False
+    session.add(
+        SupportTicketMessage(ticket_id=ticket.id, author_type="system", body=note, internal=True)
+    )
+    now = dt.datetime.now(dt.UTC)
+    ticket.status = "resolved"
+    ticket.updated_at = now
+    ticket.resolved_at = now
+    await write_audit(
+        session,
+        action="ops_case.resolved",
+        entity_type="support_ticket",
+        entity_id=str(ticket.id),
+        actor_id=None,
+        after={"ticket_no": ticket.ticket_no, "by": "payment_settled"},
+    )
+    await session.flush()
+    return True

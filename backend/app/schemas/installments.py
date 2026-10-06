@@ -17,6 +17,8 @@ class InstallmentPlanCreateIn(BaseModel):
     # The unit price on the investor's screen when they confirmed: the plan locks it, so a
     # different price now is answered with 409 PRICE_CHANGED instead.
     expected_unit_price: float | None = Field(default=None, gt=0)
+    # crypto: the coin the down payment is paid in (GET /payments/crypto/coins)
+    pay_currency: str | None = Field(default=None, pattern="^[A-Za-z0-9]{2,24}$")
 
 
 class InstallmentPaymentOut(BaseModel):

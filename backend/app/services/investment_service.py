@@ -272,6 +272,7 @@ async def create_investment(
     cancel_url: str,
     ipn_url: str,
     expected_unit_price: float | None = None,
+    pay_currency: str | None = None,
 ) -> dict:
     # Idempotency-Key replay -> return the existing investment (and its checkout, if any).
     existing = (
@@ -335,6 +336,7 @@ async def create_investment(
         success_url=success_url,
         cancel_url=cancel_url,
         ipn_url=ipn_url,
+        pay_currency=pay_currency,
     )
 
 
@@ -402,6 +404,7 @@ async def _reserve_for_direct_pay(
     success_url: str,
     cancel_url: str,
     ipn_url: str,
+    pay_currency: str | None = None,
 ) -> dict:
     # Reserve the units now (held under the property lock) so they can't be oversold
     # while the off-platform payment is in flight. funded_amount/investors_count are
@@ -417,6 +420,7 @@ async def _reserve_for_direct_pay(
         success_url=success_url,
         cancel_url=cancel_url,
         ipn_url=ipn_url,
+        pay_currency=pay_currency,
     )
     inv.payment_id = payment["payment_id"]
     inv.payment_reference = str(payment["payment_id"])

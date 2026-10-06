@@ -27,6 +27,7 @@ vi.mock("@/lib/api", () => ({
     transactions: (...a: unknown[]) => walletTxns(...a),
   },
   withdrawApi: { create: vi.fn() },
+  cryptoApi: { open: async () => [], coins: async () => ({ items: [], total: 0 }) },
   connectApi: { status: (...a: unknown[]) => connectStatus(...a), onboard: vi.fn() },
   bankAccountsApi: { list: vi.fn().mockResolvedValue([]), add: vi.fn(), remove: vi.fn(), setDefault: vi.fn() },
   cryptoWalletsApi: { list: vi.fn().mockResolvedValue([]), add: vi.fn(), remove: vi.fn(), setDefault: vi.fn() },

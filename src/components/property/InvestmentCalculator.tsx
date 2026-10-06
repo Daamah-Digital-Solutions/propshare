@@ -22,6 +22,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { investApi, ApiError, type InvestMethod } from "@/lib/api";
 import { rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
 import { PaymentMethodList } from "@/components/payments/PaymentMethodList";
+import { CryptoCoinSelect } from "@/components/payments/CryptoCoinSelect";
+import { coinLabel, useCryptoCoins } from "@/lib/cryptoCoins";
 import {
   EMPTY_SUKUK_DRAFT,
   SukukCertificateFields,
@@ -75,6 +77,8 @@ const InvestmentCalculator = ({
 }: InvestmentCalculatorProps) => {
   const [selectedPayment, setSelectedPayment] = useState<PayMethodId>("wallet");
   const [sukuk, setSukuk] = useState<SukukDraft>(EMPTY_SUKUK_DRAFT);
+  // crypto: the coin (and its network) the buyer will send, chosen here
+  const [coin, setCoin] = useState<string | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const reviewOpened = useRef(false);
@@ -92,6 +96,9 @@ const InvestmentCalculator = ({
   const selectedMethod = payMethod(selectedPayment);
   const pronovaSelected = selectedPayment === "pronova";
   const sukukSelected = selectedPayment === "sukuk";
+  const cryptoSelected = selectedPayment === "crypto";
+  // the chosen coin as its list names it ("USDT · Tether USD (Tron)"), for the review step
+  const chosenCoin = useCryptoCoins(cryptoSelected).data?.items.find((c) => c.code === coin);
 
   // Fee rates come from the backend (admin-configurable platform_settings), not
   // hardcoded constants. Platform fee is charged once AT PURCHASE; the management
@@ -156,6 +163,14 @@ const InvestmentCalculator = ({
 
   const handleConfirmPayment = async () => {
     const apiMethod = selectedMethod.apiMethod;
+    if (!reinvesting && apiMethod === "crypto" && !coin) {
+      // a prepared order can open the review step directly: the coin is still chosen first
+      setShowConfirmation(false);
+      toast.error("Choose the coin you will send", {
+        description: "Pick it under Cryptocurrency, then continue.",
+      });
+      return;
+    }
     setIsSubmitting(true);
     try {
       if (!reinvesting && apiMethod === "sukuk") {
@@ -206,6 +221,7 @@ const InvestmentCalculator = ({
           method: apiMethod as InvestMethod,
           // the price these amounts were shown at: the server refuses if it has changed
           ...(unitPrice > 0 ? { expected_unit_price: unitPrice } : {}),
+          ...(apiMethod === "crypto" && coin ? { pay_currency: coin } : {}),
         },
         crypto.randomUUID(),
       );
@@ -406,6 +422,11 @@ const InvestmentCalculator = ({
               <SukukCertificateFields amountDue={totalPayable} value={sukuk} onChange={setSukuk} />
             </div>
           )}
+          {cryptoSelected && !reinvesting && (
+            <div className="mt-3">
+              <CryptoCoinSelect value={coin} onChange={setCoin} purpose="purchase" />
+            </div>
+          )}
         </div>
 
         {/* Reinvest discount note (real, server-applied) */}
@@ -531,6 +552,12 @@ const InvestmentCalculator = ({
               });
               return;
             }
+            if (cryptoSelected && !reinvesting && !coin) {
+              toast.error("Choose the coin you will send", {
+                description: "Pick it under Cryptocurrency: the payment page is made for that coin.",
+              });
+              return;
+            }
             setShowConfirmation(true);
           }}
         >
@@ -628,10 +655,12 @@ const InvestmentCalculator = ({
                   <span className="font-medium text-foreground">{selectedMethod.label}</span>
                 </div>
               )}
-              {!reinvesting && selectedPayment === "crypto" && (
+              {!reinvesting && cryptoSelected && (
                 <p className="text-xs text-muted-foreground">
-                  You pick the coin on NOWPayments' page; your units are confirmed as soon as the
-                  payment clears.
+                  {coin ? `You pay in ${chosenCoin ? coinLabel(chosenCoin) : coin.toUpperCase()}. ` : ""}
+                  Send that coin and network
+                  only, the exact amount the payment page shows: your units are confirmed once
+                  the network confirms it. Anything less goes to your wallet instead.
                 </p>
               )}
               {!reinvesting && sukukSelected && (

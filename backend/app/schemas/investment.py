@@ -22,6 +22,8 @@ class InvestmentCreateIn(BaseModel):
     # The unit price on the buyer's screen when they confirmed: a different price now is
     # answered with 409 PRICE_CHANGED instead of a purchase at a price they did not see.
     expected_unit_price: float | None = Field(default=None, gt=0)
+    # crypto: the coin the buyer chose to pay in (GET /payments/crypto/coins)
+    pay_currency: str | None = Field(default=None, pattern="^[A-Za-z0-9]{2,24}$")
 
 
 class InvestmentCreateOut(BaseModel):

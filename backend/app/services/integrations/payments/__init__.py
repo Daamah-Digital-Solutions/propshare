@@ -27,7 +27,10 @@ class ParsedWebhook:
     event_id: str  # stable per-delivery key for idempotent dedupe
     provider_payment_id: str | None
     order_id: str | None  # our payments.id, echoed back by the provider
-    status: str  # 'succeeded' | 'failed' | 'pending' | 'ignored'
+    # 'succeeded' | 'failed' | 'pending' | 'ignored' | 'received' (crypto only: money arrived
+    # that is not the invoice simply paid — an under-payment, or a deposit added to or
+    # recovered for an invoice; ``captured_amount`` is then what it is worth, None if unknown)
+    status: str
     captured_amount: decimal.Decimal | None  # USD-equivalent the provider settled
     type: str
     raw: dict

@@ -140,17 +140,37 @@ export function PaymentReturnStatus({ kind, pollMs = 3000, timeoutMs = 120_000 }
     retry: false,
   });
 
+  // A crypto payment can arrive another way than asked (less, or in another coin): what
+  // arrived is then credited to the wallet. A purchase paid that way is not completed, and a
+  // deposit is credited at what arrived, not at what was started.
+  const arrived = Number(data?.amount_captured ?? 0);
+  const asked = Number(data?.amount ?? 0);
+  const money = `$${arrived.toFixed(2)}`;
+  const creditedInstead = Boolean(data) && data?.status === "failed" && arrived > 0;
+  const creditedOther =
+    kind === "deposit" &&
+    data?.status === "succeeded" &&
+    arrived > 0 &&
+    Math.abs(arrived - asked) >= 0.005;
+  const insteadHint = `${money} arrived instead of the $${asked.toFixed(2)} due (a smaller amount, or another coin or network) and was credited to your wallet. You can buy from your wallet.`;
+  const otherHint = `${money} arrived and was credited to your wallet (the deposit was started for $${asked.toFixed(2)}).`;
+
   const settled = useRef<string | null>(null);
   useEffect(() => {
     if (!data || data.status === "pending" || settled.current === data.id) return;
     settled.current = data.id;
     if (data.status === "succeeded") {
-      toast.success(COPY[kind].done, { description: COPY[kind].doneHint });
+      toast.success(COPY[kind].done, {
+        description: creditedOther ? otherHint : COPY[kind].doneHint,
+      });
+      AFFECTED_QUERIES.forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
+    } else if (creditedInstead) {
+      toast.info(COPY[kind].failed, { description: insteadHint });
       AFFECTED_QUERIES.forEach((queryKey) => queryClient.invalidateQueries({ queryKey }));
     } else {
       toast.error(COPY[kind].failed);
     }
-  }, [data, kind, queryClient]);
+  }, [data, kind, queryClient, creditedInstead, creditedOther, insteadHint, otherHint]);
 
   // not a payment of this member (edited link) or unreachable: nothing to follow here
   if (!following || isError) return null;
@@ -162,7 +182,16 @@ export function PaymentReturnStatus({ kind, pollMs = 3000, timeoutMs = 120_000 }
       <Alert data-testid="payment-return" className="border-success/40 bg-success/10">
         <CheckCircle2 className="h-4 w-4 text-success" />
         <AlertTitle>{copy.done}</AlertTitle>
-        <AlertDescription>{copy.doneHint}</AlertDescription>
+        <AlertDescription>{creditedOther ? otherHint : copy.doneHint}</AlertDescription>
+      </Alert>
+    );
+  }
+  if (creditedInstead) {
+    return (
+      <Alert data-testid="payment-return" className="border-warning/40 bg-warning/10">
+        <AlertCircle className="h-4 w-4 text-warning" />
+        <AlertTitle>{copy.failed}</AlertTitle>
+        <AlertDescription>{insteadHint}</AlertDescription>
       </Alert>
     );
   }

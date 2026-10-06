@@ -253,3 +253,59 @@ Client meeting 2026-10-01, its last two items.
   the SPV name loses its "Ltd", and on Creek Tower it touches the jurisdiction). The new
   footer line allows for it; the layout itself was not changed, which needs the owner's eye
   on a before and after.
+
+---
+
+## Crypto payments: what arrives is credited, the coin is chosen here (2026-10-06)
+Client, 2026-10-06: he chose BNB on NOWPayments' page and sent 13 USDT to the address. NOWPayments
+recovered it as a second payment ("Wrong Asset", partially paid, 12.985 USD); the platform
+refused that notification and, had it passed, ignored it. Later the same page listed no coin.
+- **The notification check keeps numbers as they were sent.** NOWPayments signs
+  `JSON.stringify` of the key-sorted payload; Python spelled a small number differently
+  (0.000083 became 8.3e-05), so every notification carrying a small fee (a paid BNB, BTC or ETH
+  payment) was answered 401 and could never settle (`nowpayments_gateway.signatures`). The
+  numbers are also tried as JavaScript spells their values, for a body written by something
+  else than what signed it. A notification that is refused leaves its body in the server log
+  (`journalctl -u capimax | grep "notification refused"`): this one was refused for hours
+  and nothing said what it carried.
+- **Each NOWPayments payment under an invoice is settled once**, and what was done is kept on
+  the row (`payments.raw_payload["nowpayments"][<their payment id>]`: status, coin, asked,
+  received, parent, then `credited`, or `review`). One invoice can hold several: the one for
+  the coin chosen, and the deposits NOWPayments adds by itself (a second transfer to the
+  address, or one recovered from another coin or network: they carry `parent_payment_id`).
+- **Owner's rule: money that arrives another way than asked goes to the member's wallet at
+  what it is worth**, with a notification. An under-payment in the coin asked for is worth its
+  share of the price at the rate quoted (`price x paid / asked`, never above the price). An
+  added deposit is worth NOWPayments' own valuation (`actually_paid_at_fiat`): what it "asked"
+  is whatever arrived, so a share would always be the whole price. When the notification
+  carries no value, NOWPayments is asked (`value_now`): its record of the payment, then its
+  rate for the coin. When nothing tells, nothing is guessed: a staff case opens at once, the
+  member is told, and the same notification sent again later settles it and resolves the case.
+- **A purchase is never completed with less than its price.** A short crypto payment for a
+  purchase or a down payment releases the units (`payment_short_credited`), closes the payment
+  as failed and credits the wallet; paying the invoice properly afterwards still buys through
+  the late-payment path. The invoice paid in full a second time is a second credit.
+- **A notification sent again changes nothing**, except money still owed: a payment waiting for
+  a person, or an under-payment recorded before outcomes were kept while nothing was settled on
+  its row (`_np_replay_wanted`). Staff resend from the NOWPayments dashboard ("IPN"); "Change
+  status" is not needed and credits nothing more.
+- **An added deposit that fails does not close the invoice**; the invoice's own payment
+  failing or expiring does, as before.
+- **The coin and its network are chosen on PropShare** and the invoice is made for that coin
+  (`pay_currency`), so the payment page asks for one coin and shows no list. The coins are
+  the ones switched on in the NOWPayments account (`GET /payments/crypto/coins`; it holds
+  359): the ones members use most come first and are always listed up front (`FEATURED`),
+  then stablecoins and the popular ones; any other is found by search. An amount under the
+  coin's minimum is refused before an invoice exists (`CRYPTO_AMOUNT_TOO_SMALL`), an unknown
+  coin too (`UNKNOWN_COIN`).
+- **A crypto payment still on its way shows at the top of the wallet**
+  (`GET /payments/crypto/open`): started within 24 hours, or older with funds seen on the
+  network; with its coin, how far it is, and the page to finish it on. One NOWPayments never
+  reported anything about (no payment page was opened, so no address was ever shown) stays
+  an hour only.
+- **Left as it is, known:** an over-payment of the invoice's own payment credits the invoice
+  amount, not the excess (NOWPayments marks it finished; whether its `actually_paid` includes
+  fees the payer added is not known, so crediting the difference could over-credit every
+  deposit). Staff have no wallet-credit tool: a case that cannot be valued needs the developer.
+  Crypto payments are still not looked up on a timer: a notification that never arrives is
+  found with `scripts/check_crypto_deposits.py <NOWPayments payment id>` and resent.

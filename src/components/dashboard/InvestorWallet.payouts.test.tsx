@@ -35,6 +35,7 @@ vi.mock("@/lib/api", () => ({
     transactions: async () => ({ items: [], total: 0 }),
     depositMethods: async () => ({ card: true, crypto: true }),
   },
+  cryptoApi: { open: async () => [], coins: async () => ({ items: [], total: 0 }) },
   withdrawApi: { create: (...a: unknown[]) => api.withdrawCreate(...a) },
   paymentMethodsApi: { list: async () => [], remove: vi.fn(), setDefault: vi.fn() },
   bankAccountsApi: {

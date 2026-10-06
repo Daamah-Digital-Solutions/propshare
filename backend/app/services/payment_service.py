@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.errors import AppError
-from app.models import Payment, PaymentEvent
+from app.models import InstallmentPlan, Investment, Payment, PaymentEvent, Property
 from app.models.base import PaymentMethod
 from app.services import notification_service, payment_method_service, wallet_service
 from app.services.integrations.payments import ParsedWebhook, nowpayments_gateway, stripe_gateway
@@ -115,7 +115,9 @@ async def create_deposit(
     success_url: str,
     cancel_url: str,
     ipn_url: str,
+    pay_currency: str | None = None,
 ) -> dict:
+    """``pay_currency``: the coin a crypto deposit is paid in (nowpayments_gateway.list_coins)."""
     provider = _PROVIDER_FOR_METHOD[method]
     gateway = _gateway(provider)
     if not gateway.is_configured():
@@ -178,10 +180,11 @@ async def create_deposit(
             success_url=success_url,
             cancel_url=cancel_url,
             ipn_url=ipn_url,
+            pay_currency=pay_currency,
         )
 
     payment.provider_payment_id = result.provider_payment_id
-    payment.raw_payload = {"checkout_url": result.checkout_url}
+    payment.raw_payload = _checkout_payload(result.checkout_url, provider, pay_currency)
     await write_audit(
         session,
         action="payment.create",
@@ -211,6 +214,7 @@ async def _purchase_checkout(
     product_name: str,
     investment_id: uuid.UUID | None = None,
     plan_id: uuid.UUID | None = None,
+    pay_currency: str | None = None,
 ) -> dict:
     """A hosted-checkout intent that pays for units (a purchase, or an installment plan's
     down payment). Idempotency is anchored on the investment / plan row (its unique
@@ -259,10 +263,11 @@ async def _purchase_checkout(
             success_url=success_url,
             cancel_url=cancel_url,
             ipn_url=ipn_url,
+            pay_currency=pay_currency,
         )
 
     payment.provider_payment_id = result.provider_payment_id
-    payment.raw_payload = {"checkout_url": result.checkout_url}
+    payment.raw_payload = _checkout_payload(result.checkout_url, provider, pay_currency)
     await write_audit(
         session,
         action="payment.create",
@@ -289,6 +294,7 @@ async def create_investment_checkout(
     success_url: str,
     cancel_url: str,
     ipn_url: str,
+    pay_currency: str | None = None,
 ) -> dict:
     """Create a hosted-checkout intent for a DIRECT-PAY investment (purpose=investment); the
     amount is the server-computed total charge (subtotal + platform fee − any discount)."""
@@ -303,6 +309,7 @@ async def create_investment_checkout(
         ipn_url=ipn_url,
         product_name=_CHECKOUT_LABEL.get(method, "Capimax investment"),
         investment_id=investment_id,
+        pay_currency=pay_currency,
     )
 
 
@@ -316,6 +323,7 @@ async def create_plan_checkout(
     success_url: str,
     cancel_url: str,
     ipn_url: str,
+    pay_currency: str | None = None,
 ) -> dict:
     """Create a hosted-checkout intent for an installment plan's DOWN PAYMENT
     (purpose=installment); its settlement starts the plan (installment_service)."""
@@ -330,6 +338,7 @@ async def create_plan_checkout(
         ipn_url=ipn_url,
         product_name=_PLAN_CHECKOUT_LABEL.get(method, _PLAN_CHECKOUT_LABEL["card"]),
         plan_id=plan_id,
+        pay_currency=pay_currency,
     )
 
 
@@ -350,24 +359,32 @@ async def process_webhook(
     parsed: ParsedWebhook = _gateway(provider).verify_and_parse(raw_body, signature)
 
     # Layer 1: dedupe on (provider, event_id).
-    seen = await session.execute(
-        select(PaymentEvent.id).where(
-            PaymentEvent.provider == provider, PaymentEvent.event_id == parsed.event_id
+    seen = (
+        await session.execute(
+            select(PaymentEvent.id).where(
+                PaymentEvent.provider == provider, PaymentEvent.event_id == parsed.event_id
+            )
         )
-    )
-    if seen.first() is not None:
+    ).first() is not None
+    # A notification seen before is dropped. NOWPayments' are looked at once more: staff send
+    # one again from its dashboard ("IPN") to settle money that is still owed, and only that
+    # is settled then (_np_replay_wanted; each NOWPayments payment is settled once).
+    if seen and provider != "nowpayments":
         return {"status": "duplicate"}
 
     payment = await _locate(session, provider, parsed)
-    session.add(
-        PaymentEvent(
-            provider=provider,
-            event_id=parsed.event_id,
-            payment_id=payment.id if payment else None,
-            type=parsed.type,
+    if not seen:
+        session.add(
+            PaymentEvent(
+                provider=provider,
+                event_id=parsed.event_id,
+                payment_id=payment.id if payment else None,
+                type=parsed.type,
+            )
         )
-    )
     if payment is None:
+        if seen:
+            return {"status": "duplicate"}
         await write_audit(
             session,
             action="payment.webhook.unmatched",
@@ -378,17 +395,37 @@ async def process_webhook(
         return {"status": "ignored_unknown_payment"}
 
     return await _apply(
-        session, provider=provider, parsed=parsed, payment=payment, source="webhook"
+        session, provider=provider, parsed=parsed, payment=payment, source="webhook", replay=seen
     )
 
 
 async def _apply(
-    session: AsyncSession, *, provider: str, parsed: ParsedWebhook, payment: Payment, source: str
+    session: AsyncSession,
+    *,
+    provider: str,
+    parsed: ParsedWebhook,
+    payment: Payment,
+    source: str,
+    replay: bool = False,
 ) -> dict:
     """Apply a provider outcome to a located payment. Shared by the webhook and the direct
-    provider lookup (``sync_payment``), so both settle through exactly the same guarded path:
-    the row lock + status guard below is what makes a webhook and a lookup that both report
-    the same payment paid credit it once."""
+    provider lookup (``sync_payment``), so both settle through exactly the same guarded path.
+    ``replay``: the provider sent this very notification before."""
+    if provider == "nowpayments":
+        return await _apply_nowpayments(
+            session, parsed=parsed, payment=payment, source=source, replay=replay
+        )
+    return await _apply_outcome(
+        session, provider=provider, parsed=parsed, payment=payment, source=source
+    )
+
+
+async def _apply_outcome(
+    session: AsyncSession, *, provider: str, parsed: ParsedWebhook, payment: Payment, source: str
+) -> dict:
+    """A payment paid or failed, as one payment has one outcome: the row lock + status guard
+    below is what makes a webhook and a lookup that both report the same payment paid credit
+    it once."""
     if parsed.status == "succeeded":
         # Layer 2: lock the row + guard the state transition (exactly-once credit).
         locked = (await session.execute(_locked(payment.id))).scalar_one()
@@ -467,6 +504,376 @@ async def _apply(
         return {"status": "processed", "result": "failed"}
 
     return {"status": "ignored", "result": parsed.status}
+
+
+# --- NOWPayments: each payment under an invoice is settled once ------------------------------ #
+# One invoice (our ``payments`` row) can hold several NOWPayments payments: the one for the
+# coin chosen, another if the member picks a second coin on their page, and the deposits
+# NOWPayments adds by itself — a second transfer to the same address ("Re-deposit") or one it
+# recovered from another coin or network ("Wrong Asset"). All carry our order. Each is real
+# money, so each is settled exactly once, and what was done is kept on the row
+# (``raw_payload["nowpayments"][<their payment id>]``):
+#   * the invoice paid as asked ("finished"): the deposit is credited at the invoice's price,
+#     or the purchase is confirmed (``_apply_outcome``);
+#   * anything else that arrived (an under-payment, an extra deposit): what it is worth goes
+#     to the member's wallet. A purchase it was meant for is not completed with it: its units
+#     go back on sale and the member buys from the wallet;
+#   * money that cannot be valued: nothing is credited and staff get a case at once.
+_NP = "nowpayments"
+_NP_IN_FLIGHT = frozenset({"confirming", "confirmed", "sending"})
+# how long an unpaid crypto payment stays on the member's wallet page
+OPEN_CRYPTO_WINDOW = datetime.timedelta(hours=24)
+# ... and one NOWPayments never reported anything about: no payment page was opened for it,
+# so no address was ever shown and nothing can be on its way
+OPEN_CRYPTO_UNSEEN_WINDOW = datetime.timedelta(hours=1)
+
+
+def _checkout_payload(checkout_url: str, provider: str, pay_currency: str | None) -> dict:
+    """What a payment keeps about its checkout: the page to finish it on and, for crypto, the
+    coin the member chose."""
+    payload = {"checkout_url": checkout_url}
+    if provider == _NP and pay_currency:
+        payload["pay_currency"] = pay_currency.lower()
+    return payload
+
+
+def _np_records(payment: Payment) -> dict[str, dict]:
+    raw = payment.raw_payload if isinstance(payment.raw_payload, dict) else {}
+    kept = raw.get(_NP)
+    return {str(k): dict(v) for k, v in kept.items()} if isinstance(kept, dict) else {}
+
+
+def _keep_np_records(payment: Payment, records: dict[str, dict]) -> None:
+    """Write the records on the row. Copies all the way down: the row must not share a dict
+    with the caller, or a later edit of ``records`` changes the value already on the row and
+    the next write looks like no change (it is then never saved)."""
+    raw = dict(payment.raw_payload) if isinstance(payment.raw_payload, dict) else {}
+    raw[_NP] = {record_id: dict(entry) for record_id, entry in records.items()}
+    payment.raw_payload = raw
+
+
+def _plain(value: object) -> str | None:
+    """A provider number as plain text (no exponent), None when it gave none."""
+    if value in (None, ""):
+        return None
+    try:
+        return format(decimal.Decimal(str(value)), "f")
+    except (decimal.InvalidOperation, ValueError):
+        return None
+
+
+def _np_replay_wanted(parsed: ParsedWebhook, kept: dict | None, row_status: str) -> bool:
+    """Whether a notification NOWPayments sends AGAIN still has money to settle. Only money
+    that arrived and was never credited:
+      * a payment waiting for a person because it could not be valued (it may be valued now);
+      * an under-payment recorded before each payment's outcome was kept (until 2026-10 it was
+        left for a person), while nothing was ever settled on its row.
+    Anything else sent again changes nothing: it was settled, or there was nothing to settle."""
+    if parsed.status != "received":
+        return False
+    if kept is None:
+        return parsed.type == "partially_paid" and row_status == "pending"
+    return bool(kept.get("review")) and kept.get("credited") is None
+
+
+async def _apply_nowpayments(
+    session: AsyncSession,
+    *,
+    parsed: ParsedWebhook,
+    payment: Payment,
+    source: str,
+    replay: bool = False,
+) -> dict:
+    data = parsed.raw
+    record_id = parsed.provider_payment_id or parsed.event_id
+    kept = _np_records(payment).get(record_id)
+    if replay and not _np_replay_wanted(parsed, kept, payment.status):
+        return {"status": "duplicate"}
+    value, valued_by = parsed.captured_amount, "notification"
+    if parsed.status == "received" and value is None and (kept or {}).get("credited") is None:
+        # Money arrived and its notification does not say what it is worth: NOWPayments is
+        # asked, before the row is locked (the answer can take seconds).
+        looked = await nowpayments_gateway.value_now(data)
+        if looked is not None:
+            value, valued_by = looked
+
+    locked = (await session.execute(_locked(payment.id))).scalar_one()
+    records = _np_records(locked)
+    entry = records.setdefault(record_id, {})
+    entry.update(
+        status=parsed.type,
+        coin=str(data.get("pay_currency") or entry.get("coin") or "") or None,
+        asked=_plain(data.get("pay_amount")),
+        received=_plain(data.get("actually_paid")),
+        parent=str(data["parent_payment_id"]) if nowpayments_gateway.is_extra(data) else None,
+    )
+    _keep_np_records(locked, records)
+
+    if parsed.status not in ("succeeded", "received", "failed"):
+        return {"status": "ignored", "result": parsed.status}
+    if parsed.status == "failed":
+        if entry["parent"] is not None:
+            # an extra deposit that did not go through says nothing about the invoice itself
+            return {"status": "ignored", "result": "extra_failed"}
+        if locked.status != "pending":
+            return {"status": "already_processed"}
+        return await _apply_outcome(
+            session, provider=_NP, parsed=parsed, payment=locked, source=source
+        )
+    if entry.get("credited") is not None:
+        return {"status": "already_processed"}
+
+    if parsed.status == "succeeded" and locked.status != "succeeded":
+        # the invoice paid as asked: the deposit credited, or the purchase confirmed
+        earlier = sum(
+            (decimal.Decimal(r["credited"]) for r in records.values() if r.get("credited")),
+            decimal.Decimal(0),
+        )
+        result = await _apply_outcome(
+            session, provider=_NP, parsed=parsed, payment=locked, source=source
+        )
+        records = _np_records(locked)
+        records.setdefault(record_id, {})["credited"] = str(locked.amount_captured)
+        _keep_np_records(locked, records)
+        # the row says everything that arrived for it, an earlier extra deposit included
+        locked.amount_captured = (locked.amount_captured or decimal.Decimal(0)) + earlier
+        return result
+
+    # An under-payment, an extra deposit, or the invoice paid a second time.
+    if parsed.status == "succeeded" and value is None:
+        value = locked.amount
+    if value is None or value <= 0:
+        if entry.get("review"):
+            return {"status": "already_processed"}  # its case is open: said once
+        return await _np_needs_review(session, locked, records, record_id)
+    return await _np_credit_wallet(session, locked, records, record_id, value, valued_by=valued_by)
+
+
+async def _purchase_title(session: AsyncSession, payment: Payment) -> str:
+    """The property a purchase or down-payment checkout is for (for the member's message)."""
+    property_id = None
+    if payment.related_investment_id is not None:
+        property_id = await session.scalar(
+            select(Investment.property_id).where(Investment.id == payment.related_investment_id)
+        )
+    elif payment.related_plan_id is not None:
+        property_id = await session.scalar(
+            select(InstallmentPlan.property_id).where(InstallmentPlan.id == payment.related_plan_id)
+        )
+    title = None
+    if property_id is not None:
+        title = await session.scalar(select(Property.title).where(Property.id == property_id))
+    return title or "your property"
+
+
+async def _np_credit_wallet(
+    session: AsyncSession,
+    locked: Payment,
+    records: dict[str, dict],
+    record_id: str,
+    value: decimal.Decimal,
+    *,
+    valued_by: str = "notification",
+) -> dict:
+    """Money arrived that is not the invoice simply paid: it goes to the member's wallet.
+    ``valued_by``: where its value came from (the notification, or what NOWPayments answered
+    when asked: its record of the payment, or its rate for the coin)."""
+    value = value.quantize(decimal.Decimal("0.01"))
+    purchase = locked.purpose in ("investment", "installment")
+    # the row was settled before this arrived: a further payment, said as one
+    again = locked.status == "succeeded"
+    what = "installment plan" if locked.purpose == "installment" else "purchase"
+    title = await _purchase_title(session, locked) if purchase else ""
+    released = False
+    if purchase and locked.status == "pending":
+        # the purchase is not completed with it: its units go back on sale
+        if locked.purpose == "investment":
+            from app.services import investment_service
+
+            await investment_service.release_reservation_for_payment(
+                session, payment=locked, reason="payment_short_credited"
+            )
+        else:
+            from app.services import installment_service
+
+            await installment_service.release_plan_for_payment(
+                session, payment=locked, reason="payment_short_credited"
+            )
+        locked.status = "failed"
+        released = True
+    elif not purchase and locked.status != "succeeded":
+        locked.status = "succeeded"
+
+    await wallet_service.credit(
+        session,
+        user_id=locked.user_id,
+        amount=value,
+        reference_id=locked.id,
+        payment_method=PaymentMethod.crypto,
+        description=(
+            f"Crypto payment for {title}: credited to the wallet"
+            if purchase
+            else "Deposit via nowpayments"
+        ),
+    )
+    locked.amount_captured = (locked.amount_captured or decimal.Decimal(0)) + value
+    entry = records.setdefault(record_id, {})
+    entry["credited"] = str(value)
+    if valued_by != "notification":
+        entry["valued_by"] = valued_by
+    # it waited for a person and could be valued after all: their case is answered
+    reviewed = bool(entry.pop("review", False))
+    _keep_np_records(locked, records)
+    await write_audit(
+        session,
+        action="payment.webhook.received_credited",
+        entity_type="payment",
+        entity_id=str(locked.id),
+        after={
+            "nowpayments_payment": record_id,
+            "credited": str(value),
+            "valued_by": valued_by,
+            "invoice": str(locked.amount),
+            "purpose": locked.purpose,
+            "released": released,
+        },
+    )
+    if reviewed:
+        from app.services import ops_case_service
+
+        await ops_case_service.settle_payment_review(
+            session,
+            payment=locked,
+            note=(
+                f"Settled without a person: NOWPayments payment {record_id} could be valued "
+                f"when its notification arrived again, and {value} {locked.currency} was "
+                "credited to the member's wallet. Nothing more to do."
+            ),
+        )
+    money, due = f"{value} {locked.currency}", f"{locked.amount} {locked.currency}"
+    if not purchase:
+        heading = "Deposit received"
+        message = (
+            f"Another crypto payment arrived for a deposit that was already credited. {money} "
+            "more was credited to your wallet."
+            if again
+            else f"Your crypto payment arrived as {money}, not the {due} of the deposit you "
+            "started: a smaller amount, or a coin or network other than the one you chose. "
+            f"{money} was credited to your wallet."
+        )
+    else:
+        heading = "Crypto payment credited to your wallet"
+        message = (
+            f"Your crypto payment for {title} arrived as {money}, not the {due} due: a smaller "
+            f"amount, or a coin or network other than the one you chose. The {what} was not "
+            f"completed and its units were released. {money} is in your wallet: you can buy "
+            "from your wallet."
+            if released
+            else f"A crypto payment of {money} arrived for {title} outside its checkout. It "
+            "was credited to your wallet."
+        )
+    await notification_service.notify(
+        session,
+        user_id=locked.user_id,
+        type="wallet",
+        title=heading,
+        message=message,
+        email_category="investment_updates",
+    )
+    return {"status": "processed", "result": "credited_received"}
+
+
+async def _np_needs_review(
+    session: AsyncSession, locked: Payment, records: dict[str, dict], record_id: str
+) -> dict:
+    """Money arrived that could not be valued: a person looks at it. Said once. The same
+    notification sent again later is tried again (``_np_replay_wanted``)."""
+    records.setdefault(record_id, {})["review"] = True
+    _keep_np_records(locked, records)
+    from app.services import ops_case_service
+
+    await ops_case_service.open_payment_review(
+        session,
+        payment=locked,
+        subject=f"Crypto payment received but not valued ({locked.amount} {locked.currency})",
+        summary=(
+            f"NOWPayments reported money for a crypto {locked.purpose} of {locked.amount} "
+            f"{locked.currency} (its payment {record_id}, invoice {locked.provider_payment_id}) "
+            "without saying what it is worth, and gave no value or rate when asked: an extra "
+            "deposit or one in another coin. Nothing was credited. Open the payment in the "
+            "NOWPayments dashboard: once it shows what the deposit is worth, press IPN on it to "
+            "send its notification again. The platform then credits the member and resolves "
+            "this case by itself. If it still cannot be valued, the developer has to credit it."
+        ),
+    )
+    await notification_service.notify(
+        session,
+        user_id=locked.user_id,
+        type="wallet",
+        title="Crypto payment received",
+        message=(
+            "A crypto payment arrived for you in a coin or an amount we could not value "
+            "automatically. Our team is checking it and will credit your wallet."
+        ),
+        email_category="investment_updates",
+    )
+    return {"status": "processed", "result": "needs_review"}
+
+
+async def open_crypto_payments(
+    session: AsyncSession, *, user_id: uuid.UUID, now: datetime.datetime | None = None
+) -> list[dict]:
+    """The member's crypto payments still on their way, newest first: started within
+    ``OPEN_CRYPTO_WINDOW`` (``OPEN_CRYPTO_UNSEEN_WINDOW`` when no payment page was ever opened
+    for it), or older with funds already seen on the network. Each says the coin chosen, how
+    far it is, and the page to finish it on."""
+    now = now or datetime.datetime.now(datetime.UTC)
+    rows = (
+        (
+            await session.execute(
+                select(Payment)
+                .where(
+                    Payment.user_id == user_id,
+                    Payment.provider == _NP,
+                    Payment.status == "pending",
+                    Payment.created_at >= now - SYNC_MAX_AGE,
+                )
+                .order_by(Payment.created_at.desc())
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out = []
+    for payment in rows:
+        records = _np_records(payment)
+        in_flight = any(r.get("status") in _NP_IN_FLIGHT for r in records.values())
+        window = OPEN_CRYPTO_WINDOW if records else OPEN_CRYPTO_UNSEEN_WINDOW
+        if not in_flight and payment.created_at < now - window:
+            continue
+        raw = payment.raw_payload if isinstance(payment.raw_payload, dict) else {}
+        coin = raw.get("pay_currency") or next(
+            (r["coin"] for r in records.values() if r.get("coin")), None
+        )
+        out.append(
+            {
+                "id": payment.id,
+                "purpose": payment.purpose,
+                "amount": str(payment.amount),
+                "currency": payment.currency,
+                "coin": coin,
+                "stage": "confirming" if in_flight else "awaiting_transfer",
+                "checkout_url": raw.get("checkout_url"),
+                "created_at": payment.created_at,
+                "title": (
+                    await _purchase_title(session, payment)
+                    if payment.purpose in ("investment", "installment")
+                    else None
+                ),
+            }
+        )
+    return out
 
 
 # --- Provider lookup: the safety net when the webhook never arrives ---------- #
@@ -650,5 +1057,30 @@ async def _locate(session: AsyncSession, provider: str, parsed: ParsedWebhook) -
                 Payment.provider_payment_id == parsed.provider_payment_id,
             )
         )
-        return res.scalar_one_or_none()
+        payment = res.scalar_one_or_none()
+        if payment is not None:
+            return payment
+    if provider == _NP:
+        # A deposit NOWPayments added to an invoice may come without our order: it still
+        # names the invoice (what the row keeps), or the payment it was added to.
+        invoice = parsed.raw.get("invoice_id")
+        if invoice not in (None, ""):
+            payment = (
+                await session.execute(
+                    select(Payment).where(
+                        Payment.provider == _NP, Payment.provider_payment_id == str(invoice)
+                    )
+                )
+            ).scalar_one_or_none()
+            if payment is not None:
+                return payment
+        if nowpayments_gateway.is_extra(parsed.raw):
+            parent = str(parsed.raw["parent_payment_id"])
+            return (
+                await session.execute(
+                    select(Payment)
+                    .where(Payment.provider == _NP, Payment.raw_payload[_NP].has_key(parent))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
     return None

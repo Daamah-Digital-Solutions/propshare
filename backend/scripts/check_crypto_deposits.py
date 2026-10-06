@@ -13,12 +13,16 @@ to pay with. Run this on the VPS as root: it changes nothing and prints no key.
   4. the smallest payment each coin takes right now, and how many coins an invoice of a given
      amount can be paid with.
 
-A crypto payment is settled by NOWPayments' "finished" notification only. The platform keeps
-the INVOICE id; the payment under it is known once a notification arrived, so a payment that
-was never notified can only be looked up in the NOWPayments dashboard (Payments).
+A crypto payment is settled by NOWPayments' notifications only: "finished" settles the invoice,
+and money that arrived another way (less than asked, a second transfer, another coin or
+network) is credited to the member's wallet at what it is worth, once per NOWPayments payment.
+The platform keeps the INVOICE id and, once notified, what it did with each payment under it; a
+payment that was never notified can only be looked up in the NOWPayments dashboard (Payments),
+or here by its id.
 
 Usage, on the VPS as root (after ``sudo -u deploy git -C /opt/capimax/app pull``):
     /opt/capimax/venv/bin/python /opt/capimax/app/backend/scripts/check_crypto_deposits.py
+    ... check_crypto_deposits.py 4870885867     (also show these NOWPayments payments, by id)
 """
 
 from __future__ import annotations
@@ -42,7 +46,7 @@ SANDBOX_FLAG = "NOWPAYMENTS_SANDBOX"
 BASES = {False: "https://api.nowpayments.io/v1", True: "https://api-sandbox.nowpayments.io/v1"}
 WEBHOOK_PATH = "/api/v1/payments/webhooks/nowpayments"
 ACCESS_LOGS = os.environ.get("CAPIMAX_ACCESS_LOGS", "/var/log/nginx/*access*log*")
-LATEST = 12  # payments shown
+LATEST = 30  # payments shown
 MAX_COINS = 150  # minimums asked for, one request each
 PAUSE = 0.12  # seconds between those requests
 AMOUNTS = (5, 10, 13, 20, 25, 50, 100)  # invoice sizes checked against the minimums
@@ -60,9 +64,16 @@ _ROW = (
     "events",
     "np_ids",
     "age_min",
+    "coin",
+    "kept",
 )
 # One row per payment, newest first. The member's email is cut to its first two letters; a
-# NOWPayments payment id is the part of an event id before the colon (payment_service).
+# NOWPayments payment id is the part of an event id before the colon, or a key of what the
+# platform kept about the payments under the invoice (payment_service).
+_KEPT = (
+    "CASE WHEN jsonb_typeof(p.raw_payload->'nowpayments') = 'object'"
+    " THEN p.raw_payload->'nowpayments' ELSE '{}'::jsonb END"
+)
 PAYMENTS_SQL = rf"""
 SELECT p.id,
        to_char(p.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'),
@@ -74,9 +85,14 @@ SELECT p.id,
                                    || to_char(e.created_at AT TIME ZONE 'UTC', 'HH24:MI'),
                                    ', ' ORDER BY e.created_at)
                    FROM payment_events e WHERE e.payment_id = p.id), ''),
-       coalesce((SELECT string_agg(DISTINCT split_part(e.event_id, ':', 1), ',')
-                   FROM payment_events e WHERE e.payment_id = p.id), ''),
-       round(extract(epoch FROM now() - p.created_at) / 60)
+       coalesce((SELECT string_agg(DISTINCT known.id, ',')
+                   FROM (SELECT split_part(e.event_id, ':', 1) AS id
+                           FROM payment_events e WHERE e.payment_id = p.id
+                          UNION
+                         SELECT jsonb_object_keys({_KEPT})) known), ''),
+       round(extract(epoch FROM now() - p.created_at) / 60),
+       coalesce(p.raw_payload->>'pay_currency', ''),
+       ({_KEPT})::text
   FROM payments p JOIN users u ON u.id = p.user_id
  WHERE p.provider = 'nowpayments'
  ORDER BY p.created_at DESC
@@ -142,12 +158,41 @@ def describe(payment: dict) -> str:
         f" {payment.get('pay_currency')}; asked {payment.get('pay_amount')}, received"
         f" {payment.get('actually_paid')}"
     )
+    if payment.get("actually_paid_at_fiat"):
+        # what the platform credits for an extra deposit
+        line += f" (worth {payment.get('actually_paid_at_fiat')} in fiat)"
     if payment.get("outcome_amount") is not None:
         line += f"; settles {payment.get('outcome_amount')} {payment.get('outcome_currency')}"
     if payment.get("parent_payment_id"):
         # a second deposit on the same address, or one recovered from another coin or network
         line += f"; an extra deposit on payment {payment.get('parent_payment_id')}"
     return f"{line}; updated {payment.get('updated_at')}"
+
+
+def kept_records(cell: str) -> dict[str, dict]:
+    """What the platform kept about each NOWPayments payment under an invoice."""
+    try:
+        kept = json.loads(cell or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(kept, dict):
+        return {}
+    return {str(key): entry for key, entry in kept.items() if isinstance(entry, dict)}
+
+
+def done_with(entry: dict | None) -> str:
+    """What the platform did with one NOWPayments payment, in words."""
+    if not entry:
+        return "the platform has no note of it: it was never notified, or before 2026-10"
+    if entry.get("credited") is not None:
+        # a deposit credited, a purchase confirmed, or money put in the wallet: at this value
+        how = {"record": " (valued from NOWPayments' record)", "rate": " (valued at its rate)"}
+        return f"the platform settled it at {entry['credited']}" + how.get(
+            entry.get("valued_by"), ""
+        )
+    if entry.get("review"):
+        return "the platform could not value it: a staff case is open, nothing credited"
+    return f"the platform saw it as '{entry.get('status')}': nothing to settle"
 
 
 def unusual(payment: dict) -> bool:
@@ -179,6 +224,16 @@ def verdict(row: dict, latest: dict | None) -> tuple[str, str]:
     if status == "succeeded":
         return "ok", f"settled: {row['captured'] or row['amount']} USD"
     if status != "pending":
+        try:
+            arrived = float(row["captured"] or 0)
+        except ValueError:
+            arrived = 0.0
+        if arrived > 0:
+            # a purchase paid short: not completed, the money is in the member's wallet
+            return "ok", (
+                f"closed as {status}: {row['captured']} USD arrived another way than asked and"
+                " was credited to the member's wallet"
+            )
         return "ok", f"closed as {status}: nothing was credited"
     state = (latest or {}).get("payment_status")
     if state is None and row["events"]:
@@ -205,9 +260,10 @@ def verdict(row: dict, latest: dict | None) -> tuple[str, str]:
         got = (latest or {}).get("actually_paid", "less")
         asked = (latest or {}).get("pay_amount", "the amount")
         return "act", (
-            f"paid LESS than the invoice (asked {asked}, received {got}): the platform does"
-            " not settle an under-payment by itself. If the gap is small, set the payment to"
-            " Finished in the NOWPayments dashboard: its 'finished' notification settles it"
+            f"paid LESS than the invoice (asked {asked}, received {got}) and nothing was"
+            " credited: the platform credits what arrived when it is notified, so this"
+            " notification was refused or lost (step 3). Send it again from the payment's"
+            " page in the NOWPayments dashboard (IPN): do not change its status"
         )
     if state == "finished":
         return "act", (
@@ -256,7 +312,9 @@ def read_access_logs() -> tuple[list[tuple[str, int]], int] | None:
     return sorted(found, key=lambda hit: _log_time(hit[0])), len(files)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """``argv``: NOWPayments payment ids to show as well (the command line's by default)."""
+    asked_for = [arg for arg in (sys.argv[1:] if argv is None else argv) if arg.isdigit()]
     say, ok, warn, info, stop = (
         envtools.say,
         envtools.ok,
@@ -307,26 +365,45 @@ def main() -> int:
         warn("could not read the database (sudo -u postgres psql)")
     elif not rows:
         info("no crypto payment was ever started")
+    shown: set[str] = set()
     for row in rows:
         records = []
         for np_id in filter(None, row["np_ids"].split(",")):
             _status, found = np_get(base, f"/payment/{quote(np_id, safe='')}", key)
             if found:
                 records.append(found)
+        kept = kept_records(row["kept"])
         kind, why = verdict(row, leading(records))
         print(
             f"   {row['created']}  {row['amount']:>10} USD  {row['purpose']:<11}"
             f" {row['status']:<9} {row['member']}"
         )
-        info(f"invoice {row['invoice'] or '(none)'} | platform payment {row['id']}")
+        chosen = row["coin"] or "none (chosen on the NOWPayments page)"
+        info(
+            f"invoice {row['invoice'] or '(none)'} | platform payment {row['id']}"
+            f" | coin chosen on the platform: {chosen}"
+        )
         info(f"notifications received: {row['events'] or 'none'}")
         for record in records:
+            np_id = str(record.get("payment_id"))
+            shown.add(np_id)
             info(f"NOWPayments {describe(record)}")
+            info(f"   {done_with(kept.get(np_id))}")
             if unusual(record):
                 info(f"   whole record: {whole(record)}")
         {"ok": ok, "wait": info, "act": warn}[kind](why)
         if kind == "act":
             attention.append(f"{row['created']} {row['amount']} USD ({row['member']}): {why}")
+    # payments asked for by id: the ones the platform was never notified about
+    for np_id in [np_id for np_id in asked_for if np_id not in shown]:
+        status, found = np_get(base, f"/payment/{quote(np_id, safe='')}", key)
+        if not found:
+            warn(f"NOWPayments payment {np_id}: not found with this key (HTTP {status})")
+            continue
+        print(f"   NOWPayments payment {np_id}, asked for by id")
+        info(f"NOWPayments {describe(found)}")
+        info(f"   order (the platform's payment): {found.get('order_id') or 'none on the record'}")
+        info(f"   whole record: {whole(found)}")
     unmatched = [line.split("\t") for line in (_psql(dotenv, UNMATCHED_SQL) or "").splitlines()]
     unmatched = [cells for cells in unmatched if len(cells) == 3]
     if unmatched:
@@ -354,13 +431,28 @@ def main() -> int:
             )
             for when, code in answers[-6:]:
                 info(f"{when}  ->  {code}")
-            if counts.get(401):
-                warn(
-                    "401 = the signature did not match: NOWPAYMENTS_IPN_SECRET is not the IPN"
-                    " secret of this NOWPayments account, so nothing it reports is settled."
-                    " Set it with scripts/set_nowpayments_keys.py"
+            refused = [(when, code) for when, code in answers if code != 200]
+            if refused:
+                info(
+                    "not accepted: "
+                    + "; ".join(f"{when} -> {code}" for when, code in refused[-12:])
                 )
-                attention.append("notifications are refused (wrong IPN secret)")
+            if counts.get(401):
+                if counts.get(200):
+                    # the secret is right (others passed): an API from before 2026-10-06
+                    # refused a notification carrying a very small number, e.g. a network fee
+                    warn(
+                        "401 on some only: that notification was refused, not the secret."
+                        " Send it again from the payment's page in the NOWPayments dashboard"
+                    )
+                    attention.append("some notifications were refused: send them again")
+                else:
+                    warn(
+                        "401 = the signature did not match: NOWPAYMENTS_IPN_SECRET is not the"
+                        " IPN secret of this NOWPayments account, so nothing it reports is"
+                        " settled. Set it with scripts/set_nowpayments_keys.py"
+                    )
+                    attention.append("notifications are refused (wrong IPN secret)")
             if any(code >= 500 or code == 429 for code in counts):
                 warn("some notifications were not taken (429 or 5xx): journalctl -u capimax")
             if set(counts) == {200}:

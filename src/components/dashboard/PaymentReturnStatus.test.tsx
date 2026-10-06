@@ -79,6 +79,29 @@ describe("PaymentReturnStatus", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
+  it("says what arrived when a crypto purchase was paid short: it is in the wallet", async () => {
+    // not "nothing was charged": the money came, less than due, and was credited
+    api.get.mockResolvedValue({ ...payment("failed"), provider: "nowpayments", amount: "112.75", amount_captured: "59.94" });
+    const { invalidate } = mount("/dashboard?tab=investments&invest=success&payment=p1", "invest");
+    const alert = await screen.findByTestId("payment-return");
+    await waitFor(() => expect(alert).toHaveTextContent(/The purchase was not completed/));
+    expect(alert).toHaveTextContent("$59.94 arrived instead of the $112.75 due");
+    expect(alert).toHaveTextContent("was credited to your wallet");
+    expect(alert).not.toHaveTextContent(/Nothing was charged/);
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledTimes(1);
+    const keys = invalidate.mock.calls.map((c) => JSON.stringify((c[0] as { queryKey: unknown }).queryKey));
+    expect(keys).toEqual(expect.arrayContaining(['["wallet"]', '["wallet-transactions"]']));
+  });
+
+  it("says the amount a crypto deposit was credited at when it is not the amount started", async () => {
+    api.get.mockResolvedValue({ ...payment("succeeded"), provider: "nowpayments", amount: "13.00", amount_captured: "12.99" });
+    mount("/dashboard?tab=wallet&deposit=success&payment=p1");
+    const alert = await screen.findByTestId("payment-return");
+    await waitFor(() => expect(alert).toHaveTextContent(/Deposit credited/));
+    expect(alert).toHaveTextContent("$12.99 arrived and was credited to your wallet (the deposit was started for $13.00)");
+  });
+
   it("stops asking after the timeout and promises a notification instead", async () => {
     api.get.mockResolvedValue(payment("pending"));
     mount("/dashboard?tab=wallet&deposit=success&payment=p1", "deposit", 0);

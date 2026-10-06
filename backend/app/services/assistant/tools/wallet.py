@@ -63,8 +63,11 @@ DEPOSIT_LABELS = {"card": "Card", "crypto": "Crypto", "bank": "Bank transfer"}
 _DEPOSIT_STEPS = {
     "card": "The wallet opens with the amount filled in; pressing Deposit opens the secure card "
     "checkout, and the wallet is credited as soon as the payment succeeds.",
-    "crypto": "The wallet opens with the amount filled in; pressing Deposit opens the crypto "
-    "payment page, and the wallet is credited once the network confirms the payment.",
+    "crypto": "The wallet opens with the amount filled in: choose there the coin and network "
+    "you will send, then Continue opens the payment page made for that one coin. Send that coin "
+    "on that network; the wallet shows the payment as on its way and is credited once the "
+    "network confirms it. A transfer that arrives short or in another coin is credited at the "
+    "value that arrives.",
     "bank": "The wallet opens with our receiving bank account shown; transfer the amount from "
     "your bank, then press Record transfer. The team credits the wallet when it arrives.",
 }

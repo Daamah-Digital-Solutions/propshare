@@ -1,0 +1,736 @@
+"""Crypto payments (NOWPayments): what arrives is credited, whatever way it arrives.
+
+Client, 2026-10-06: he chose BNB on the payment page and sent 13 USDT to the same address.
+NOWPayments recovered it as a second payment marked "partially paid" (1.5 cents under 13 USD);
+its notification was refused (a number in it, see test_payments_gateway) and, had it passed, it
+was ignored: the money sat at NOWPayments and nothing reached his wallet or told him.
+
+What each test protects:
+  * a deposit sent in another coin, or short, is credited at what arrived, said to the member,
+    once per NOWPayments payment (sent again, or set to Finished by hand: nothing more), and
+    the invoice paid as asked afterwards is a second deposit;
+  * an under-payment in the coin asked for is worth its share of the price;
+  * money NOWPayments does not value is not guessed: no credit, one staff case, the member told;
+  * a purchase is never completed with less than its price: the units go back on sale, the
+    money goes to the wallet, and paying the invoice properly afterwards still buys;
+  * an under-payment recorded before this (and left for a person) is settled when sent again;
+  * the member picks the coin on the platform: the coins are the account's own, the invoice is
+    made for the coin chosen, and the wallet lists what is still on its way.
+"""
+
+# ruff: noqa: E501
+from __future__ import annotations
+
+import datetime as dt
+import json
+import uuid
+
+import pytest
+
+from app.core.config import get_settings
+from app.services.integrations.payments import CheckoutResult
+from app.services.integrations.payments import nowpayments_gateway as nowp
+from app.tests.test_purchase_methods_db import (
+    _available,
+    _balance,
+    _h,
+    _investor,
+    _owned,
+    _plan,
+    _property,
+    _told,
+)
+
+IPN_URL = "/api/v1/payments/webhooks/nowpayments"
+
+
+def _crypto_rail(monkeypatch, answers: dict | None = None) -> list[dict]:
+    """NOWPayments on, without the network; returns the invoices asked for. ``answers``: what
+    its API says when asked (path -> body); anything else is a 404. The paths asked are kept
+    under ``answers["asked"]``."""
+    made: list[dict] = []
+    answers = answers if answers is not None else {}
+    answers.setdefault("asked", [])
+
+    async def fake_checkout(**kwargs):
+        made.append(kwargs)
+        invoice = str(5_000_000_000 + len(made))
+        return CheckoutResult(
+            provider_payment_id=invoice,
+            checkout_url=f"https://nowpayments.test/payment/?iid={invoice}",
+            status="pending",
+        )
+
+    async def fake_get(path: str):
+        answers["asked"].append(path)
+        return (200, answers[path]) if path in answers else (404, None)
+
+    monkeypatch.setattr(nowp, "is_configured", lambda: True)
+    monkeypatch.setattr(nowp, "create_checkout", fake_checkout)
+    monkeypatch.setattr(nowp, "_get", fake_get)
+    monkeypatch.setattr(get_settings(), "nowpayments_ipn_secret", "ipn_t", raising=False)
+    return made
+
+
+async def _send(client, body: bytes):
+    return await client.post(
+        IPN_URL,
+        content=body,
+        headers={
+            "x-nowpayments-sig": nowp.compute_signature("ipn_t", body),
+            "content-type": "application/json",
+        },
+    )
+
+
+async def _ipn(client, **fields):
+    return await _send(client, json.dumps(fields).encode())
+
+
+async def _deposit(client, token, amount, coin="usdtbsc") -> str:
+    r = await client.post(
+        "/api/v1/wallet/deposit",
+        json={"amount": amount, "method": "crypto", "pay_currency": coin},
+        headers=_h(token),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["payment_id"]
+
+
+def _payment(db, pid: str):
+    row = db("SELECT status, amount_captured, raw_payload FROM payments WHERE id=:p", p=pid)[0]
+    return row[0], (float(row[1]) if row[1] is not None else None), row[2] or {}
+
+
+# --- a deposit that did not arrive as its invoice asked ---------------------------------------
+@pytest.mark.asyncio
+async def test_a_deposit_sent_in_another_coin_is_credited_at_what_arrived(client, db, monkeypatch):
+    made = _crypto_rail(monkeypatch)
+    token, uid = await _investor(client, db, "wrong.coin@cp.io")
+    pid = await _deposit(client, token, 13, coin="BNBBSC")
+    assert made[0]["pay_currency"] == "BNBBSC"
+    assert _payment(db, pid)[2]["pay_currency"] == "bnbbsc"
+
+    # the page asked for BNB: NOWPayments reports that payment, waiting
+    r = await _ipn(
+        client,
+        payment_id=6160305429,
+        payment_status="waiting",
+        order_id=pid,
+        price_amount=13,
+        pay_amount=0.01669618,
+        actually_paid=0,
+        pay_currency="bnbbsc",
+    )
+    assert r.json() == {"status": "ignored", "result": "pending"} and _balance(db, uid) == 0
+
+    # 13 USDT arrived on that address instead: recovered as a payment of its own, written the
+    # way NOWPayments writes it (the fee is the number the old check refused)
+    recovered = (
+        '{"payment_id":4870885867,"parent_payment_id":6160305429,"invoice_id":null,'
+        '"payment_status":"partially_paid","price_amount":13,"price_currency":"usd",'
+        '"pay_amount":13,"actually_paid":13,"actually_paid_at_fiat":12.98513924,'
+        f'"pay_currency":"usdtbsc","order_id":"{pid}","outcome_amount":0.01633459,'
+        '"outcome_currency":"bnbbsc","fee":{"currency":"bnbbsc","depositFee":0.000083,'
+        '"withdrawalFee":0,"serviceFee":0.000249}}'
+    ).encode()
+    r = await _send(client, recovered)
+    assert r.status_code == 200 and r.json() == {
+        "status": "processed",
+        "result": "credited_received",
+    }
+    assert _balance(db, uid) == 12.99
+    status, captured, raw = _payment(db, pid)
+    assert (status, captured) == ("succeeded", 12.99)
+    kept = raw["nowpayments"]
+    assert kept["4870885867"] == {
+        "status": "partially_paid",
+        "coin": "usdtbsc",
+        "asked": "13",
+        "received": "13",
+        "parent": "6160305429",
+        "credited": "12.99",
+    }
+    assert kept["6160305429"]["status"] == "waiting" and "credited" not in kept["6160305429"]
+    told = _told(db, uid, "Deposit received")
+    assert len(told) == 1 and "arrived as 12.99 USD, not the 13.00 USD of the deposit" in told[0]
+    assert "12.99 USD was credited to your wallet" in told[0]
+    moves = db("SELECT amount, type, payment_method FROM transactions WHERE user_id=:u", u=uid)
+    assert [(float(a), kind, how) for a, kind, how in moves] == [(12.99, "deposit", "crypto")]
+
+    # sent again from the dashboard, then set to Finished there by hand: nothing more
+    assert (await _send(client, recovered)).json() == {"status": "duplicate"}
+    finished = recovered.replace(b'"partially_paid"', b'"finished"')
+    assert (await _send(client, finished)).json() == {"status": "already_processed"}
+    assert (await _send(client, finished)).json() == {"status": "duplicate"}
+    assert _balance(db, uid) == 12.99
+
+    # the member then also pays the BNB the page asked for: a second deposit, at its price
+    r = await _ipn(
+        client,
+        payment_id=6160305429,
+        payment_status="finished",
+        order_id=pid,
+        price_amount=13,
+        pay_amount=0.01669618,
+        actually_paid=0.01669618,
+        pay_currency="bnbbsc",
+    )
+    assert r.json() == {"status": "processed", "result": "credited_received"}
+    assert _balance(db, uid) == 25.99 and _payment(db, pid)[1] == 25.99
+    assert "Another crypto payment arrived" in _told(db, uid, "Deposit received")[1]
+    # and that payment expiring or failing later changes nothing
+    r = await _ipn(client, payment_id=6160305429, payment_status="expired", order_id=pid)
+    assert r.json() == {"status": "already_processed"} and _payment(db, pid)[0] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_an_under_payment_is_worth_its_share_and_the_rest_counts_when_it_comes(
+    client, db, monkeypatch
+):
+    _crypto_rail(monkeypatch)
+    token, uid = await _investor(client, db, "short@cp.io")
+    pid = await _deposit(client, token, 100, coin="btc")
+    # asked 0.002 BTC for 100 USD, 0.0015 arrived: three quarters of the price
+    r = await _ipn(
+        client,
+        payment_id=7001,
+        payment_status="partially_paid",
+        order_id=pid,
+        price_amount=100,
+        pay_amount=0.002,
+        actually_paid=0.0015,
+        pay_currency="btc",
+    )
+    assert r.json()["result"] == "credited_received" and _balance(db, uid) == 75.0
+    # the rest is sent to the same address: NOWPayments adds it as its own payment and says
+    # what it is worth (no rate was quoted for it)
+    r = await _ipn(
+        client,
+        payment_id=7002,
+        parent_payment_id=7001,
+        payment_status="finished",
+        order_id=pid,
+        price_amount=100,
+        pay_amount=0.0005,
+        actually_paid=0.0005,
+        actually_paid_at_fiat=25.4,
+        pay_currency="btc",
+    )
+    assert r.json()["result"] == "credited_received" and _balance(db, uid) == 100.4
+    assert _payment(db, pid)[:2] == ("succeeded", 100.4)
+    told = _told(db, uid, "Deposit received")
+    assert len(told) == 2
+    assert any("arrived as 75.00 USD, not the 100.00 USD of the deposit" in m for m in told)
+    # what comes after the deposit was credited is said as a further payment
+    assert any(
+        "Another crypto payment arrived" in m and "25.40 USD more was credited" in m for m in told
+    )
+
+
+@pytest.mark.asyncio
+async def test_money_that_is_not_valued_is_not_guessed(client, db, monkeypatch):
+    answers: dict = {}
+    _crypto_rail(monkeypatch, answers)
+    token, uid = await _investor(client, db, "unvalued@cp.io")
+    pid = await _deposit(client, token, 50)
+    # an extra deposit in another coin, with no valuation: its "asked" is whatever arrived, so
+    # the share-of-the-price rule would credit the whole invoice for any amount
+    extra = dict(
+        payment_id=8002,
+        parent_payment_id=8001,
+        payment_status="partially_paid",
+        order_id=pid,
+        price_amount=50,
+        price_currency="usd",
+        pay_amount=3,
+        actually_paid=3,
+        actually_paid_at_fiat=0,
+        pay_currency="doge",
+    )
+    r = await _ipn(client, **extra)
+    assert r.json() == {"status": "processed", "result": "needs_review"}
+    # NOWPayments was asked for the payment, then for its rate: neither told
+    assert answers["asked"] == [
+        "/payment/8002",
+        "/estimate?amount=50&currency_from=usd&currency_to=doge",
+    ]
+    assert _balance(db, uid) == 0 and _payment(db, pid)[0] == "pending"
+    cases = db("SELECT subject, priority, context FROM support_tickets WHERE kind='ops_case'")
+    assert len(cases) == 1 and cases[0][1] == "high"
+    assert "received but not valued" in cases[0][0]
+    assert cases[0][2]["case_key"] == f"provider_payment:{pid}"
+    assert len(_told(db, uid, "Crypto payment received")) == 1
+    # told again by NOWPayments: still one case, one message, no credit
+    assert (await _ipn(client, **extra)).json() == {"status": "already_processed"}
+    done = {**extra, "payment_status": "finished"}
+    assert (await _ipn(client, **done)).json() == {"status": "already_processed"}
+    assert db("SELECT count(*) FROM support_tickets WHERE kind='ops_case'")[0][0] == 1
+    assert len(_told(db, uid, "Crypto payment received")) == 1 and _balance(db, uid) == 0
+
+    # NOWPayments can say what it is worth after all, and staff press "IPN" on it: credited
+    # once, and the case answers itself so nobody credits it again by hand
+    answers["/payment/8002"] = {
+        "payment_id": 8002,
+        "order_id": pid,
+        "payment_status": "partially_paid",
+        "price_amount": 50,
+        "pay_amount": 3,
+        "actually_paid": 3,
+        "actually_paid_at_fiat": 0.61,  # no parent on the record: it stays an extra deposit
+        "pay_currency": "doge",
+    }
+    r = await _ipn(client, **extra)
+    assert r.json() == {"status": "processed", "result": "credited_received"}
+    assert _balance(db, uid) == 0.61
+    status, captured, raw = _payment(db, pid)
+    assert (status, captured) == ("succeeded", 0.61)
+    assert raw["nowpayments"]["8002"]["credited"] == "0.61"
+    assert raw["nowpayments"]["8002"]["valued_by"] == "record"
+    assert "review" not in raw["nowpayments"]["8002"]
+    case = db("SELECT id, status, resolved_at FROM support_tickets WHERE kind='ops_case'")[0]
+    assert case[1] == "resolved" and case[2] is not None
+    note = db(
+        "SELECT author_type, internal, body FROM support_ticket_messages WHERE ticket_id=:t",
+        t=case[0],
+    )
+    assert len(note) == 1 and note[0][:2] == ("system", True)
+    assert "0.61 USD was credited to the member's wallet" in note[0][2]
+    for again in (extra, done):
+        assert (await _ipn(client, **again)).json() == {"status": "duplicate"}
+    assert _balance(db, uid) == 0.61
+
+
+@pytest.mark.asyncio
+async def test_a_notification_without_a_value_is_valued_by_asking_nowpayments(
+    client, db, monkeypatch
+):
+    """NOWPayments' own example of a repeated deposit carries ``actually_paid_at_fiat: 0``. The
+    money is real: its record is read again, then its rate for the coin is used."""
+    answers: dict = {
+        # its record of the first one has the value the notification left out
+        "/payment/8102": {
+            "payment_id": 8102,
+            "parent_payment_id": 8101,
+            "order_id": None,
+            "price_amount": 60,
+            "pay_amount": 20,
+            "actually_paid": 20,
+            "actually_paid_at_fiat": 19.97,
+            "pay_currency": "usdtbsc",
+        },
+        # the second has none anywhere: 60 USD buys 0.024 ETH today, 0.01 ETH arrived
+        "/payment/8103": {"payment_id": 8103, "actually_paid_at_fiat": 0},
+        "/estimate?amount=60&currency_from=usd&currency_to=eth": {"estimated_amount": 0.024},
+        # a record of some other payment is not believed
+        "/payment/8104": {"payment_id": 9999, "actually_paid_at_fiat": 55},
+    }
+    _crypto_rail(monkeypatch, answers)
+    token, uid = await _investor(client, db, "asked@cp.io")
+    pid = await _deposit(client, token, 60)
+    extra = dict(
+        parent_payment_id=8101,
+        payment_status="finished",
+        order_id=pid,
+        price_amount=60,
+        price_currency="usd",
+        actually_paid_at_fiat=0,
+    )
+    r = await _ipn(
+        client, payment_id=8102, pay_amount=20, actually_paid=20, pay_currency="usdtbsc", **extra
+    )
+    assert r.json()["result"] == "credited_received" and _balance(db, uid) == 19.97
+    r = await _ipn(
+        client, payment_id=8103, pay_amount=0.01, actually_paid=0.01, pay_currency="ETH", **extra
+    )
+    assert r.json()["result"] == "credited_received" and _balance(db, uid) == 44.97  # + 25.00
+    kept = _payment(db, pid)[2]["nowpayments"]
+    assert (kept["8102"]["credited"], kept["8102"]["valued_by"]) == ("19.97", "record")
+    assert (kept["8103"]["credited"], kept["8103"]["valued_by"]) == ("25.00", "rate")
+    # a coin NOWPayments gives no rate for, and a record that is another payment's: a person
+    r = await _ipn(
+        client, payment_id=8104, pay_amount=7, actually_paid=7, pay_currency="odd", **extra
+    )
+    assert r.json() == {"status": "processed", "result": "needs_review"}
+    assert _balance(db, uid) == 44.97
+    # a notification that says its value asks NOWPayments nothing
+    before = len(answers["asked"])
+    r = await _ipn(
+        client,
+        payment_id=8105,
+        pay_amount=5,
+        actually_paid=5,
+        pay_currency="usdtbsc",
+        **{**extra, "actually_paid_at_fiat": 4.99},
+    )
+    assert r.json()["result"] == "credited_received" and len(answers["asked"]) == before
+    assert "valued_by" not in _payment(db, pid)[2]["nowpayments"]["8105"]
+
+
+@pytest.mark.asyncio
+async def test_an_extra_deposit_that_fails_leaves_the_invoice_open(client, db, monkeypatch):
+    _crypto_rail(monkeypatch)
+    token, uid = await _investor(client, db, "extra.failed@cp.io")
+    prop = _property(db, model="ready-income")
+    r = await client.post(
+        "/api/v1/investments",
+        json={"property_id": prop, "amount": 1000, "method": "crypto", "pay_currency": "usdtbsc"},
+        headers=_h(token),
+    )
+    inv = r.json()["investment_id"]
+    pid, due = db("SELECT id, amount FROM payments WHERE related_investment_id=:i", i=inv)[0]
+    pid, due = str(pid), float(due)
+    # a stray transfer NOWPayments could not process: the purchase keeps its units
+    r = await _ipn(
+        client, payment_id=3202, parent_payment_id=3201, payment_status="failed", order_id=pid
+    )
+    assert r.json() == {"status": "ignored", "result": "extra_failed"}
+    assert _payment(db, pid)[0] == "pending" and _available(db, prop) == 90
+    # and the invoice paid as asked still buys them
+    r = await _ipn(
+        client, payment_id=3201, payment_status="finished", order_id=pid, price_amount=due
+    )
+    assert r.json()["status"] == "processed" and _owned(db, uid, prop) == 10
+    # while the invoice's own payment failing does release them
+    other = await client.post(
+        "/api/v1/investments",
+        json={"property_id": prop, "amount": 1000, "method": "crypto", "pay_currency": "usdtbsc"},
+        headers=_h(token),
+    )
+    second = db(
+        "SELECT id FROM payments WHERE related_investment_id=:i", i=other.json()["investment_id"]
+    )[0][0]
+    assert _available(db, prop) == 80
+    r = await _ipn(client, payment_id=3301, payment_status="expired", order_id=str(second))
+    assert r.json() == {"status": "processed", "result": "failed"} and _available(db, prop) == 90
+
+
+@pytest.mark.asyncio
+async def test_an_under_payment_recorded_earlier_is_settled_when_sent_again(
+    client, db, monkeypatch
+):
+    """Before 2026-10 an under-payment was recorded and left for a person. Staff press "IPN" on
+    it in the NOWPayments dashboard: the same notification comes again and is settled now."""
+    _crypto_rail(monkeypatch)
+    token, uid = await _investor(client, db, "resent@cp.io")
+    pid = await _deposit(client, token, 40)
+    db(
+        "INSERT INTO payment_events (provider, event_id, payment_id, type)"
+        " VALUES ('nowpayments', '9001:partially_paid', :p, 'partially_paid')",
+        p=pid,
+    )
+    fields = dict(
+        payment_id=9001,
+        payment_status="partially_paid",
+        order_id=pid,
+        price_amount=40,
+        pay_amount=40,
+        actually_paid=30,
+        pay_currency="usdtbsc",
+    )
+    assert (await _ipn(client, **fields)).json()["result"] == "credited_received"
+    assert (await _ipn(client, **fields)).json() == {"status": "duplicate"}
+    assert _balance(db, uid) == 30.0
+    assert db("SELECT count(*) FROM payment_events WHERE event_id='9001:partially_paid'")[0][0] == 1
+    # a "finished" recorded before is still never applied twice
+    done = await _deposit(client, token, 20)
+    paid = dict(payment_id=9002, payment_status="finished", order_id=done, price_amount=20)
+    assert (await _ipn(client, **paid)).json()["result"] == "credited"
+    assert (await _ipn(client, **paid)).json() == {"status": "duplicate"}
+    assert _balance(db, uid) == 50.0
+    # the invoice simply paid is kept like any other outcome
+    assert _payment(db, done)[2]["nowpayments"]["9002"] == {
+        "status": "finished",
+        "coin": None,
+        "asked": None,
+        "received": None,
+        "parent": None,
+        "credited": "20.00",
+    }
+
+    # An under-payment recorded back then whose deposit was settled since (it was set to
+    # Finished by hand and credited in full, before each payment's outcome was kept): sent
+    # again, it must not be credited a second time. Neither is one on a row that was closed.
+    settled = await _deposit(client, token, 60)
+    closed = await _deposit(client, token, 70)
+    for payment, np_id, status in ((settled, 9003, "succeeded"), (closed, 9004, "failed")):
+        db("UPDATE payments SET status=:s WHERE id=:p", s=status, p=payment)
+        db(
+            "INSERT INTO payment_events (provider, event_id, payment_id, type)"
+            " VALUES ('nowpayments', :e, :p, 'partially_paid')",
+            e=f"{np_id}:partially_paid",
+            p=payment,
+        )
+        again = dict(fields, payment_id=np_id, order_id=payment, price_amount=60, pay_amount=60)
+        assert (await _ipn(client, **again)).json() == {"status": "duplicate"}
+    assert _balance(db, uid) == 50.0
+    # a notification seen before for a payment that is not ours is dropped quietly
+    db(
+        "INSERT INTO payment_events (provider, event_id, type)"
+        " VALUES ('nowpayments', '9005:partially_paid', 'partially_paid')"
+    )
+    stray = dict(fields, payment_id=9005, order_id=str(uuid.uuid4()))
+    assert (await _ipn(client, **stray)).json() == {"status": "duplicate"}
+
+
+# --- a purchase is never completed with less than its price -------------------------------------
+@pytest.mark.asyncio
+async def test_a_short_payment_for_a_purchase_goes_to_the_wallet(client, db, monkeypatch):
+    made = _crypto_rail(monkeypatch)
+    token, uid = await _investor(client, db, "short.buy@cp.io")
+    prop = _property(db, model="ready-income")
+    r = await client.post(
+        "/api/v1/investments",
+        json={"property_id": prop, "amount": 1000, "method": "crypto", "pay_currency": "usdttrc20"},
+        headers=_h(token),
+    )
+    assert r.status_code == 200, r.text
+    inv = r.json()["investment_id"]
+    assert made[0]["pay_currency"] == "usdttrc20" and _available(db, prop) == 90
+    pid, due = db("SELECT id, amount FROM payments WHERE related_investment_id=:i", i=inv)[0]
+    pid, due = str(pid), float(due)
+
+    r = await _ipn(
+        client,
+        payment_id=3001,
+        payment_status="partially_paid",
+        order_id=pid,
+        price_amount=due,
+        pay_amount=due,
+        actually_paid=due / 2,
+        pay_currency="usdttrc20",
+    )
+    half = round(due / 2, 2)
+    assert r.json() == {"status": "processed", "result": "credited_received"}
+    assert _balance(db, uid) == half and _owned(db, uid, prop) == 0
+    assert _available(db, prop) == 100  # the units are back on sale
+    assert db("SELECT status, failure_reason FROM investments WHERE id=:i", i=inv)[0] == (
+        "cancelled",
+        "payment_short_credited",
+    )
+    assert _payment(db, pid)[:2] == ("failed", half)
+    told = _told(db, uid, "Crypto payment credited to your wallet")
+    assert (
+        len(told) == 1 and "The purchase was not completed and its units were released" in told[0]
+    )
+    assert f"arrived as {half:.2f} USD, not the {due:.2f} USD due" in told[0]
+
+    # paying the invoice properly afterwards (another coin picked on the same page) still buys
+    r = await _ipn(
+        client, payment_id=3002, payment_status="finished", order_id=pid, price_amount=due
+    )
+    assert r.json() == {"status": "processed", "result": "reconciled_confirmed"}
+    assert _owned(db, uid, prop) == 10 and _available(db, prop) == 90
+    assert _balance(db, uid) == half  # what came first stays in the wallet
+    assert _payment(db, pid)[:2] == ("succeeded", round(due + half, 2))
+
+
+@pytest.mark.asyncio
+async def test_a_short_down_payment_does_not_start_the_plan(client, db, monkeypatch):
+    made = _crypto_rail(monkeypatch)
+    token, uid = await _investor(client, db, "short.plan@cp.io")
+    prop = _property(db)
+    r = await client.post(
+        "/api/v1/installments",
+        json={
+            "property_id": prop,
+            "amount": 1200,
+            "duration_months": 12,
+            "method": "crypto",
+            "pay_currency": "usdtbsc",
+        },
+        headers=_h(token),
+    )
+    assert r.status_code == 201, r.text
+    plan = r.json()["id"]
+    assert made[0]["pay_currency"] == "usdtbsc" and _available(db, prop) == 88
+    pid, due = db("SELECT id, amount FROM payments WHERE related_plan_id=:i", i=plan)[0]
+    r = await _ipn(
+        client,
+        payment_id=3101,
+        parent_payment_id=3100,
+        payment_status="partially_paid",
+        order_id=str(pid),
+        price_amount=float(due),
+        pay_amount=10,
+        actually_paid=10,
+        actually_paid_at_fiat=9.99,
+        pay_currency="usdterc20",
+    )
+    assert r.json()["result"] == "credited_received" and _balance(db, uid) == 9.99
+    assert _available(db, prop) == 100
+    assert db("SELECT status, failure_reason FROM installment_plans WHERE id=:i", i=plan)[0] == (
+        "cancelled",
+        "payment_short_credited",
+    )
+    assert (
+        "The installment plan was not completed"
+        in _told(db, uid, "Crypto payment credited to your wallet")[0]
+    )
+    # a wallet plan is untouched by any of this
+    assert (await _plan(client, token, prop, method="card")).status_code == 503
+
+
+# --- the coin is chosen on the platform ----------------------------------------------------------
+@pytest.mark.asyncio
+async def test_the_coins_offered_are_the_accounts_own(client, db, monkeypatch):
+    monkeypatch.setattr(nowp, "is_configured", lambda: True)
+    monkeypatch.setattr(nowp, "_coins", None)
+    asked: list[str] = []
+
+    async def fake_get(path: str):
+        asked.append(path)
+        if path == "/merchant/coins":
+            return 200, {
+                "selectedCurrencies": [
+                    "DOGE",
+                    "BTC",
+                    "USDTTRC20",
+                    "XRP",
+                    "GONE",
+                    "BNBBSC",
+                    "USDTBSC",
+                    "FDUSDBSC",
+                ]
+            }
+        return 200, {
+            "currencies": [
+                # the account marks neither of these two, and knows nothing of USDTBSC
+                {"code": "BNBBSC", "name": "BNB (Binance Smart Chain)", "ticker": "bnb"},
+                {"code": "FDUSDBSC", "name": "First Digital USD", "is_stable": True},
+                {
+                    "code": "BTC",
+                    "name": "Bitcoin",
+                    "ticker": "btc",
+                    "network": "btc",
+                    "is_popular": True,
+                },
+                {
+                    "code": "USDTTRC20",
+                    "name": "Tether USD (Tron)",
+                    "ticker": "usdt",
+                    "network": "trx",
+                    "is_stable": True,
+                },
+                {
+                    "code": "XRP",
+                    "name": "Ripple",
+                    "ticker": "xrp",
+                    "network": "xrp",
+                    "extra_id_exists": True,
+                },
+                {"code": "GONE", "name": "Gone", "available_for_payment": False},
+                {"code": "ETH", "name": "Ethereum", "is_popular": True},
+            ]
+        }
+
+    monkeypatch.setattr(nowp, "_get", fake_get)
+    assert (await client.get("/api/v1/payments/crypto/coins")).status_code == 401
+    token, _uid = await _investor(client, db, "coins@cp.io")
+    hdr = {"Authorization": f"Bearer {token}"}
+    body = (await client.get("/api/v1/payments/crypto/coins", headers=hdr)).json()
+    # The coins members use most come first and are listed up front whatever the account
+    # marks (it holds hundreds); then stablecoins, the popular ones, the rest by name. A coin
+    # switched off for payments or not switched on in the account is not offered.
+    assert [c["code"] for c in body["items"]] == [
+        "usdttrc20",
+        "usdtbsc",
+        "btc",
+        "bnbbsc",
+        "fdusdbsc",
+        "doge",
+        "xrp",
+    ]
+    assert body["total"] == 7
+    assert body["items"][0] == {
+        "code": "usdttrc20",
+        "ticker": "USDT",
+        "name": "Tether USD (Tron)",
+        "network": "TRX",
+        "stable": True,
+        "popular": True,
+        "memo": False,
+    }
+    # one the account's list says nothing about is still offered, by its code
+    assert body["items"][1] == {
+        "code": "usdtbsc",
+        "ticker": "USDTBSC",
+        "name": "USDTBSC",
+        "network": None,
+        "stable": False,
+        "popular": True,
+        "memo": False,
+    }
+    assert body["items"][3]["popular"] is True and body["items"][4]["popular"] is False
+    assert body["items"][5]["name"] == "DOGE" and body["items"][6]["memo"] is True
+    # remembered: a second page view asks NOWPayments nothing
+    await client.get("/api/v1/payments/crypto/coins", headers=hdr)
+    assert asked == ["/merchant/coins", "/full-currencies"]
+
+
+def test_the_assistant_explains_crypto_the_way_it_works_now():
+    """Its knowledge base and tools said the coin is picked on NOWPayments' page, and nothing
+    about a transfer that arrives short or in another coin."""
+    from app.services.assistant.tools import platform, wallet
+    from app.tests.test_assistant_eval_tools_db import _load
+
+    seed = _load("seed_kb")
+    for rows, chosen_here, short in (
+        (seed.ARTICLES, "choose the coin and its network on PropShare", "arrives short"),
+        (seed.ARTICLES_AR, "تختار العملة وشبكتها على PropShare", "يصل ناقصًا"),
+    ):
+        bodies = {slug: body for slug, *_rest, body in rows}
+        assert chosen_here in bodies["getting-started"]
+        assert chosen_here in bodies["wallet-deposits-withdrawals"]
+        assert short in bodies["wallet-deposits-withdrawals"]
+        assert all("on NOWPayments' page)" not in body for body in bodies.values())
+        assert all("من صفحة NOWPayments)" not in body for body in bodies.values())
+    assert "choose there the coin and network" in wallet._DEPOSIT_STEPS["crypto"]
+    assert "picks the coin and its network on PropShare" in platform._purchase_methods()["note"]
+
+
+@pytest.mark.asyncio
+async def test_the_wallet_lists_the_crypto_payments_still_on_their_way(client, db, monkeypatch):
+    _crypto_rail(monkeypatch)
+    token, uid = await _investor(client, db, "open@cp.io")
+    other_token, _other = await _investor(client, db, "open.other@cp.io")
+    hdr = {"Authorization": f"Bearer {token}"}
+    assert (await client.get("/api/v1/payments/crypto/open")).status_code == 401
+
+    fresh = await _deposit(client, token, 25, coin="usdtbsc")
+    old = await _deposit(client, token, 30, coin="btc")
+    seen = await _deposit(client, token, 35, coin="eth")
+    paid = await _deposit(client, token, 40, coin="ltc")
+    unopened = await _deposit(client, token, 50, coin="trx")
+    opened = await _deposit(client, token, 55, coin="sol")
+    await _deposit(client, other_token, 45)
+    now = dt.datetime.now(dt.UTC)
+    two_days, two_hours = now - dt.timedelta(days=2), now - dt.timedelta(hours=2)
+    db("UPDATE payments SET created_at=:t WHERE id = ANY(:ids)", t=two_days, ids=[old, seen])
+    db(
+        "UPDATE payments SET created_at=:t WHERE id = ANY(:ids)",
+        t=two_hours,
+        ids=[unopened, opened],
+    )
+    # funds for the old ETH one were seen on the network; the LTC one is paid
+    await _ipn(
+        client, payment_id=4001, payment_status="confirming", order_id=seen, pay_currency="eth"
+    )
+    await _ipn(client, payment_id=4002, payment_status="finished", order_id=paid, price_amount=40)
+    # two hours old: one whose payment page was opened (NOWPayments made a payment and gave an
+    # address), one nobody ever opened, so nothing can be on its way for it
+    await _ipn(
+        client, payment_id=4003, payment_status="waiting", order_id=opened, pay_currency="sol"
+    )
+
+    rows = (await client.get("/api/v1/payments/crypto/open", headers=hdr)).json()
+    assert [(r["id"], r["coin"], r["stage"], r["amount"]) for r in rows] == [
+        (fresh, "usdtbsc", "awaiting_transfer", "25.00"),
+        (opened, "sol", "awaiting_transfer", "55.00"),
+        (seen, "eth", "confirming", "35.00"),
+    ]
+    assert unopened not in [r["id"] for r in rows]
+    assert rows[0]["purpose"] == "deposit" and rows[0]["title"] is None
+    assert rows[0]["checkout_url"].startswith("https://nowpayments.test/payment/?iid=")
+    assert _balance(db, uid) == 40.0
+    assert str(uuid.UUID(rows[0]["id"])) == fresh

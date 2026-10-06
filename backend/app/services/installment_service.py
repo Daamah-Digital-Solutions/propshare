@@ -470,6 +470,7 @@ async def create_plan(
     cancel_url: str = "",
     ipn_url: str = "",
     expected_unit_price: float | None = None,
+    pay_currency: str | None = None,
 ) -> dict:
     # Idempotency-Key replay -> the existing plan (no double reserve / double charge).
     existing = (
@@ -544,6 +545,7 @@ async def create_plan(
         success_url=success_url,
         cancel_url=cancel_url,
         ipn_url=ipn_url,
+        pay_currency=pay_currency,
     )
     plan.payment_id = checkout["payment_id"]
     await write_audit(

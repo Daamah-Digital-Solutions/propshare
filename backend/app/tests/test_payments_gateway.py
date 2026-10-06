@@ -7,6 +7,7 @@ import decimal
 import hashlib
 import hmac
 import json
+import types
 import uuid
 
 import pytest
@@ -180,6 +181,134 @@ def test_nowpayments_rejects_bad_signature(monkeypatch) -> None:
     with pytest.raises(AppError) as exc:
         nowp.verify_and_parse(body, "wrong")
     assert exc.value.code == "WEBHOOK_SIGNATURE_INVALID"
+    with pytest.raises(AppError) as exc:
+        nowp.verify_and_parse(body, None)
+    assert exc.value.code == "WEBHOOK_SIGNATURE_INVALID"
+
+
+def _hmac512(secret: str, text: str) -> str:
+    return hmac.new(secret.encode(), text.encode(), hashlib.sha512).hexdigest()
+
+
+def test_nowpayments_accepts_a_small_number_as_javascript_writes_it(monkeypatch) -> None:
+    """Regression (prod, 2026-10-06): the notification of a deposit recovered from another coin
+    carried a network fee of 0.000083 BNB and was refused with 401. NOWPayments signs
+    JSON.stringify of the key-sorted payload; Python re-serialised that fee as 8.3e-05, so no
+    notification with a small fee (a paid BNB, BTC or ETH payment) could ever settle."""
+    monkeypatch.setattr(get_settings(), "nowpayments_ipn_secret", "ipn_t", raising=False)
+    body = (
+        b'{"payment_id":4870885867,"parent_payment_id":6160305429,'
+        b'"payment_status":"partially_paid","price_amount":13,"pay_amount":13,'
+        b'"actually_paid":13,"actually_paid_at_fiat":12.98513924,"pay_currency":"usdtbsc",'
+        b'"order_id":"cf5910cb-5a46-4489-b1dc-f0dffe6da8da","outcome_amount":0.01633459,'
+        b'"fee":{"currency":"bnbbsc","depositFee":0.000083,"withdrawalFee":0,'
+        b'"serviceFee":0.000249},"tiny":1e-7}'
+    )
+    # what JSON.stringify(sortObject(params)) gives for that payload
+    signed = (
+        '{"actually_paid":13,"actually_paid_at_fiat":12.98513924,'
+        '"fee":{"currency":"bnbbsc","depositFee":0.000083,"serviceFee":0.000249,'
+        '"withdrawalFee":0},"order_id":"cf5910cb-5a46-4489-b1dc-f0dffe6da8da",'
+        '"outcome_amount":0.01633459,"parent_payment_id":6160305429,"pay_amount":13,'
+        '"pay_currency":"usdtbsc","payment_id":4870885867,"payment_status":"partially_paid",'
+        '"price_amount":13,"tiny":1e-7}'
+    )
+    out = nowp.verify_and_parse(body, _hmac512("ipn_t", signed))
+    assert out.type == "partially_paid" and out.provider_payment_id == "4870885867"
+    assert nowp.compute_signature("ipn_t", body) == _hmac512("ipn_t", signed)
+    # the same signature in capitals, and Python's own spelling of the numbers, still pass
+    nowp.verify_and_parse(body, _hmac512("ipn_t", signed).upper())
+    python_text = json.dumps(json.loads(body), sort_keys=True, separators=(",", ":"))
+    assert "8.3e-05" in python_text and "1e-07" in python_text
+    nowp.verify_and_parse(body, _hmac512("ipn_t", python_text))
+    # a signature over anything else is still refused
+    with pytest.raises(AppError):
+        nowp.verify_and_parse(body, _hmac512("ipn_t", signed.replace("12.98513924", "13")))
+    with pytest.raises(AppError):
+        nowp.verify_and_parse(body, _hmac512("other-secret", signed))
+
+
+def test_nowpayments_accepts_a_body_another_language_wrote(monkeypatch) -> None:
+    """The signature is JavaScript's text of the VALUES. Should the body ever be written by
+    something that spells numbers its own way (8.3e-05, 13.0, 1E-7), the values are the same
+    and the notification is genuine: it must not be refused for its spelling."""
+    monkeypatch.setattr(get_settings(), "nowpayments_ipn_secret", "ipn_t", raising=False)
+    body = (
+        b'{"payment_id": 4870885867, "payment_status": "partially_paid", "price_amount": 13.0,'
+        b' "actually_paid": 13.00, "outcome_amount": 1.633459E-2,'
+        b' "fee": {"depositFee": 8.3e-05, "serviceFee": 2.49e-4, "withdrawalFee": 0.0},'
+        b' "tiny": 1E-7, "big": 1.5e+21, "whole": 250000.0}'
+    )
+    signed = (
+        '{"actually_paid":13,"big":1.5e+21,"fee":{"depositFee":0.000083,"serviceFee":0.000249,'
+        '"withdrawalFee":0},"outcome_amount":0.01633459,"payment_id":4870885867,'
+        '"payment_status":"partially_paid","price_amount":13,"tiny":1e-7,"whole":250000}'
+    )
+    assert nowp.verify_and_parse(body, _hmac512("ipn_t", signed)).type == "partially_paid"
+    with pytest.raises(AppError):  # other values are another payload
+        nowp.verify_and_parse(body, _hmac512("ipn_t", signed.replace("0.000083", "0.00083")))
+    for sent, javascript in [
+        ("0.000083", "0.000083"),
+        ("8.3e-05", "0.000083"),
+        ("0.000001", "0.000001"),
+        ("1e-07", "1e-7"),
+        ("1.5E-7", "1.5e-7"),
+        ("13.0", "13"),
+        ("13", "13"),
+        ("-0", "0"),
+        ("-2.50", "-2.5"),
+        ("0.1", "0.1"),
+        ("100.5", "100.5"),
+        ("123456.789", "123456.789"),
+        ("4870885867", "4870885867"),
+        ("1e20", "100000000000000000000"),
+        ("1e21", "1e+21"),
+        ("12345678901234567890", "12345678901234567000"),
+    ]:
+        assert nowp._js_number(sent) == javascript, sent
+
+
+def test_a_refused_nowpayments_notification_is_logged(monkeypatch, caplog) -> None:
+    """In 2026-10 a genuine notification was refused for days and nothing on the server said
+    what it carried. A refusal now leaves its body in the log (no secret is in it)."""
+    monkeypatch.setattr(get_settings(), "nowpayments_ipn_secret", "ipn_t", raising=False)
+    body = (
+        b'{"payment_id":4870885867,"payment_status":"partially_paid","fee":{"depositFee":0.000083}}'
+    )
+    with caplog.at_level("WARNING"), pytest.raises(AppError) as exc:
+        nowp.verify_and_parse(body, "0" * 128)
+    assert exc.value.status_code == 401
+    assert "payment notification refused" in caplog.text
+    assert "4870885867" in caplog.text and "0.000083" in caplog.text
+    assert "ipn_t" not in caplog.text
+    with caplog.at_level("WARNING"), pytest.raises(AppError):
+        nowp.verify_payout_ipn(b'{"id":"77","status":"FINISHED"}', "0" * 128)
+    assert "payout notification refused" in caplog.text
+    # an accepted one leaves nothing
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        nowp.verify_and_parse(body, nowp.compute_signature("ipn_t", body))
+    assert "refused" not in caplog.text
+
+
+def test_nowpayments_accepts_a_list_either_way_and_text_as_sent(monkeypatch) -> None:
+    """Their documented sortObject rewrites a list as {"0": …, "1": …}; JSON.stringify leaves
+    non-ASCII text and slashes as they are."""
+    monkeypatch.setattr(get_settings(), "nowpayments_ipn_secret", "ipn_t", raising=False)
+    body = (
+        '{"payment_status":"waiting","payment_id":7,"payment_extra_ids":[20,3],'
+        '"order_description":"شقة/1"}'
+    ).encode()
+    as_list = (
+        '{"order_description":"شقة/1","payment_extra_ids":[20,3],"payment_id":7,'
+        '"payment_status":"waiting"}'
+    )
+    as_object = as_list.replace("[20,3]", '{"0":20,"1":3}')
+    for text in (as_list, as_object):
+        assert nowp.verify_and_parse(body, _hmac512("ipn_t", text)).status == "pending"
+    with pytest.raises(AppError) as exc:
+        nowp.verify_and_parse(b"not json", "x")
+    assert exc.value.code == "BAD_PAYLOAD"
 
 
 def test_nowpayments_status_mapping(monkeypatch) -> None:
@@ -188,12 +317,199 @@ def test_nowpayments_status_mapping(monkeypatch) -> None:
         ("finished", "succeeded"),
         ("failed", "failed"),
         ("expired", "failed"),
-        ("partially_paid", "ignored"),
+        ("partially_paid", "received"),
         ("confirming", "pending"),
     ]:
         body = json.dumps({"payment_id": 1, "payment_status": ps}).encode()
         out = nowp.verify_and_parse(body, nowp.compute_signature("ipn_t", body))
         assert out.status == expected, ps
+    # a deposit added to an invoice is never "the invoice paid", even when marked finished
+    body = json.dumps(
+        {"payment_id": 2, "parent_payment_id": 1, "payment_status": "finished", "price_amount": 50}
+    ).encode()
+    out = nowp.verify_and_parse(body, nowp.compute_signature("ipn_t", body))
+    assert (out.status, out.captured_amount) == ("received", None)
+
+
+def test_nowpayments_values_what_arrived() -> None:
+    """An under-payment in the coin asked for: its share of the price, at the rate quoted. An
+    extra deposit (it has a parent): only NOWPayments' own valuation, because what it "asked"
+    is whatever arrived, so a share would always be the whole price."""
+    value = nowp.received_value
+    asked = {"price_amount": 100, "pay_amount": 0.002, "actually_paid": 0.0015}
+    assert value(asked) == decimal.Decimal("75.00")
+    assert value({**asked, "actually_paid": 0.004}) == decimal.Decimal("100.00")  # never more
+    assert value({**asked, "actually_paid": 0}) is None
+    assert value({"price_amount": 13, "actually_paid_at_fiat": 12.98513924}) == decimal.Decimal(
+        "12.99"
+    )
+    extra = {
+        "parent_payment_id": 6160305429,
+        "price_amount": 13,
+        "pay_amount": 13,
+        "actually_paid": 13,
+    }
+    assert value(extra) is None
+    assert value({**extra, "actually_paid_at_fiat": 12.98513924}) == decimal.Decimal("12.99")
+    assert value({**extra, "actually_paid_at_fiat": 20.5}) == decimal.Decimal("20.50")
+    assert value({**extra, "actually_paid_at_fiat": 0.001}) is None  # rounds to nothing
+    assert not nowp.is_extra({"parent_payment_id": None}) and nowp.is_extra(extra)
+
+
+@pytest.mark.asyncio
+async def test_nowpayments_is_asked_what_unvalued_money_is_worth(monkeypatch) -> None:
+    """A notification that carries no fiat value: NOWPayments' record of the payment, then its
+    rate for the coin. Nothing it cannot be asked is guessed."""
+    answers: dict = {}
+    asked: list[str] = []
+
+    async def fake_get(path: str):
+        asked.append(path)
+        if isinstance(answers.get(path), Exception):
+            raise answers[path]
+        return (200, answers[path]) if path in answers else (404, None)
+
+    monkeypatch.setattr(nowp, "_get", fake_get)
+    rate = "/estimate?amount=13&currency_from=usd&currency_to=usdtbsc"
+    extra = {
+        "payment_id": 4870885867,
+        "parent_payment_id": 6160305429,
+        "order_id": "order-1",
+        "price_amount": 13,
+        "price_currency": "USD",
+        "pay_amount": 13,
+        "actually_paid": 13,
+        "actually_paid_at_fiat": 0,
+        "pay_currency": "USDTBSC",
+    }
+    assert await nowp.value_now(extra) is None
+    assert asked == ["/payment/4870885867", rate]
+
+    # its record says: believed, and still an extra deposit when the record names no parent
+    # (13 of the 13 it "asked" would otherwise be the whole price)
+    record = {"payment_id": 4870885867, "order_id": "order-1", "price_amount": 13}
+    answers["/payment/4870885867"] = {**record, "pay_amount": 13, "actually_paid": 13}
+    assert await nowp.value_now(extra) is None
+    answers["/payment/4870885867"]["actually_paid_at_fiat"] = 12.98513924
+    assert await nowp.value_now(extra) == (decimal.Decimal("12.99"), "record")
+    # a record of another payment or another order is not believed
+    for wrong in ({"payment_id": 1}, {"order_id": "order-2"}):
+        answers["/payment/4870885867"] = {**record, "actually_paid_at_fiat": 50, **wrong}
+        assert await nowp.value_now(extra) is None
+
+    # no record: 13 USD buys 13.0149 USDT today, 13 arrived; an extra deposit is worth what
+    # arrived even above the invoice, an under-payment never more than its price
+    del answers["/payment/4870885867"]
+    answers[rate] = {"estimated_amount": 13.0149}
+    assert await nowp.value_now(extra) == (decimal.Decimal("12.99"), "rate")
+    assert await nowp.value_now({**extra, "actually_paid": 40}) == (
+        decimal.Decimal("39.95"),
+        "rate",
+    )
+    under = {k: v for k, v in extra.items() if k not in ("parent_payment_id", "pay_amount")}
+    assert await nowp.value_now({**under, "actually_paid": 40}) == (
+        decimal.Decimal("13.00"),
+        "rate",
+    )
+    # an answer that is no rate, and NOWPayments out of reach: no value
+    for bad in ({"estimated_amount": 0}, {"message": "no"}, nowp.httpx.ConnectError("down")):
+        answers[rate] = bad
+        assert await nowp.value_now(extra) is None
+    answers["/payment/4870885867"] = nowp.httpx.ConnectError("down")
+    assert await nowp.value_now(extra) is None
+    assert await nowp.value_now({"payment_id": None, "price_amount": 13}) is None
+
+
+class _FakeNowHTTP:
+    """Stands in for httpx.AsyncClient on the invoice call: records what was asked."""
+
+    def __init__(self, sent: list[dict]):
+        self.sent = sent
+
+    def __call__(self, *a, **kw):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def post(self, url, json=None, headers=None):
+        self.sent.append({"url": url, "json": json, "headers": headers})
+        status, said = 200, ""
+        if json["price_amount"] == 1.5:  # NOWPayments' own refusal of an amount under a minimum
+            status = 400
+            said = '{"code":"AMOUNT_MINIMAL_ERROR","message":"amountTo is too small"}'
+        if json["price_amount"] == 7.0:
+            status, said = 500, "boom"
+        return types.SimpleNamespace(
+            status_code=status,
+            text=said,
+            json=lambda: {"id": "4455", "invoice_url": "https://nowpayments.io/payment/?iid=4455"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_nowpayments_invoice_is_made_for_the_coin_chosen(monkeypatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "nowpayments_api_key", "key_t", raising=False)
+    monkeypatch.setattr(settings, "nowpayments_ipn_secret", "ipn_t", raising=False)
+    monkeypatch.setattr(nowp, "_coins", None)
+    monkeypatch.setattr(nowp, "_minimums", {})
+    asked: list[str] = []
+
+    async def fake_get(path: str):
+        asked.append(path)
+        if path == "/merchant/coins":
+            return 200, {"selectedCurrencies": ["USDTBSC", "BTC"]}
+        if path == "/full-currencies":
+            return 200, {"currencies": [{"code": "USDTBSC", "name": "Tether USD (BSC)"}]}
+        if path.startswith("/min-amount?currency_from=btc") and "currency_to" not in path:
+            return 400, {"message": "currency_to is required"}
+        if path.startswith("/min-amount?currency_from=btc"):
+            return 200, {"min_amount": 0.0002, "fiat_equivalent": 18.431}
+        return 200, {"min_amount": 1.2, "fiat_equivalent": 1.2}
+
+    sent: list[dict] = []
+    monkeypatch.setattr(nowp, "_get", fake_get)
+    monkeypatch.setattr(nowp.httpx, "AsyncClient", _FakeNowHTTP(sent))
+    common = dict(
+        payment_id=uuid.uuid4(),
+        currency="USD",
+        success_url="https://app.t/ok",
+        cancel_url="https://app.t/no",
+        ipn_url="https://api.t/ipn",
+    )
+    out = await nowp.create_checkout(amount=decimal.Decimal("13"), pay_currency="USDTBSC", **common)
+    assert out.checkout_url.endswith("iid=4455")
+    assert sent[0]["json"]["pay_currency"] == "usdtbsc" and sent[0]["json"]["price_amount"] == 13.0
+    # no coin given (an older page): an invoice with the choice left to NOWPayments' page
+    await nowp.create_checkout(amount=decimal.Decimal("13"), **common)
+    assert "pay_currency" not in sent[1]["json"]
+    # a coin the account does not take, and an amount under the coin's minimum, are refused
+    # before any invoice is made
+    with pytest.raises(AppError) as exc:
+        await nowp.create_checkout(amount=decimal.Decimal("13"), pay_currency="doge", **common)
+    assert exc.value.code == "UNKNOWN_COIN"
+    with pytest.raises(AppError) as exc:
+        await nowp.create_checkout(amount=decimal.Decimal("13"), pay_currency="btc", **common)
+    assert exc.value.code == "CRYPTO_AMOUNT_TOO_SMALL"
+    assert exc.value.details == {"coin": "btc", "minimum": "18.44"}  # rounded up to the cent
+    assert "about 18.44 USD" in exc.value.message and len(sent) == 2
+    # the minimum is remembered for a while, the coin list too
+    before = len(asked)
+    await nowp.create_checkout(amount=decimal.Decimal("20"), pay_currency="btc", **common)
+    assert len(asked) == before and len(sent) == 3
+    # the minimum moved since it was asked and NOWPayments refuses the amount itself: said the
+    # same way, so the member changes the coin or the amount; any other refusal is its error
+    with pytest.raises(AppError) as exc:
+        await nowp.create_checkout(amount=decimal.Decimal("1.5"), pay_currency="usdtbsc", **common)
+    assert exc.value.code == "CRYPTO_AMOUNT_TOO_SMALL" and exc.value.status_code == 422
+    assert exc.value.details == {"coin": "usdtbsc"} and "USDTBSC" in exc.value.message
+    with pytest.raises(AppError) as exc:
+        await nowp.create_checkout(amount=decimal.Decimal("7"), pay_currency="usdtbsc", **common)
+    assert exc.value.code == "PAYMENT_PROVIDER_ERROR" and exc.value.status_code == 502
 
 
 class _FakeStripeHTTP:

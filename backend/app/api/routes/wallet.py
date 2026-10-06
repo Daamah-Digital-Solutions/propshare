@@ -123,6 +123,7 @@ async def deposit(
         success_url=dashboard_links.wallet_url(app_base, principal.active_role, deposit="success"),
         cancel_url=dashboard_links.wallet_url(app_base, principal.active_role, deposit="cancelled"),
         ipn_url=f"{api_base}/api/v1/payments/webhooks/nowpayments",
+        pay_currency=body.pay_currency if body.method == "crypto" else None,
     )
     return DepositOut(**result)
 

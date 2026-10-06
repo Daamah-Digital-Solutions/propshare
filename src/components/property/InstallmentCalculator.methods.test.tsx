@@ -31,6 +31,15 @@ vi.mock("@/lib/api", () => ({
         pronova_discount_pct: "5.0",
       }),
   },
+  cryptoApi: {
+    coins: () =>
+      Promise.resolve({
+        items: [
+          { code: "usdtbsc", ticker: "USDT", name: "Tether USD (Binance Smart Chain)", network: "BSC", stable: true, popular: true, memo: false },
+        ],
+        total: 1,
+      }),
+  },
   ApiError: class ApiError extends Error {},
 }));
 
@@ -100,6 +109,35 @@ describe("InstallmentCalculator — the down payment takes every method", () => 
       amount: 10000,
       duration_months: 12,
       method: "card",
+    });
+  });
+
+  it("pays a crypto down payment in the coin chosen here", async () => {
+    createPlan.mockResolvedValue(plan);
+    renderCalc();
+    fireEvent.click(await screen.findByRole("button", { name: /Cryptocurrency/i }));
+    fireEvent.click(await screen.findByRole("option", { name: /USDT · Tether USD/ }));
+    expect(await screen.findByTestId("crypto-pay-notice")).toHaveTextContent(
+      "If less than the down payment arrives, the plan does not start and what arrived goes to your wallet",
+    );
+    expect(screen.getByTestId("crypto-pay-notice")).toHaveTextContent(
+      "Send USDT on the BNB Smart Chain (BSC) network only",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Start Installment Plan/i }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /reviewed and understand/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Proceed to Payment/i }));
+    // the confirm step names the coin as the list does, network included
+    expect(
+      await screen.findByText(/You pay in USDT · Tether USD \(Binance Smart Chain\)\./),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Continue to pay/i }));
+    await waitFor(() => expect(createPlan).toHaveBeenCalledTimes(1));
+    expect(createPlan.mock.calls[0][0]).toEqual({
+      property_id: "p1",
+      amount: 10000,
+      duration_months: 12,
+      method: "crypto",
+      pay_currency: "usdtbsc",
     });
   });
 

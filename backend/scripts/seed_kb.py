@@ -81,7 +81,8 @@ expected yield, fees, exit options); the assistant reads them from the same data
 4. Open a property, choose the number of units, review the total including fees and the
    exit options, and confirm. Every property takes the same payment methods: your wallet
    balance, a card (Apple Pay and Google Pay on devices that support them), cryptocurrency
-   (you pick the coin on NOWPayments' page), Pronova (a discount off what you pay now) or a
+   (you choose the coin and its network on PropShare, then send it on the payment page that
+   opens for that coin), Pronova (a discount off what you pay now) or a
    Nova Sukuk certificate (our team reviews it; the units stay pledged to Nova Finance until
    it releases them). Your investment then appears in your portfolio, and a digital
    investment certificate can be downloaded from there.
@@ -97,6 +98,17 @@ send you to the right page, but it never invests, deposits or withdraws for you.
 withdrawal that is being processed). Deposits: card payments and crypto are credited
 automatically when the payment provider confirms them; a bank transfer must be matched to the
 reference shown on the deposit page and is credited by the team after review.
+Crypto: you choose the coin and its network on PropShare first, and the payment page that
+opens asks for that one coin, at one address and for an exact amount. Send that coin, on that
+network. Scanning the QR code, copying the address or connecting a wallet on that page are the
+same transfer and are all detected by themselves. You can close the page after sending: the
+top of the wallet shows the payment as on its way, and it is credited once the network
+confirms it (usually within minutes), with a notification. A transfer that arrives short, or
+in another coin or network that the payment provider could still process, is credited to the
+wallet at the value that arrived (this can take longer) and you are told the amount. A crypto
+payment for a purchase or a down payment that arrives short does not complete it: the units
+are released and what arrived goes to the wallet, to buy from there. A coin that needs a memo
+or tag must be sent with the one shown on the payment page.
 Withdrawals: a request holds the amount immediately. Depending on how the platform is set up
 for each method (the assistant reads this live), a withdrawal is either paid automatically
 through the payment provider as soon as you request it, or reviewed and paid by the team.
@@ -408,7 +420,8 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
    مطابقة الفريق لمرجع التحويل؛ تعرض المحفظة الرصيد المعلّق والمتاح كلًّا على حدة.
 4. افتح عقارًا، اختر عدد الوحدات، راجع الإجمالي شاملًا الرسوم وخيارات الخروج، ثم أكّد. كل
    العقارات تقبل طرق الدفع نفسها: رصيد محفظتك، أو بطاقة (مع Apple Pay وGoogle Pay على الأجهزة
-   التي تدعمهما)، أو عملة رقمية (تختار العملة من صفحة NOWPayments)، أو Pronova (خصم على ما
+   التي تدعمهما)، أو عملة رقمية (تختار العملة وشبكتها على PropShare ثم ترسلها من صفحة الدفع
+   التي تُفتح لهذه العملة)، أو Pronova (خصم على ما
    تدفعه الآن)، أو شهادة صكوك نوفا (Nova Sukuk) يراجعها فريقنا، وتبقى وحداتها مرهونة لصالح
    Nova Finance حتى تفكّ الرهن. يظهر استثمارك في محفظتك ويمكن تنزيل شهادة استثمار رقمية منها.
 يستطيع المساعد أن يعرض رصيدك وحالة التحقق واستثماراتك ومدفوعاتك ويرشدك للصفحة الصحيحة، لكنه لا
@@ -422,6 +435,14 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
         """تحتفظ محفظتك بالرصيد المتاح وأي مبلغ محجوز (مثل سحب قيد المعالجة). الإيداع: مدفوعات
 البطاقة والعملات الرقمية تُقيَّد تلقائيًا عند تأكيد مزوّد الدفع؛ أما التحويل البنكي فيجب مطابقته
 مع المرجع المعروض في صفحة الإيداع ويقيّده الفريق بعد المراجعة.
+العملات الرقمية: تختار العملة وشبكتها على PropShare أولًا، وصفحة الدفع التي تُفتح تطلب هذه
+العملة وحدها على عنوان واحد وبمبلغ محدد. أرسل العملة نفسها على الشبكة نفسها. مسح رمز QR أو نسخ
+العنوان أو ربط المحفظة في تلك الصفحة كلها تحويل واحد ويُرصد تلقائيًا. يمكنك إغلاق الصفحة بعد
+الإرسال: يعرض أعلى المحفظة الدفعة على أنها في الطريق، وتُقيَّد عند تأكيد الشبكة (عادةً خلال دقائق)
+مع إشعار. التحويل الذي يصل ناقصًا، أو بعملة أو شبكة أخرى استطاع مزوّد الدفع معالجتها، يُقيَّد في
+المحفظة بالقيمة التي وصلت (وقد يستغرق وقتًا أطول) ويصلك إشعار بالمبلغ. ودفعة العملات الرقمية
+لشراء أو لدفعة مقدمة إذا وصلت ناقصة لا تُتمّه: تُفرج الوحدات ويذهب ما وصل إلى المحفظة لتشتري منها.
+والعملة التي تحتاج memo أو tag يجب إرسالها مع الرقم المعروض في صفحة الدفع.
 السحب: يحجز الطلب المبلغ فورًا. وحسب إعداد المنصة لكل وسيلة (يقرؤه المساعد مباشرة) إمّا أن يُصرف
 السحب تلقائيًا عبر مزوّد الدفع لحظة طلبه، أو يراجعه الفريق ويصرفه. السحب البنكي التلقائي يذهب إلى
 حساب بنكي تربطه مرة واحدة عبر Stripe من صفحة المحفظة (متاح للحسابات في الولايات المتحدة

@@ -33,6 +33,16 @@ vi.mock("@/lib/api", () => ({
     pronovaSettings: () => Promise.resolve({ discount_pct: "5.0" }),
     reinvestSettings: () => Promise.resolve({ discount_pct: "5.0" }),
   },
+  cryptoApi: {
+    coins: () =>
+      Promise.resolve({
+        items: [
+          { code: "usdttrc20", ticker: "USDT", name: "Tether USD (Tron)", network: "TRX", stable: true, popular: true, memo: false },
+          { code: "btc", ticker: "BTC", name: "Bitcoin", network: "BTC", stable: false, popular: true, memo: false },
+        ],
+        total: 2,
+      }),
+  },
   ApiError: class ApiError extends Error {
     code: string;
     constructor(code: string, message: string) {
@@ -283,18 +293,26 @@ describe("InvestmentCalculator — every payment method (the same list on every 
     expect(ids).toEqual(["wallet", "card", "apple_pay", "google_pay", "crypto", "pronova", "sukuk"]);
   });
 
-  it("pays in crypto through the crypto checkout", async () => {
+  it("pays in crypto in the coin chosen here, through the crypto checkout", async () => {
     createMock.mockResolvedValue(checkout("crypto"));
     renderCalc();
     fireEvent.click(await screen.findByRole("button", { name: /Cryptocurrency/i }));
+    // no coin yet: the review step does not open
     fireEvent.click(screen.getByRole("button", { name: /Invest \$1,000/i }));
-    expect(screen.getByText(/pick the coin on NOWPayments' page/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Continue to secure payment/i })).toBeNull();
+    fireEvent.click(await screen.findByRole("option", { name: /USDT · Tether USD \(Tron\)/ }));
+    expect(await screen.findByTestId("crypto-pay-notice")).toHaveTextContent(
+      "Send USDT on the Tron network only",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Invest \$1,000/i }));
+    expect(screen.getByText(/You pay in USDT · Tether USD \(Tron\)\./)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Continue to secure payment/i }));
     await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
     expect(createMock.mock.calls[0][0]).toEqual({
       property_id: "prop-123",
       amount: 1000,
       method: "crypto",
+      pay_currency: "usdttrc20",
     });
   });
 

@@ -47,6 +47,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { installmentsApi, ApiError } from "@/lib/api";
 import { rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
 import { PaymentMethodList, usePaymentOptions } from "@/components/payments/PaymentMethodList";
+import { CryptoCoinSelect } from "@/components/payments/CryptoCoinSelect";
+import { coinLabel, useCryptoCoins } from "@/lib/cryptoCoins";
 import {
   EMPTY_SUKUK_DRAFT,
   SukukCertificateFields,
@@ -113,6 +115,8 @@ const InstallmentCalculator = ({
 }: InstallmentCalculatorProps) => {
   const [selectedPayment, setSelectedPayment] = useState<PayMethodId>("wallet");
   const [sukuk, setSukuk] = useState<SukukDraft>(EMPTY_SUKUK_DRAFT);
+  // crypto: the coin (and its network) the down payment is sent in, chosen here
+  const [coin, setCoin] = useState<string | null>(null);
   const [duration, setDuration] = useState(() =>
     INSTALLMENT_DURATIONS.some((d) => d.value === initialDuration) ? initialDuration! : "12",
   );
@@ -125,6 +129,9 @@ const InstallmentCalculator = ({
   const selectedMethod = payMethod(selectedPayment);
   const sukukSelected = selectedPayment === "sukuk";
   const pronovaSelected = selectedPayment === "pronova";
+  const cryptoSelected = selectedPayment === "crypto";
+  // the chosen coin as its list names it ("USDT · Tether USD (Tron)"), for the confirm step
+  const chosenCoin = useCryptoCoins(cryptoSelected).data?.items.find((c) => c.code === coin);
   const { data: payOptions } = usePaymentOptions();
   const pronovaPct = Number(payOptions?.pronova_discount_pct ?? 0);
   const selectedDuration = installmentDurations.find(d => d.value === duration);
@@ -208,6 +215,12 @@ const InstallmentCalculator = ({
       });
       return;
     }
+    if (cryptoSelected && !coin) {
+      toast.error("Choose the coin you will send", {
+        description: "Pick it under Cryptocurrency: the payment page is made for that coin.",
+      });
+      return;
+    }
     setIsSubmitting(true);
     try {
       if (sukukSelected) {
@@ -244,6 +257,7 @@ const InstallmentCalculator = ({
         method: selectedMethod.apiMethod as "wallet" | "card" | "crypto" | "pronova",
         // the price the plan would lock, as shown here: the server refuses if it has changed
         ...(unitPrice > 0 ? { expected_unit_price: unitPrice } : {}),
+        ...(cryptoSelected && coin ? { pay_currency: coin } : {}),
       });
       if (plan.checkout_url) {
         if (plan.payment_id) rememberPendingPayment(plan.payment_id);
@@ -500,6 +514,11 @@ const InstallmentCalculator = ({
           {sukukSelected && (
             <div className="mt-3">
               <SukukCertificateFields amountDue={downPayment} value={sukuk} onChange={setSukuk} />
+            </div>
+          )}
+          {cryptoSelected && (
+            <div className="mt-3">
+              <CryptoCoinSelect value={coin} onChange={setCoin} purpose="plan" />
             </div>
           )}
         </div>
@@ -829,6 +848,13 @@ const InstallmentCalculator = ({
                 <span className="text-muted-foreground">Paying with</span>
                 <span className="font-medium text-foreground">{selectedMethod.label}</span>
               </div>
+              {cryptoSelected && coin && (
+                <p className="text-xs text-muted-foreground">
+                  You pay in {chosenCoin ? coinLabel(chosenCoin) : coin.toUpperCase()}. Send that
+                  coin and network only, the exact amount the payment page shows: the plan starts
+                  once the network confirms it. Anything less goes to your wallet instead.
+                </p>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Remaining ({numberOfInstallments} installments)</span>
                 <span className="font-medium text-foreground">${(installmentAmount * numberOfInstallments).toFixed(2)}</span>

@@ -755,7 +755,11 @@ export const walletApi = {
       `/api/v1/wallet/transactions?limit=${limit}&offset=${offset}`,
     );
   },
-  deposit(input: { amount: number; method: "card" | "crypto" }, idempotencyKey: string) {
+  /** `pay_currency`: for crypto, the coin the member chose (cryptoApi.coins). */
+  deposit(
+    input: { amount: number; method: "card" | "crypto"; pay_currency?: string },
+    idempotencyKey: string,
+  ) {
     return apiRequest<DepositResponse>("/api/v1/wallet/deposit", {
       method: "POST",
       body: input,
@@ -778,6 +782,46 @@ export interface DepositMethods {
 export const paymentApi = {
   get(id: string): Promise<PaymentStatus> {
     return apiRequest<PaymentStatus>(`/api/v1/payments/${id}`);
+  },
+};
+
+// --- Crypto payments (NOWPayments) ------------------------------------------ //
+/** A coin the platform takes crypto payments in. `code` is what a payment is made for. */
+export interface CryptoCoin {
+  code: string;
+  ticker: string;
+  /** the provider's name, the network in it for a token: "Tether USD (Tron)" */
+  name: string;
+  network: string | null;
+  stable: boolean;
+  popular: boolean;
+  /** paying it needs a memo / tag as well as the address */
+  memo: boolean;
+}
+
+/** A crypto payment the member started that has not settled yet. */
+export interface OpenCryptoPayment {
+  id: string;
+  purpose: string; // deposit | investment | installment
+  amount: string;
+  currency: string;
+  coin: string | null;
+  stage: string; // awaiting_transfer | confirming
+  /** the page to finish it on */
+  checkout_url: string | null;
+  created_at: string;
+  /** the property, for a purchase or a down payment */
+  title: string | null;
+}
+
+export const cryptoApi = {
+  /** The coins switched on in the platform's account, stablecoins first. */
+  coins(): Promise<{ items: CryptoCoin[]; total: number }> {
+    return apiRequest("/api/v1/payments/crypto/coins");
+  },
+  /** The caller's crypto payments still on their way. */
+  open(): Promise<OpenCryptoPayment[]> {
+    return apiRequest<OpenCryptoPayment[]>("/api/v1/payments/crypto/open");
   },
 };
 
@@ -841,6 +885,8 @@ export const investApi = {
       /** the unit price on screen when the buyer confirmed: a different price now is
        * answered with 409 PRICE_CHANGED instead of a purchase at an unseen price */
       expected_unit_price?: number;
+      /** crypto: the coin the buyer chose to pay in (cryptoApi.coins) */
+      pay_currency?: string;
     },
     idempotencyKey: string,
   ): Promise<InvestCreateResponse> {
@@ -1254,6 +1300,8 @@ export interface InstallmentPlanPayload {
   /** the unit price on screen when the investor confirmed (the plan locks it): a different
    * price now is answered with 409 PRICE_CHANGED */
   expected_unit_price?: number;
+  /** crypto: the coin the down payment is paid in (cryptoApi.coins) */
+  pay_currency?: string;
 }
 
 /** A Nova Sukuk certificate the investor submitted, and where its review stands. */

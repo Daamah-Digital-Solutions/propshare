@@ -36,7 +36,8 @@ IPN = "IpnSecret0000000000000000"
 ROWS = "\n".join(
     "\t".join(cells)
     for cells in (
-        # id, created, status, purpose, amount, captured, invoice, member, events, np ids, age
+        # id, created, status, purpose, amount, captured, invoice, member, events, np ids, age,
+        # the coin chosen on the platform, what the platform kept per NOWPayments payment
         (
             "p-under",
             "2026-10-06 10:00",
@@ -49,6 +50,8 @@ ROWS = "\n".join(
             "waiting 10:01, partially_paid 10:09",
             "5001",
             "300",
+            "",
+            "{}",
         ),
         (
             "p-silent",
@@ -62,6 +65,8 @@ ROWS = "\n".join(
             "",
             "",
             "200",
+            "usdtbsc",
+            "{}",
         ),
         (
             "p-paid",
@@ -75,6 +80,8 @@ ROWS = "\n".join(
             "waiting 09:00, confirming 09:02, finished 09:10",
             "4900",
             "5000",
+            "btc",
+            '{"4900": {"status": "finished", "credited": "50.00"}}',
         ),
     )
 )
@@ -108,7 +115,8 @@ def _http(method, url, *, body=None, headers=None):
     if url.endswith("/merchant/coins"):
         return 200, '{"selectedCurrencies":["BTC","USDTTRC20","BNBBSC"]}'
     if "/payment/" in url:
-        return 200, PAYMENTS[url.rsplit("/", 1)[-1]]
+        found = PAYMENTS.get(url.rsplit("/", 1)[-1])
+        return (200, found) if found else (404, '{"message":"Payment not found"}')
     if "/min-amount?currency_from=" in url:
         coin = url.split("currency_from=")[1].split("&")[0]
         return 200, f'{{"min_amount":1,"fiat_equivalent":{MINIMUMS[coin]}}}'
@@ -120,6 +128,7 @@ def _setup(monkeypatch, tmp_path, env_text: str, unmatched: str = ""):
     env.write_text(env_text, encoding="utf-8")
     (tmp_path / "access.log").write_text(LOG, encoding="utf-8")
     monkeypatch.setattr(check.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(check.sys, "argv", ["check_crypto_deposits.py"])
     monkeypatch.setattr(check, "ACCESS_LOGS", str(tmp_path / "access.log*"))
     monkeypatch.setattr(check.time, "sleep", lambda seconds: None)
     monkeypatch.setattr(envtools, "ENV_FILE", env)
@@ -153,7 +162,31 @@ def test_a_payment_is_judged_by_what_nowpayments_reports():
     kind, why = check.verdict(chosen, {"payment_status": "finished"})
     assert kind == "act" and "has not settled it" in why
     assert check.verdict(chosen, {"payment_status": "expired"})[0] == "act"
-    assert check.verdict({**row, "status": "failed"}, None)[0] == "ok"
+    assert check.verdict({**row, "status": "failed"}, None) == (
+        "ok",
+        "closed as failed: nothing was credited",
+    )
+    # a purchase paid short: not completed, what arrived is in the member's wallet
+    kind, why = check.verdict({**row, "status": "failed", "captured": "500.00"}, None)
+    assert kind == "ok" and "500.00 USD arrived another way than asked" in why
+    # an under-payment still pending was never settled: its notification is sent again
+    kind, why = check.verdict(chosen, {"payment_status": "partially_paid"})
+    assert kind == "act" and "Send it again" in why and "do not change its status" in why
+    # what the platform did with each NOWPayments payment under an invoice
+    kept = check.kept_records(
+        '{"1": {"status": "partially_paid", "credited": "12.99"},'
+        ' "2": {"status": "finished", "credited": "25.00", "valued_by": "rate"},'
+        ' "3": {"status": "partially_paid", "review": true}, "4": {"status": "waiting"}}'
+    )
+    assert check.done_with(kept["1"]) == "the platform settled it at 12.99"
+    assert check.done_with(kept["2"]) == "the platform settled it at 25.00 (valued at its rate)"
+    assert "a staff case is open, nothing credited" in check.done_with(kept["3"])
+    assert check.done_with(kept["4"]) == "the platform saw it as 'waiting': nothing to settle"
+    assert "has no note of it" in check.done_with(kept.get("5"))
+    assert check.kept_records("not json") == {} and check.kept_records("[1]") == {}
+    assert "received 13 (worth 12.98513924 in fiat)" in check.describe(
+        {"payment_id": 9, "actually_paid": 13, "actually_paid_at_fiat": 12.98513924}
+    )
     # several records under one invoice: the finished one decides, then the under-paid one
     waiting, partial, done = (
         {"payment_id": 1, "payment_status": "waiting"},
@@ -185,17 +218,27 @@ def test_the_report_names_what_needs_a_person_and_shows_no_key(monkeypatch, tmp_
     assert "mode: production" in text and "3 coin(s) switched on" in text
     assert "NOWPayments 5001: partially_paid; coin usdtbsc; asked 13.02, received 12.4" in text
     assert "matched no payment" not in text
-    assert "paid LESS than the invoice (asked 13.02, received 12.4)" in text
+    assert (
+        "paid LESS than the invoice (asked 13.02, received 12.4) and nothing was credited" in text
+    )
     assert "NOWPayments never notified the platform about it" in text
     assert "settled: 50.00 USD" in text
+    # the coin the member chose here, and what the platform did with each NOWPayments payment
+    assert "platform payment p-silent | coin chosen on the platform: usdtbsc" in text
+    assert "platform payment p-under | coin chosen on the platform: none" in text
+    assert "the platform settled it at 50.00" in text
+    assert "the platform has no note of it" in text  # 5001: recorded, never settled
+    assert "asked for by id" not in text
     assert "3 in 1 log file(s): HTTP 200 x2, HTTP 401 x1" in text
-    assert "NOWPAYMENTS_IPN_SECRET is not the IPN secret of this NOWPayments account" in text
+    # others passed, so the secret is right: that one notification was refused
+    assert "not accepted: 06/Oct/2026:10:20:00 +0000 -> 401" in text
+    assert "401 on some only" in text and "is not the IPN secret" not in text
     assert "an invoice of 5 USD: 0 of 3 coin(s) take it" in text
     assert "an invoice of 13 USD: 2 of 3 coin(s) take it" in text
     assert "no coin takes less than 6.00 USD now" in text
     summary = text.split("== Summary")[1]
     assert "13.00 USD (cl***@x.com)" in summary and "5.00 USD (ot***@x.com)" in summary
-    assert "notifications are refused (wrong IPN secret)" in summary
+    assert "some notifications were refused: send them again" in summary
     for secret in (KEY, IPN):
         assert secret not in text + out.err
     assert env.read_text(encoding="utf-8") == env_text  # read only
@@ -239,6 +282,29 @@ def test_a_notification_that_matched_no_payment_is_looked_up(monkeypatch, tmp_pa
     assert "received 12.98; an extra deposit on payment 5001" in text
     assert '"invoice_id":4455,"order_id":null,"parent_payment_id":5001' in text
     assert "could not match" in text.split("== Summary")[1]
+
+
+def test_a_payment_the_platform_never_heard_of_is_shown_by_its_id(monkeypatch, tmp_path, capsys):
+    """Its notification was refused, so the platform knows no id to ask by: staff copy it from
+    the NOWPayments dashboard and read the record here before sending the notification again."""
+    _setup(monkeypatch, tmp_path, ENV)
+    assert check.main(["7770", "5001", "404404", "--help"]) == 0
+    text = capsys.readouterr().out
+    assert "NOWPayments payment 7770, asked for by id" in text
+    assert "order (the platform's payment): none on the record" in text
+    assert '"parent_payment_id":5001' in text
+    assert "payment 5001, asked for by id" not in text  # already shown under its invoice
+    assert "NOWPayments payment 404404: not found with this key" in text
+
+
+def test_every_notification_refused_means_a_wrong_ipn_secret(monkeypatch, tmp_path, capsys):
+    _setup(monkeypatch, tmp_path, ENV)
+    refused = "\n".join(line.replace('" 200 ', '" 401 ') for line in LOG.splitlines())
+    (tmp_path / "access.log").write_text(refused + "\n", encoding="utf-8")
+    assert check.main() == 0
+    text = capsys.readouterr().out
+    assert "NOWPAYMENTS_IPN_SECRET is not the IPN secret of this NOWPayments account" in text
+    assert "notifications are refused (wrong IPN secret)" in text.split("== Summary")[1]
 
 
 def test_the_minimum_is_asked_again_with_the_pair_spelled_out(monkeypatch, tmp_path, capsys):

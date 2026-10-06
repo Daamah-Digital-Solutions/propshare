@@ -40,6 +40,8 @@ import {
 import { ExitButton } from "@/components/exit/ExitButton";
 import { AccountStatementCard } from "@/components/dashboard/AccountStatementCard";
 import { PaymentReturnStatus, rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
+import { OpenCryptoPayments } from "@/components/dashboard/OpenCryptoPayments";
+import { CryptoCoinSelect } from "@/components/payments/CryptoCoinSelect";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   walletApi,
@@ -89,6 +91,8 @@ export const InvestorWallet = () => {
   // Deposit state
   const [depositAmount, setDepositAmount] = useState("");
   const [depositMethod, setDepositMethod] = useState<"card" | "crypto" | "bank">("card");
+  // crypto: the coin (and its network) the member will send, chosen here
+  const [depositCoin, setDepositCoin] = useState<string | null>(null);
   const [depositing, setDepositing] = useState(false);
   const [bankDepositAccountId, setBankDepositAccountId] = useState("");
   const [bankDepositRef, setBankDepositRef] = useState("");
@@ -319,7 +323,18 @@ export const InvestorWallet = () => {
         setBankDepositRef("");
         invalidateWallet();
       } else {
-        const res = await walletApi.deposit({ amount: amt, method: depositMethod }, crypto.randomUUID());
+        if (depositMethod === "crypto" && !depositCoin) {
+          toast.error("Choose the coin you will send");
+          return;
+        }
+        const res = await walletApi.deposit(
+          {
+            amount: amt,
+            method: depositMethod,
+            ...(depositMethod === "crypto" && depositCoin ? { pay_currency: depositCoin } : {}),
+          },
+          crypto.randomUUID(),
+        );
         if (res.checkout_url) {
           rememberPendingPayment(res.payment_id);
           window.location.href = res.checkout_url; // hosted checkout; credited server-side
@@ -435,6 +450,8 @@ export const InvestorWallet = () => {
     <div className="space-y-6">
       {/* Back from the hosted checkout: follow the deposit until it is credited */}
       <PaymentReturnStatus kind="deposit" />
+      {/* Crypto payments started and not settled yet: what is on its way, where to finish it */}
+      <OpenCryptoPayments />
 
       {/* Wallet Balance Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -533,6 +550,10 @@ export const InvestorWallet = () => {
                 </p>
               )}
 
+              {depositMethod === "crypto" && selectedRailLive && (
+                <CryptoCoinSelect value={depositCoin} onChange={setDepositCoin} purpose="deposit" />
+              )}
+
               {depositMethod === "bank" && (
                 <div className="space-y-3 rounded-lg border border-border p-3 bg-muted/30">
                   {platforms.length === 0 ? (
@@ -592,6 +613,7 @@ export const InvestorWallet = () => {
                 disabled={
                   depositing ||
                   (depositMethod === "bank" && platforms.length === 0) ||
+                  (depositMethod === "crypto" && !depositCoin) ||
                   !selectedRailLive
                 }
               >
@@ -599,7 +621,9 @@ export const InvestorWallet = () => {
                   ? "Submitting…"
                   : depositMethod === "bank"
                     ? `Record transfer of $${depositAmount || "0"}`
-                    : `Deposit $${depositAmount || "0"}`}
+                    : depositMethod === "crypto"
+                      ? `Continue to pay $${depositAmount || "0"}`
+                      : `Deposit $${depositAmount || "0"}`}
               </Button>
             </div>
           </DialogContent>
