@@ -291,9 +291,10 @@ refused that notification and, had it passed, ignored it. Later the same page li
   not answered is not remembered as "none". `check_crypto_deposits.py` paces its questions and
   lists the coins' minimums only with `--minimums`, so a check does not make the site's own
   requests fail.
-- **A purchase needs its price, less a hair at most (2026-10-07; the owner left the choice to
-  the developer, to be confirmed with him).** A crypto payment for a purchase or a down payment
-  that is worth the amount due, or short of it by no more than 0.5% of it and 1 USD
+- **A purchase needs its price, less a hair at most (2026-10-07; the numbers were the
+  developer's choice and the owner confirmed them that day).** A crypto payment for a
+  purchase or a down payment that is worth the amount due, or short of it by no more than
+  0.5% of it and 1 USD
   (`crypto_short_tolerance_pct`, `crypto_short_tolerance_max` in the platform settings; 0 on
   either turns it off, and neither can be set above 2% / 20 USD so that a typo cannot let a
   purchase complete far short), completes it exactly as a paid invoice does, the platform
@@ -344,3 +345,34 @@ refused that notification and, had it passed, ignored it. Later the same page li
   deposit). Staff have no wallet-credit tool: a case that cannot be valued needs the developer.
   Crypto payments are still not looked up on a timer: a notification that never arrives is
   found with `scripts/check_crypto_deposits.py <NOWPayments payment id>` and resent.
+
+## Partners page: the client's register (2026-10-07)
+The page at `/partners` listed placeholder companies over stock photographs. It now shows the
+client's "Partner Content Register" (Partners Page technical content brief, 2026; the same
+text the assistant has had since 2026-09 as `knowledge/reference/partners_register_2026.md`):
+seven sections, 22 partners and one open category, each on a card with its logo, role, copy,
+market and a link to its own site (`src/lib/partners.ts`, `src/pages/Partners.tsx`).
+- **Kept as written, except four things**, each said in `src/lib/partners.ts`:
+  - LexCrest's link: the brief's `lexcrestglobal.com` is a name that does not exist (checked
+    2026-10-07). The card links `lexcrestlegal.xyz`, the firm's site, already linked from the
+    Verification Center. The assistant's reference files still carry the dead name.
+  - The two newest developers (Singapore, South Africa) came as working notes ("partner entry
+    for ..."): they are said the way the other developers are, claiming nothing more.
+  - "Other Approved Banks" is a category that fills as banks are approved, not a company: its
+    card has no link and no role line ("Dynamic category" is a note to us, not copy).
+  - Two section titles got their commas ("Finance, Valuation, Legal and Risk").
+- **Proof Anchor is not on this page.** The brief lists it under additions for the ecosystem's
+  tokenization platforms (Capimax BRX, Capimax RT). PropShare is the non-blockchain platform
+  (`src/test/noLedgerWording.test.ts` keeps that wording out of its pages); Proof Anchor stays
+  on the Verification Center, where the client put it on 2026-10-01.
+- **PayPal is listed as the client wrote it** ("Integrated payment provider"), although no
+  PayPal payment exists on the platform (the assistant says so when asked): told to the owner.
+- **The logos are the brief's own images**, laid on white (every logo tile is white, in the
+  dark theme too), nearly white backgrounds brought to white, margins cut, sized for the card
+  (480 x 192 at most) and saved as WebP: 23 files, 180 KB in all, from 4.5 MB. They are not in
+  the service worker's precache (it takes png, not webp): only a visitor of the page loads
+  them. Stripe, PayPal, NOWPayments and Other Approved Banks came as plain name banners, and
+  eleven logos are small files (about 100 to 240 px wide): a better file replaces one by its
+  name in `src/assets/partners/`.
+- **Released by `backend/scripts/release_partners_page.sh`**: the site only (no migration, no
+  API restart).
