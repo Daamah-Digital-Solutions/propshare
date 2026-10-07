@@ -42,6 +42,7 @@ import { AccountStatementCard } from "@/components/dashboard/AccountStatementCar
 import { PaymentReturnStatus, rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
 import { OpenCryptoPayments } from "@/components/dashboard/OpenCryptoPayments";
 import { CryptoCoinSelect } from "@/components/payments/CryptoCoinSelect";
+import { useCryptoMinimum } from "@/lib/cryptoCoins";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import {
   walletApi,
@@ -93,6 +94,11 @@ export const InvestorWallet = () => {
   const [depositMethod, setDepositMethod] = useState<"card" | "crypto" | "bank">("card");
   // crypto: the coin (and its network) the member will send, chosen here
   const [depositCoin, setDepositCoin] = useState<string | null>(null);
+  // the chosen coin's smallest payment, against the amount typed
+  const { below: depositBelowMinimum } = useCryptoMinimum(
+    depositMethod === "crypto" ? depositCoin : null,
+    Number(depositAmount),
+  );
   const [depositing, setDepositing] = useState(false);
   const [bankDepositAccountId, setBankDepositAccountId] = useState("");
   const [bankDepositRef, setBankDepositRef] = useState("");
@@ -551,7 +557,12 @@ export const InvestorWallet = () => {
               )}
 
               {depositMethod === "crypto" && selectedRailLive && (
-                <CryptoCoinSelect value={depositCoin} onChange={setDepositCoin} purpose="deposit" />
+                <CryptoCoinSelect
+                  value={depositCoin}
+                  onChange={setDepositCoin}
+                  purpose="deposit"
+                  amount={Number(depositAmount) || undefined}
+                />
               )}
 
               {depositMethod === "bank" && (
@@ -613,7 +624,7 @@ export const InvestorWallet = () => {
                 disabled={
                   depositing ||
                   (depositMethod === "bank" && platforms.length === 0) ||
-                  (depositMethod === "crypto" && !depositCoin) ||
+                  (depositMethod === "crypto" && (!depositCoin || depositBelowMinimum)) ||
                   !selectedRailLive
                 }
               >

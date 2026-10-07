@@ -13,6 +13,7 @@ amount the client supplied.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import decimal
 import logging
@@ -29,7 +30,12 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import InstallmentPlan, Investment, Payment, PaymentEvent, Property
 from app.models.base import PaymentMethod
-from app.services import notification_service, payment_method_service, wallet_service
+from app.services import (
+    notification_service,
+    payment_method_service,
+    settings_service,
+    wallet_service,
+)
 from app.services.integrations.payments import ParsedWebhook, nowpayments_gateway, stripe_gateway
 
 # "pronova" is a BRANDED rail that settles via Stripe card (D5 owner decision) — the buyer
@@ -646,7 +652,116 @@ async def _apply_nowpayments(
         if entry.get("review"):
             return {"status": "already_processed"}  # its case is open: said once
         return await _np_needs_review(session, locked, records, record_id)
+    if locked.purpose in ("investment", "installment") and locked.status != "succeeded":
+        # It covers the purchase, or misses it by no more than the tolerance (a hair, from the
+        # rate of another coin): the purchase goes through, the platform bearing the difference.
+        slack = await settings_service.crypto_short_tolerance(session, locked.amount)
+        # decided on the cents that are recorded as what arrived
+        if value.quantize(decimal.Decimal("0.01")) >= locked.amount - slack:
+            return await _np_complete_purchase(
+                session,
+                locked,
+                records,
+                record_id,
+                value,
+                parsed=parsed,
+                source=source,
+                valued_by=valued_by,
+            )
     return await _np_credit_wallet(session, locked, records, record_id, value, valued_by=valued_by)
+
+
+async def _np_complete_purchase(
+    session: AsyncSession,
+    locked: Payment,
+    records: dict[str, dict],
+    record_id: str,
+    value: decimal.Decimal,
+    *,
+    parsed: ParsedWebhook,
+    source: str,
+    valued_by: str,
+) -> dict:
+    """Money that is not the invoice simply paid (another coin, a second transfer, a hair less
+    than asked) yet pays for the purchase: it is confirmed as paid, exactly as a paid invoice
+    is (late, it starts only if its units are still free at the same price; else what arrived
+    is refunded to the wallet). Worth more than the amount due, the rest goes to the wallet."""
+    value = value.quantize(decimal.Decimal("0.01"))
+    due = locked.amount
+    earlier = sum(
+        (decimal.Decimal(r["credited"]) for r in records.values() if r.get("credited")),
+        decimal.Decimal(0),
+    )
+    paid = dataclasses.replace(parsed, status="succeeded", captured_amount=value)
+    result = await _apply_outcome(session, provider=_NP, parsed=paid, payment=locked, source=source)
+    # _apply_outcome read the row again: what was noted on it before is taken from the row
+    records = _np_records(locked)
+    entry = records.setdefault(record_id, {})
+    entry["credited"] = str(value)
+    if valued_by != "notification":
+        entry["valued_by"] = valued_by
+    reviewed = bool(entry.pop("review", False))
+    _keep_np_records(locked, records)
+    locked.amount_captured = value + earlier
+    refunded = result.get("result") == "refunded"  # the purchase could not start: all went back
+    cent = decimal.Decimal("0.01")
+    extra = (value - due).quantize(cent)
+    back = extra if extra > 0 and not refunded else decimal.Decimal("0.00")
+    if back > 0:
+        await wallet_service.credit(
+            session,
+            user_id=locked.user_id,
+            amount=back,
+            reference_id=locked.id,
+            payment_method=PaymentMethod.crypto,
+            description="Crypto payment above the amount due: the difference",
+        )
+        await notification_service.notify(
+            session,
+            user_id=locked.user_id,
+            type="wallet",
+            title="Crypto payment above the amount due",
+            message=(
+                f"Your crypto payment for {await _purchase_title(session, locked)} was worth "
+                f"{value} {locked.currency}, more than the {due} {locked.currency} due. The "
+                f"difference, {back} {locked.currency}, was credited to your wallet."
+            ),
+            email_category="investment_updates",
+        )
+    await write_audit(
+        session,
+        action="payment.webhook.received_as_paid",
+        entity_type="payment",
+        entity_id=str(locked.id),
+        after={
+            "nowpayments_payment": record_id,
+            "due": str(due),
+            "arrived": str(value),
+            "valued_by": valued_by,
+            # what the platform bore (a hair short), or gave back (above the amount due)
+            "short_by": str(max(-extra, decimal.Decimal("0.00"))),
+            "credited_extra": str(back),
+            "outcome": result.get("result") or result.get("status"),
+        },
+    )
+    if reviewed:
+        from app.services import ops_case_service
+
+        went = (
+            "was refunded to the member's wallet (the purchase could no longer start)"
+            if refunded
+            else "paid for the purchase"
+        )
+        await ops_case_service.settle_payment_review(
+            session,
+            payment=locked,
+            note=(
+                f"Settled without a person: NOWPayments payment {record_id} could be valued "
+                f"when its notification arrived again ({value} {locked.currency}) and {went}. "
+                "Nothing more to do."
+            ),
+        )
+    return result
 
 
 async def _purchase_title(session: AsyncSession, payment: Payment) -> str:

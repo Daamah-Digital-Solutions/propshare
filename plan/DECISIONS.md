@@ -291,10 +291,22 @@ refused that notification and, had it passed, ignored it. Later the same page li
   not answered is not remembered as "none". `check_crypto_deposits.py` paces its questions and
   lists the coins' minimums only with `--minimums`, so a check does not make the site's own
   requests fail.
-- **A purchase is never completed with less than its price.** A short crypto payment for a
-  purchase or a down payment releases the units (`payment_short_credited`), closes the payment
-  as failed and credits the wallet; paying the invoice properly afterwards still buys through
-  the late-payment path. The invoice paid in full a second time is a second credit.
+- **A purchase needs its price, less a hair at most (2026-10-07; the owner left the choice to
+  the developer, to be confirmed with him).** A crypto payment for a purchase or a down payment
+  that is worth the amount due, or short of it by no more than 0.5% of it and 1 USD
+  (`crypto_short_tolerance_pct`, `crypto_short_tolerance_max` in the platform settings; 0 on
+  either turns it off, and neither can be set above 2% / 20 USD so that a typo cannot let a
+  purchase complete far short), completes it exactly as a paid invoice does, the platform
+  bearing the difference. The audit log says how much each time
+  (`payment.webhook.received_as_paid`: `due`, `arrived`, `short_by`), and who changed either
+  setting in the admin panel, from what (`payments.settings_changed`). The down payment of
+  2026-10-06 was 13.00 due and arrived worth 12.99: it would have started its plan. Worth more
+  than the amount due (another coin at a better rate), it buys and the difference goes to the
+  wallet. Paid late, it starts only if its units are still free at the same price; else what
+  arrived (not the amount due) goes to the wallet. Shorter than a hair, nothing changed: the
+  units are released (`payment_short_credited`), the payment closes as failed and the wallet
+  is credited; paying the invoice properly afterwards still buys through the late-payment
+  path. The invoice paid in full a second time is a second credit.
 - **A notification sent again changes nothing**, except money still owed: a payment waiting for
   a person, or an under-payment recorded before outcomes were kept while nothing was settled on
   its row (`_np_replay_wanted`). Staff resend from the NOWPayments dashboard ("IPN"); "Change
@@ -308,6 +320,19 @@ refused that notification and, had it passed, ignored it. Later the same page li
   then stablecoins and the popular ones; any other is found by search. An amount under the
   coin's minimum is refused before an invoice exists (`CRYPTO_AMOUNT_TOO_SMALL`), an unknown
   coin too (`UNKNOWN_COIN`).
+- **A coin's smallest payment is said under it as soon as it is chosen (2026-10-07)**
+  (`GET /payments/crypto/minimum`): USDT on Tron took no less than 12 USD on 2026-10-06 while
+  USDT on BSC took 0.20, and a member was trying 3 and 4 USD. Left unsaid, that is learnt
+  from a refusal after pressing pay. Under the minimum, the line turns red, names the two
+  amounts, and the pay action is held back (wallet deposit, purchase, down payment). When
+  NOWPayments does not say, nothing is shown or held back and the server has the last word,
+  as before. One caller is answered 30 times a minute at most (`CRYPTO_MINIMUM_LIMIT`): what
+  the 5-minute memory cannot answer is asked of NOWPayments, and someone walking the whole
+  coin list must not make members' invoices fail.
+- **A coin is always named with its network.** NOWPayments' own name carries it for most
+  tokens ("Tether USD (Tron)") but not all: the account's list has "First Digital USD" (on
+  Ethereum) and "DAIARB" (DAI on Arbitrum). The network is added in words when the name
+  leaves it out (`coinName` in `src/lib/cryptoCoins.ts`); a network's own coin needs none.
 - **A crypto payment still on its way shows at the top of the wallet**
   (`GET /payments/crypto/open`): started within 24 hours, or older with funds seen on the
   network; with its coin, how far it is, and the page to finish it on. One NOWPayments never

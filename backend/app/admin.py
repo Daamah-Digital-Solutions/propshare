@@ -779,15 +779,20 @@ class PlatformSettingAdmin(AdminOnlyModelView, model=PlatformSetting):
 
     async def after_model_change(self, data, model, is_created, request) -> None:
         # The assistant's switches are safety controls: every change is written to the audit
-        # log with who flipped it and from what value.
+        # log with who flipped it and from what value. So is how far short of the amount due a
+        # crypto purchase may arrive and still complete: a money rule.
         key = (data.get("key") or getattr(model, "key", "") or "").strip()
-        if not key.startswith("assistant_"):
+        if key.startswith("assistant_"):
+            action = "assistant.settings_changed"
+        elif key.startswith("crypto_short_tolerance_"):
+            action = "payments.settings_changed"
+        else:
             return
         actor = request.session.get("admin_id")
         async with session_scope() as session:
             await write_audit(
                 session,
-                action="assistant.settings_changed",
+                action=action,
                 entity_type="platform_setting",
                 entity_id=key,
                 actor_id=uuid.UUID(actor) if actor else None,

@@ -26,6 +26,10 @@ const { api, state } = vi.hoisted(() => {
       config: mode(false, false),
       banks: [] as { id: string; bank_name: string; iban: string; is_default: boolean }[],
       open: [] as Record<string, unknown>[],
+      // each coin's smallest payment right now, in USD (it moves with the network's fees)
+      minimums: {} as Record<string, string>,
+      // the coins whose smallest payment was asked for
+      asked: [] as string[],
     },
   };
 });
@@ -34,6 +38,8 @@ const COINS = [
   { code: "usdtbsc", ticker: "USDT", name: "Tether USD (Binance Smart Chain)", network: "BSC", stable: true, popular: true, memo: false },
   { code: "btc", ticker: "BTC", name: "Bitcoin", network: "BTC", stable: false, popular: true, memo: false },
   { code: "xrp", ticker: "XRP", name: "Ripple", network: "XRP", stable: false, popular: false, memo: true },
+  // named without its network by the provider, as in the live account's list
+  { code: "fdusderc20", ticker: "FDUSD", name: "First Digital USD", network: "ETH", stable: true, popular: false, memo: false },
 ];
 
 vi.mock("@/lib/api", () => ({
@@ -48,6 +54,10 @@ vi.mock("@/lib/api", () => ({
   },
   cryptoApi: {
     coins: async () => ({ items: COINS, total: COINS.length }),
+    minimum: async (code: string) => {
+      state.asked.push(code);
+      return { coin: code, minimum: state.minimums[code] ?? null, currency: "usd" };
+    },
     open: async () => state.open,
   },
   withdrawApi: { create: (...a: unknown[]) => api.withdrawCreate(...a) },
@@ -90,6 +100,8 @@ describe("InvestorWallet — prepared by the assistant", () => {
     state.config = state.mode(false, false);
     state.banks = [];
     state.open = [];
+    state.minimums = { usdtbsc: "0.20", btc: "1.12" };
+    state.asked = [];
   });
 
   it("opens the deposit filled in and stops before the user's own click", async () => {
@@ -113,7 +125,9 @@ describe("InvestorWallet — prepared by the assistant", () => {
     // stablecoins and popular coins are listed; any other is found by searching
     expect(picker).toHaveTextContent("Stablecoins");
     expect(picker).not.toHaveTextContent("Ripple");
-    expect(picker).toHaveTextContent("3 coins are accepted");
+    expect(picker).toHaveTextContent("4 coins are accepted");
+    // a coin the provider names without its network is listed with it
+    expect(screen.getByRole("option", { name: "FDUSD · First Digital USD (Ethereum)" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Search coins"), { target: { value: "rip" } });
     expect(picker).toHaveTextContent("Ripple");
     fireEvent.change(screen.getByLabelText("Search coins"), { target: { value: "" } });
@@ -123,10 +137,64 @@ describe("InvestorWallet — prepared by the assistant", () => {
     expect(notice).toHaveTextContent("Send USDT on the BNB Smart Chain (BSC) network only");
     expect(notice).toHaveTextContent("another coin or network is credited at the value that arrives");
     expect(notice).toHaveTextContent("You can close the page after sending");
+    // the coin's smallest payment is said under it
+    expect(await screen.findByTestId("crypto-minimum")).toHaveTextContent(
+      "Smallest payment in this coin right now: about $0.20.",
+    );
     expect(pay).toBeEnabled();
     fireEvent.click(pay);
     await waitFor(() => expect(api.deposit).toHaveBeenCalled());
     expect(api.deposit.mock.calls[0][0]).toEqual({ amount: 13, method: "crypto", pay_currency: "usdtbsc" });
+  });
+
+  it("holds back a crypto deposit under the chosen coin's smallest payment", async () => {
+    // 2026-10-06: a coin took no less than 12 USD while a member was trying 3 and 4. Left
+    // unsaid, that is learnt from a refusal after pressing pay: it is said under the coin.
+    state.minimums = { usdtbsc: "12.00", btc: "1.12" };
+    api.deposit.mockResolvedValue({ payment_id: "p1", provider: "nowpayments", status: "pending", checkout_url: null });
+    mount("/dashboard?tab=wallet&action=deposit&amount=3&method=crypto");
+    await screen.findByTestId("crypto-coin-select");
+    fireEvent.click(screen.getByRole("option", { name: /USDT · Tether USD \(Binance Smart Chain\)/ }));
+    const tooSmall = await screen.findByTestId("crypto-minimum");
+    expect(tooSmall).toHaveAttribute("role", "alert");
+    expect(tooSmall).toHaveTextContent(
+      "USDT · Tether USD (Binance Smart Chain) takes no less than about $12.00 right now, and this payment is $3.00. Choose another coin or a larger amount.",
+    );
+    expect(screen.getByRole("button", { name: "Continue to pay $3" })).toBeDisabled();
+    // a larger amount is taken
+    fireEvent.change(screen.getByDisplayValue("3"), { target: { value: "12" } });
+    await waitFor(() =>
+      expect(screen.getByTestId("crypto-minimum")).toHaveTextContent(
+        "Smallest payment in this coin right now: about $12.00.",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Continue to pay $12" })).toBeEnabled();
+    // and so is the small one in a coin that takes it
+    fireEvent.change(screen.getByDisplayValue("12"), { target: { value: "3" } });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Continue to pay $3" })).toBeDisabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    fireEvent.click(await screen.findByRole("option", { name: /BTC · Bitcoin/ }));
+    const least = await screen.findByTestId("crypto-minimum");
+    expect(least).toHaveTextContent("Smallest payment in this coin right now: about $1.12.");
+    const pay = screen.getByRole("button", { name: "Continue to pay $3" });
+    expect(pay).toBeEnabled();
+    fireEvent.click(pay);
+    await waitFor(() => expect(api.deposit).toHaveBeenCalled());
+    expect(api.deposit.mock.calls[0][0]).toEqual({ amount: 3, method: "crypto", pay_currency: "btc" });
+  });
+
+  it("holds nothing back when the coin's smallest payment is not known", async () => {
+    // the provider does not always say: the server has the last word then
+    state.minimums = {};
+    mount("/dashboard?tab=wallet&action=deposit&amount=3&method=crypto");
+    await screen.findByTestId("crypto-coin-select");
+    fireEvent.click(screen.getByRole("option", { name: /BTC · Bitcoin/ }));
+    await screen.findByTestId("crypto-pay-notice");
+    await waitFor(() => expect(state.asked).toEqual(["btc"]));
+    expect(screen.queryByTestId("crypto-minimum")).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue to pay $3" })).toBeEnabled();
   });
 
   it("shows the crypto payments still on their way, and nothing when there is none", async () => {

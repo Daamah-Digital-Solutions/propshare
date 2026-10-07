@@ -561,16 +561,23 @@ async def test_a_short_down_payment_does_not_start_the_plan(client, db, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_the_down_payment_that_started_all_this(client, db, monkeypatch):
+@pytest.mark.parametrize("tolerance", [False, True])
+async def test_the_down_payment_that_started_all_this(client, db, monkeypatch, tolerance):
     """The client's own payment, as the server showed it on 2026-10-06: a 13 USD down payment
     whose invoice he opened for BNB and paid with 13 USDT. The recovered deposit's "confirmed"
-    notification passed, its "partially paid" one was refused twice, and when it is sent again
-    the plan's hold has long run out. It carries no fiat value: NOWPayments' rate says 13 USD
-    buys 13.00982534 USDT. The plan does not start; 12.99 reach his wallet, once."""
+    notification passed, its "partially paid" one was refused twice, and when it was sent again
+    the plan's hold had long run out. Valued at NOWPayments' rate (13 USD buys 13.00982534
+    USDT) it is worth 12.99.
+
+    That day nothing short completed a purchase: the plan did not start and 12.99 reached his
+    wallet (``tolerance`` off). Since 2026-10-07 a payment a hair short pays for the purchase:
+    the same notification starts his plan, late, its unit still being free."""
     rate = "/estimate?amount=13&currency_from=usd&currency_to=usdtbsc"
     answers: dict = {rate: {"currency_from": "usd", "estimated_amount": "13.00982534"}}
     _crypto_rail(monkeypatch, answers)
-    token, uid = await _investor(client, db, "first.case@cp.io")
+    if not tolerance:
+        db("INSERT INTO platform_settings (key, value) VALUES ('crypto_short_tolerance_max', '0')")
+    token, uid = await _investor(client, db, f"first.case.{int(tolerance)}@cp.io")
     prop = _property(db)
     db("UPDATE properties SET unit_price=50, minimum_investment=50 WHERE id=:p", p=prop)
     # one unit of 50 over 12 months: 25% down + 4% fee = 13.00; no coin, as before the release
@@ -618,24 +625,277 @@ async def test_the_down_payment_that_started_all_this(client, db, monkeypatch):
     ).encode()
     assert b"8.3e-05" in body  # Python's spelling: accepted as the same value
     r = await _send(client, body)
-    assert r.status_code == 200 and r.json() == {
-        "status": "processed",
-        "result": "credited_received",
-    }
-    assert answers["asked"] == [rate]
-    assert _balance(db, uid) == 12.99 and _available(db, prop) == 100
+    assert r.status_code == 200 and answers["asked"] == [rate]
     status, captured, raw = _payment(db, pid)
-    assert (status, captured) == ("failed", 12.99)
     assert raw["nowpayments"]["4870885867"]["credited"] == "12.99"
     assert raw["nowpayments"]["4870885867"]["valued_by"] == "rate"
-    assert db("SELECT status FROM installment_plans WHERE id=:i", i=plan)[0][0] == "expired"
-    told = _told(db, uid, "Crypto payment credited to your wallet")
-    assert len(told) == 1 and "arrived as 12.99 USD, not the 13.00 USD due" in told[0]
-    assert "12.99 USD is in your wallet" in told[0]
+    plan_status = db("SELECT status FROM installment_plans WHERE id=:i", i=plan)[0][0]
+    wallet_note = _told(db, uid, "Crypto payment credited to your wallet")
+    if tolerance:
+        # a cent short of 13.00: it pays for the plan, which starts late on its free unit
+        assert r.json() == {"status": "processed", "result": "reconciled_started"}
+        assert (status, captured, plan_status) == ("succeeded", 12.99, "active")
+        assert _balance(db, uid) == 0 and _available(db, prop) == 99 and not wallet_note
+        noted = db(
+            "SELECT after FROM audit_log WHERE action='payment.webhook.received_as_paid'"
+            " AND entity_id=:p",
+            p=pid,
+        )
+        assert len(noted) == 1 and noted[0][0]["short_by"] == "0.01"
+        assert (noted[0][0]["due"], noted[0][0]["arrived"]) == ("13.00", "12.99")
+    else:
+        assert r.json() == {"status": "processed", "result": "credited_received"}
+        assert (status, captured, plan_status) == ("failed", 12.99, "expired")
+        assert _balance(db, uid) == 12.99 and _available(db, prop) == 100
+        assert len(wallet_note) == 1
+        assert "arrived as 12.99 USD, not the 13.00 USD due" in wallet_note[0]
+        assert "12.99 USD is in your wallet" in wallet_note[0]
     # pressed again, and the BNB payment he never sent expiring a week later: nothing more
+    balance = _balance(db, uid)
     assert (await _send(client, body)).json() == {"status": "duplicate"}
     r = await _ipn(client, payment_status="expired", **waiting)
-    assert r.json() == {"status": "already_processed"} and _balance(db, uid) == 12.99
+    assert r.json() == {"status": "already_processed"} and _balance(db, uid) == balance
+
+
+@pytest.mark.asyncio
+async def test_a_purchase_a_hair_short_is_completed_and_no_further(client, db, monkeypatch):
+    """2026-10-07, on the owner's go-ahead: a payment a hair short of the amount due still
+    completes the purchase, the platform bearing the difference: within 0.5% of the amount and
+    1 USD at most. One cent beyond that it goes to the wallet as before. Worth more than the
+    amount due (another coin at a better rate), it buys and the rest goes to the wallet."""
+    _crypto_rail(monkeypatch)
+    token, uid = await _investor(client, db, "hair@cp.io")
+    prop = _property(db, model="ready-income", units=1000)
+    monkeypatch.setattr(get_settings(), "cron_secret", "cron-t", raising=False)
+
+    async def buy(amount: int) -> tuple[str, float]:
+        r = await client.post(
+            "/api/v1/investments",
+            json={"property_id": prop, "amount": amount, "method": "crypto", "pay_currency": "eth"},
+            headers=_h(token),
+        )
+        assert r.status_code == 200, r.text
+        row = db(
+            "SELECT id, amount FROM payments WHERE related_investment_id=:i",
+            i=r.json()["investment_id"],
+        )[0]
+        return str(row[0]), float(row[1])
+
+    async def short(pid: str, due: float, by: float, np_id: int):
+        # an under-payment in the coin asked for: its share of the price
+        return await _ipn(
+            client,
+            payment_id=np_id,
+            payment_status="partially_paid",
+            order_id=pid,
+            price_amount=due,
+            pay_amount=due,
+            actually_paid=round(due - by, 2),
+            pay_currency="usdtbsc",
+        )
+
+    # 1,000 + 2.5% fee = 1,025.00 due: half a percent would be 5.12, so the 1 USD cap decides
+    pid, due = await buy(1000)
+    assert due == 1025.0
+    r = await short(pid, due, 1.01, 5001)
+    assert r.json() == {"status": "processed", "result": "credited_received"}
+    assert _balance(db, uid) == 1023.99 and _owned(db, uid, prop) == 0
+    assert _payment(db, pid)[:2] == ("failed", 1023.99)
+
+    pid, due = await buy(1000)
+    r = await short(pid, due, 1.00, 5002)
+    assert r.json() == {"status": "processed", "result": "confirmed"}
+    assert _owned(db, uid, prop) == 10 and _balance(db, uid) == 1023.99  # nothing more credited
+    assert _payment(db, pid)[:2] == ("succeeded", 1024.0)
+    noted = db(
+        "SELECT after FROM audit_log WHERE action='payment.webhook.received_as_paid'"
+        " AND entity_id=:p",
+        p=pid,
+    )[0][0]
+    assert (noted["short_by"], noted["credited_extra"], noted["outcome"]) == (
+        "1.00",
+        "0.00",
+        "confirmed",
+    )
+    # sent again: nothing more
+    assert (await short(pid, due, 1.00, 5002)).json() == {"status": "duplicate"}
+
+    # 100 + 2.5% = 102.50 due: half a percent is 0.51 (the cap is not reached)
+    pid, due = await buy(100)
+    assert due == 102.5
+    r = await short(pid, due, 0.52, 5003)
+    assert r.json()["result"] == "credited_received" and _owned(db, uid, prop) == 10
+    wallet = _balance(db, uid)
+    pid, due = await buy(100)
+    assert (await short(pid, due, 0.51, 5004)).json()["result"] == "confirmed"
+    assert _owned(db, uid, prop) == 11 and _balance(db, uid) == wallet
+
+    # another coin, worth more than the amount due: it buys, the difference is his
+    pid, due = await buy(100)
+    r = await _ipn(
+        client,
+        payment_id=5006,
+        parent_payment_id=5005,
+        payment_status="partially_paid",
+        order_id=pid,
+        price_amount=due,
+        pay_amount=106,
+        actually_paid=106,
+        actually_paid_at_fiat=105.71,
+        pay_currency="usdterc20",
+    )
+    assert r.json() == {"status": "processed", "result": "confirmed"}
+    assert _owned(db, uid, prop) == 12 and _balance(db, uid) == round(wallet + 3.21, 2)
+    assert _payment(db, pid)[:2] == ("succeeded", 105.71)
+    told = _told(db, uid, "Crypto payment above the amount due")
+    assert len(told) == 1 and "The difference, 3.21 USD, was credited to your wallet" in told[0]
+    wallet = _balance(db, uid)
+
+    # a hair short, but paid after the hold ran out and the units went to someone else: what
+    # arrived is refunded, not the amount that was due
+    pid, due = await buy(100)
+    db("UPDATE investments SET reservation_expires_at = now() - interval '1 minute'")
+    r = await client.post(
+        "/api/v1/investments/maintenance/expire-reservations", headers={"X-Cron-Secret": "cron-t"}
+    )
+    assert r.status_code == 200
+    db("UPDATE properties SET available_units = 0, status = 'funded' WHERE id=:p", p=prop)
+    r = await short(pid, due, 0.30, 5007)
+    assert r.json() == {"status": "processed", "result": "refunded"}
+    assert _balance(db, uid) == round(wallet + 102.20, 2) and _owned(db, uid, prop) == 12
+
+    # the tolerance switched off: a cent short goes to the wallet
+    db("UPDATE properties SET available_units = 500, status = 'active' WHERE id=:p", p=prop)
+    db("INSERT INTO platform_settings (key, value) VALUES ('crypto_short_tolerance_pct', '0')")
+    wallet = _balance(db, uid)
+    pid, due = await buy(100)
+    r = await short(pid, due, 0.01, 5008)
+    assert r.json()["result"] == "credited_received"
+    assert _balance(db, uid) == round(wallet + 102.49, 2) and _owned(db, uid, prop) == 12
+    # ... while a payment that covers the amount in full still buys
+    pid, due = await buy(100)
+    r = await _ipn(
+        client,
+        payment_id=5010,
+        parent_payment_id=5009,
+        payment_status="finished",
+        order_id=pid,
+        price_amount=due,
+        actually_paid=103,
+        actually_paid_at_fiat=102.5,
+        pay_currency="usdterc20",
+    )
+    assert r.json()["result"] == "confirmed" and _owned(db, uid, prop) == 13
+
+
+@pytest.mark.asyncio
+async def test_a_purchase_valued_only_when_sent_again_is_completed_then(client, db, monkeypatch):
+    """A purchase paid in another coin that NOWPayments could not value at first waits for a
+    person. Valued when its notification is sent again, and worth the amount due, it buys, and
+    the case answers itself saying so (not that the money went to the wallet: it did not)."""
+    answers: dict = {}
+    _crypto_rail(monkeypatch, answers)
+    token, uid = await _investor(client, db, "later@cp.io")
+    prop = _property(db, model="ready-income", units=1000)
+    r = await client.post(
+        "/api/v1/investments",
+        json={"property_id": prop, "amount": 100, "method": "crypto", "pay_currency": "eth"},
+        headers=_h(token),
+    )
+    assert r.status_code == 200, r.text
+    pid = str(
+        db("SELECT id FROM payments WHERE related_investment_id=:i", i=r.json()["investment_id"])[
+            0
+        ][0]
+    )
+    extra = dict(
+        payment_id=9002,
+        parent_payment_id=9001,
+        payment_status="partially_paid",
+        order_id=pid,
+        price_amount=102.5,
+        price_currency="usd",
+        pay_amount=505,
+        actually_paid=505,
+        actually_paid_at_fiat=0,
+        pay_currency="doge",
+    )
+    r = await _ipn(client, **extra)
+    assert r.json() == {"status": "processed", "result": "needs_review"}
+    assert _owned(db, uid, prop) == 0 and _balance(db, uid) == 0
+    assert _payment(db, pid)[0] == "pending"
+
+    # 102.50 USD buys 504.1 DOGE now and 505 arrived: worth 102.68, 18 cents above the amount due
+    answers["/estimate?amount=102.5&currency_from=usd&currency_to=doge"] = {
+        "estimated_amount": 504.1
+    }
+    r = await _ipn(client, **extra)
+    assert r.json() == {"status": "processed", "result": "confirmed"}
+    assert _owned(db, uid, prop) == 1 and _balance(db, uid) == 0.18
+    status, captured, raw = _payment(db, pid)
+    assert (status, captured) == ("succeeded", 102.68)
+    kept = raw["nowpayments"]["9002"]
+    assert (kept["credited"], kept["valued_by"]) == ("102.68", "rate") and "review" not in kept
+    assert len(_told(db, uid, "Crypto payment above the amount due")) == 1
+    case = db("SELECT id, status FROM support_tickets WHERE kind='ops_case'")
+    assert len(case) == 1 and case[0][1] == "resolved"
+    note = db("SELECT body FROM support_ticket_messages WHERE ticket_id=:t", t=case[0][0])
+    assert len(note) == 1
+    assert "(102.68 USD) and paid for the purchase. Nothing more to do." in note[0][0]
+    # sent once more: nothing more
+    assert (await _ipn(client, **extra)).json() == {"status": "duplicate"}
+    assert _owned(db, uid, prop) == 1 and _balance(db, uid) == 0.18
+
+
+@pytest.mark.asyncio
+async def test_the_tolerance_stays_a_hair_whatever_is_typed(client, db, monkeypatch):
+    """A typo in the admin panel must not let a purchase complete far short: neither value can
+    be set above its ceiling (2 percent, 20 USD), and a value that got into the store another
+    way is held to it. A value nobody can read turns the tolerance off, not on."""
+    from decimal import Decimal
+
+    from app.core.db import session_scope
+    from app.core.errors import AppError
+    from app.services import settings_service as s
+
+    for key, good, bad in (
+        ("crypto_short_tolerance_pct", ("0", "0.5", "2"), ("2.01", "50", "-1", "half", "NaN")),
+        (
+            "crypto_short_tolerance_max",
+            ("0", "1.00", "20"),
+            ("20.01", "100", "-1", "one", "Infinity"),
+        ),
+    ):
+        for value in good:
+            s.validate_setting(key, value)
+        for value in bad:
+            with pytest.raises(AppError) as refused:
+                s.validate_setting(key, value)
+            assert refused.value.code == "INVALID_SETTING"
+
+    async def tolerance(due: str) -> Decimal:
+        async with session_scope() as session:
+            return await s.crypto_short_tolerance(session, Decimal(due))
+
+    # as shipped: half a percent, 1 USD at most, in whole cents rounded down
+    assert await tolerance("13.00") == Decimal("0.06")
+    assert await tolerance("102.50") == Decimal("0.51")
+    assert await tolerance("1025.00") == Decimal("1.00")
+    assert await tolerance("0") == 0
+    # written past the ceiling behind the panel's back: held to 2 percent and 20 USD
+    db(
+        "INSERT INTO platform_settings (key, value) VALUES"
+        " ('crypto_short_tolerance_pct', '100'), ('crypto_short_tolerance_max', '100000')"
+    )
+    assert await tolerance("500.00") == Decimal("10.00")
+    assert await tolerance("50000.00") == Decimal("20.00")
+    # unreadable: off
+    for unreadable in ("lots", "NaN", "Infinity", ""):
+        db(
+            "UPDATE platform_settings SET value=:v WHERE key='crypto_short_tolerance_max'",
+            v=unreadable,
+        )
+        assert await tolerance("500.00") == 0
 
 
 # --- the coin is chosen on the platform ----------------------------------------------------------
@@ -742,18 +1002,117 @@ def test_the_assistant_explains_crypto_the_way_it_works_now():
     from app.tests.test_assistant_eval_tools_db import _load
 
     seed = _load("seed_kb")
-    for rows, chosen_here, short in (
-        (seed.ARTICLES, "choose the coin and its network on PropShare", "arrives short"),
-        (seed.ARTICLES_AR, "تختار العملة وشبكتها على PropShare", "يصل ناقصًا"),
+    for rows, chosen_here, short, hair, least in (
+        (
+            seed.ARTICLES,
+            "choose the coin and its network on PropShare",
+            "arrives short",
+            "short by a hair only (a rounding or network-fee difference) still completes it",
+            "Every coin has a smallest payment, which moves with its network's fees",
+        ),
+        (
+            seed.ARTICLES_AR,
+            "تختار العملة وشبكتها على PropShare",
+            "يصل ناقصًا",
+            "أما النقص الطفيف جدًا (فرق تقريب أو رسوم شبكة) فلا يمنع إتمامها",
+            "ولكل عملة حد أدنى للدفعة يتغيّر مع رسوم شبكتها",
+        ),
     ):
         bodies = {slug: body for slug, *_rest, body in rows}
         assert chosen_here in bodies["getting-started"]
         assert chosen_here in bodies["wallet-deposits-withdrawals"]
         assert short in bodies["wallet-deposits-withdrawals"]
+        # 2026-10-07: a purchase a hair short still completes, and a coin's smallest payment is
+        # said under it (as sentences: the article's lines wrap)
+        said = " ".join(bodies["wallet-deposits-withdrawals"].split())
+        assert hair in said and least in said
         assert all("on NOWPayments' page)" not in body for body in bodies.values())
         assert all("من صفحة NOWPayments)" not in body for body in bodies.values())
     assert "choose there the coin and network" in wallet._DEPOSIT_STEPS["crypto"]
-    assert "picks the coin and its network on PropShare" in platform._purchase_methods()["note"]
+    assert "smallest payment that coin takes right now" in wallet._DEPOSIT_STEPS["crypto"]
+    note = platform._purchase_methods()["note"]
+    assert "picks the coin and its network on PropShare" in note
+    assert "short by a hair only still completes it" in note
+
+
+@pytest.mark.asyncio
+async def test_the_smallest_payment_of_a_coin_is_told_before_paying(client, db, monkeypatch):
+    """USDT on Tron asked for 12 USD on 2026-10-06 while members tried 3 and 4: the minimum is
+    shown under the coin chosen, not learnt from a refusal."""
+    monkeypatch.setattr(nowp, "is_configured", lambda: True)
+    monkeypatch.setattr(nowp, "_coins", None)
+    monkeypatch.setattr(nowp, "_minimums", {})
+    asked: list[str] = []
+
+    async def fake_get(path: str):
+        asked.append(path)
+        if path == "/merchant/coins":
+            return 200, {"selectedCurrencies": ["USDTTRC20", "BTC"]}
+        if path == "/full-currencies":
+            return 200, {"currencies": [{"code": "BTC", "name": "Bitcoin"}]}
+        if path == "/min-amount?currency_from=usdttrc20&fiat_equivalent=usd":
+            return 200, {"min_amount": 12.01, "fiat_equivalent": 11.997}
+        return 404, None
+
+    monkeypatch.setattr(nowp, "_get", fake_get)
+    url = "/api/v1/payments/crypto/minimum"
+    assert (await client.get(url, params={"coin": "usdttrc20"})).status_code == 401
+    token, _uid = await _investor(client, db, "minimum@cp.io")
+    hdr = {"Authorization": f"Bearer {token}"}
+    r = await client.get(url, params={"coin": "USDTTRC20"}, headers=hdr)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"coin": "usdttrc20", "minimum": "12.00", "currency": "USD"}
+    # a coin NOWPayments gives no minimum for: said as unknown, the payment is made anyway
+    r = await client.get(url, params={"coin": "btc"}, headers=hdr)
+    assert r.json() == {"coin": "btc", "minimum": None, "currency": "USD"}
+    # a coin the account does not take, and something that is no coin code
+    r = await client.get(url, params={"coin": "doge"}, headers=hdr)
+    assert r.status_code == 422 and r.json()["error"]["code"] == "UNKNOWN_COIN"
+    assert (await client.get(url, params={"coin": "us dt"}, headers=hdr)).status_code == 422
+    # remembered: asking again asks NOWPayments nothing
+    before = len(asked)
+    await client.get(url, params={"coin": "usdttrc20"}, headers=hdr)
+    assert len(asked) == before
+
+
+@pytest.mark.asyncio
+async def test_a_coins_smallest_payment_cannot_be_asked_without_end(client, db, monkeypatch):
+    """Each question the cache cannot answer reaches NOWPayments, which refuses whoever asks it
+    a few times in a row (seen on 2026-10-06): one caller walking the whole coin list must not
+    make members' invoices fail. Over the limit the answer is 429 and the site shows no line."""
+    from app.core.ratelimit import limiter
+
+    monkeypatch.setattr(nowp, "is_configured", lambda: True)
+    monkeypatch.setattr(nowp, "_coins", None)
+    monkeypatch.setattr(nowp, "_minimums", {})
+    asked: list[str] = []
+
+    async def fake_get(path: str):
+        asked.append(path)
+        if path == "/merchant/coins":
+            return 200, {"selectedCurrencies": ["USDTTRC20"]}
+        if path == "/full-currencies":
+            return 200, {"currencies": [{"code": "USDTTRC20", "name": "Tether USD (Tron)"}]}
+        return 200, {"min_amount": 12, "fiat_equivalent": 12.0}
+
+    monkeypatch.setattr(nowp, "_get", fake_get)
+    token, _uid = await _investor(client, db, "walker@cp.io")
+    limiter.enabled = True
+    try:
+        codes = [
+            (
+                await client.get(
+                    "/api/v1/payments/crypto/minimum?coin=usdttrc20", headers=_h(token)
+                )
+            ).status_code
+            for _ in range(32)  # the limit is 30 a minute
+        ]
+    finally:
+        limiter.enabled = False
+        limiter.reset()
+    assert codes[:30] == [200] * 30 and codes[30:] == [429] * 2
+    # and the same coin asked again is answered from memory: NOWPayments heard it once
+    assert len([p for p in asked if p.startswith("/min-amount")]) == 1
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,11 @@
 #   * The member chooses the coin and its network on PropShare; the payment page is then made
 #     for that one coin. An amount under the coin's minimum is refused before any invoice.
 #   * A crypto payment still on its way shows at the top of the wallet.
+#   * (2026-10-07) A purchase or a down payment paid a hair short still completes (within
+#     0.5% of the amount due and 1 USD: platform settings crypto_short_tolerance_pct and
+#     crypto_short_tolerance_max; 0 on either turns it off). The smallest payment a coin
+#     takes is said under the coin as soon as it is chosen. A coin is always named with its
+#     network.
 #
 # Run as root, AFTER pulling the code:
 #   cd /opt/capimax/app && sudo -u deploy git pull && bash backend/scripts/release_crypto_payments.sh
@@ -63,6 +68,7 @@ say "1. Preflight"
 [ "$(id -u)" = 0 ] || die "run this as root"
 [ -d "$APP/.git" ] && [ -f "$ENVF" ] && [ -x "$VENV/bin/python" ] || die "unexpected server layout"
 grep -qs "def value_now" "$BE/app/services/integrations/payments/nowpayments_gateway.py" \
+  && grep -qs "def crypto_short_tolerance" "$BE/app/services/settings_service.py" \
   || die "the new code is not here: run 'sudo -u deploy git pull' first"
 if [ -n "$(as_app git -C "$APP" status --porcelain --untracked-files=no)" ]; then
   as_app git -C "$APP" status --short --untracked-files=no
@@ -93,6 +99,7 @@ rm -rf "$APP/dist.new"
 (cd "$APP" && as_app npx vite build --outDir dist.new --emptyOutDir --logLevel error)
 grep -rqs "Choose the coin you will send" "$APP"/dist.new/assets/ || die "the build does not carry the coin choice"
 grep -rqs "Crypto payments on their way" "$APP"/dist.new/assets/ || die "the build does not carry the payments on their way"
+grep -rqs "Smallest payment in this coin right now" "$APP"/dist.new/assets/ || die "the build does not say a coin's smallest payment"
 ok "site built (goes live in step 5)"
 
 # ---------------------------------------------------------------------------------------------
@@ -107,7 +114,28 @@ SPEC=$(curl -fsS -m 10 "$API_LOCAL/openapi.json" || true)
 grep -qF '/api/v1/payments/crypto/coins' <<<"$SPEC" || die "the API does not list the coins (journalctl -u $SERVICE -n 80)"
 grep -qF '/api/v1/payments/crypto/open' <<<"$SPEC" || die "the API does not list the crypto payments on their way"
 grep -qF '"pay_currency"' <<<"$SPEC" || die "the API does not take the coin chosen with a payment"
-ok "API restarted: coins, payments on their way, and the coin with a deposit or a purchase"
+grep -qF '/api/v1/payments/crypto/minimum' <<<"$SPEC" || die "the API does not tell a coin's smallest payment"
+ok "API restarted: coins and their smallest payment, payments on their way, the coin with a deposit or a purchase"
+# how far short of the amount due a crypto purchase may arrive and still complete (read only)
+TOLERANCE_CHECK='
+import asyncio
+from decimal import Decimal
+from app.core.db import session_scope
+from app.services import settings_service as s
+
+async def main():
+    async with session_scope() as session:
+        pct = await s.get_setting(session, "crypto_short_tolerance_pct")
+        cap = await s.get_setting(session, "crypto_short_tolerance_max")
+        shown = [(due, await s.crypto_short_tolerance(session, Decimal(due))) for due in ("13.00", "102.50", "1025.00")]
+    print("   a crypto purchase completes when short by at most %s%% of the amount due and %s USD:" % (pct, cap))
+    for due, slack in shown:
+        print("     %s USD due: completes from %s USD" % (due, Decimal(due) - slack))
+
+asyncio.run(main())
+'
+(cd "$BE" && as_app "$VENV/bin/python" -c "$TOLERANCE_CHECK") \
+  || warn "the tolerance could not be read (it is in the platform settings: crypto_short_tolerance_pct / _max)"
 # what a member will be offered, read from the NOWPayments account with the API's own key
 # (read only; prints no key)
 COINS_CHECK='
@@ -137,9 +165,12 @@ asyncio.run(main())
 # ---------------------------------------------------------------------------------------------
 say "4. Assistant knowledge base"
 (cd "$BE" && as_app "$VENV/bin/python" scripts/seed_kb.py --approve-as "$ADMIN_EMAIL")
-# both languages name the memo / tag a coin can need, a word the earlier article did not have
-LIVE=$(psql_db -c "SELECT count(*) FROM kb_articles WHERE slug='wallet-deposits-withdrawals' AND status='approved' AND body_md LIKE '%memo%'")
-[ "${LIVE:-0}" -ge 2 ] || die "the wallet article is not approved in both languages (found ${LIVE:-0})"
+# the newest version of the wallet article is the approved one in both languages, and the
+# English one says what this release adds (a coin's smallest payment)
+LIVE=$(psql_db -c "SELECT count(*) FROM kb_articles a WHERE a.slug='wallet-deposits-withdrawals' AND a.status='approved' AND a.version=(SELECT max(b.version) FROM kb_articles b WHERE b.slug=a.slug AND b.lang=a.lang)")
+[ "${LIVE:-0}" -ge 2 ] || die "the newest wallet article is not approved in both languages (found ${LIVE:-0})"
+NEWEST=$(psql_db -c "SELECT count(*) FROM kb_articles WHERE slug='wallet-deposits-withdrawals' AND lang='en' AND status='approved' AND body_md LIKE '%smallest payment%'")
+[ "${NEWEST:-0}" -ge 1 ] || die "the approved wallet article does not say a coin's smallest payment"
 ok "knowledge base up to date (approved as $ADMIN_EMAIL); the assistant explains crypto as it works now"
 
 # ---------------------------------------------------------------------------------------------
@@ -162,6 +193,9 @@ echo "   Wallet -> Add Funds -> Cryptocurrency, and a property's payment methods
 echo "   the coin and its network here; the payment page then asks for that coin only."
 echo "   A crypto payment still on its way shows at the top of the wallet."
 echo "   Money that arrives short or in another coin is credited to the wallet at what arrived."
+echo "   A purchase or a down payment paid a hair short still completes (admin -> platform settings:"
+echo "   crypto_short_tolerance_pct and crypto_short_tolerance_max; 0 on either turns it off)."
+echo "   The smallest payment a coin takes is said under the coin as soon as it is chosen."
 echo
 echo "   A crypto payment a member says is missing:"
 echo "     1) $VENV/bin/python $BE/scripts/check_crypto_deposits.py"

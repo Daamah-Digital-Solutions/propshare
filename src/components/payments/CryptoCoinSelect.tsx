@@ -3,7 +3,13 @@ import { Info, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { type CryptoCoin } from "@/lib/api";
-import { coinLabel, networkName, useCryptoCoins } from "@/lib/cryptoCoins";
+import {
+  coinLabel,
+  coinName,
+  networkName,
+  useCryptoCoins,
+  useCryptoMinimum,
+} from "@/lib/cryptoCoins";
 
 /**
  * Paying in crypto: the member picks the coin and its network HERE, and the payment page is
@@ -25,10 +31,12 @@ const matches = (coin: CryptoCoin, query: string): boolean =>
 const AFTER: Record<CryptoPurpose, string> = {
   deposit:
     "Your wallet is credited automatically once the network confirms the transfer, usually within minutes.",
+  // a payment a hair short still buys (the platform's tolerance); the member is told the rule
+  // that matters to them, not its size
   purchase:
-    "Your units are confirmed automatically once the network confirms the transfer, usually within minutes. If less than the amount due arrives, the purchase is not completed and what arrived goes to your wallet.",
+    "Your units are confirmed automatically once the network confirms the transfer, usually within minutes. Send the full amount: if what arrives is clearly less, the purchase is not completed and it goes to your wallet instead.",
   plan:
-    "Your plan starts automatically once the network confirms the transfer, usually within minutes. If less than the down payment arrives, the plan does not start and what arrived goes to your wallet.",
+    "Your plan starts automatically once the network confirms the transfer, usually within minutes. Send the full down payment: if what arrives is clearly less, the plan does not start and it goes to your wallet instead.",
 };
 
 /** What the member must know before leaving for the payment page. */
@@ -66,14 +74,43 @@ export function CryptoPayNotice({ coin, purpose }: { coin: CryptoCoin; purpose: 
   );
 }
 
+/**
+ * The smallest payment the chosen coin takes right now, said before the member presses
+ * anything; in red when what they are about to pay is under it. Nothing when it is not known.
+ */
+function CryptoMinimumHint({ coin, amount }: { coin: CryptoCoin; amount?: number }) {
+  const { minimum, below } = useCryptoMinimum(coin.code, amount);
+  if (minimum === null) return null;
+  const least = `$${minimum.toFixed(2)}`;
+  if (below && amount !== undefined) {
+    return (
+      <p
+        role="alert"
+        data-testid="crypto-minimum"
+        className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+      >
+        {coinLabel(coin)} takes no less than about {least} right now, and this payment is $
+        {amount.toFixed(2)}. Choose another coin or a larger amount.
+      </p>
+    );
+  }
+  return (
+    <p data-testid="crypto-minimum" className="text-xs text-muted-foreground">
+      Smallest payment in this coin right now: about {least}.
+    </p>
+  );
+}
+
 interface Props {
   /** the chosen coin's code, or null */
   value: string | null;
   onChange: (code: string | null) => void;
   purpose: CryptoPurpose;
+  /** what is about to be paid, in USD: checked against the chosen coin's smallest payment */
+  amount?: number;
 }
 
-export function CryptoCoinSelect({ value, onChange, purpose }: Props) {
+export function CryptoCoinSelect({ value, onChange, purpose, amount }: Props) {
   const { data, isLoading, isError, refetch } = useCryptoCoins();
   const [query, setQuery] = useState("");
   const coins = useMemo(() => data?.items ?? [], [data]);
@@ -121,6 +158,7 @@ export function CryptoCoinSelect({ value, onChange, purpose }: Props) {
             Change
           </Button>
         </div>
+        <CryptoMinimumHint coin={chosen} amount={amount} />
         <CryptoPayNotice coin={chosen} purpose={purpose} />
       </div>
     );
@@ -166,7 +204,7 @@ export function CryptoCoinSelect({ value, onChange, purpose }: Props) {
                   className="block w-full break-words px-3 py-2 text-left text-sm hover:bg-primary/5 focus-visible:bg-primary/5 focus-visible:outline-none"
                 >
                   <span className="font-medium text-foreground">{coin.ticker}</span>
-                  <span className="text-muted-foreground"> · {coin.name}</span>
+                  <span className="text-muted-foreground"> · {coinName(coin)}</span>
                 </button>
               ))}
             </div>

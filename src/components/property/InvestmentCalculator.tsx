@@ -23,7 +23,7 @@ import { investApi, ApiError, type InvestMethod } from "@/lib/api";
 import { rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
 import { PaymentMethodList } from "@/components/payments/PaymentMethodList";
 import { CryptoCoinSelect } from "@/components/payments/CryptoCoinSelect";
-import { coinLabel, useCryptoCoins } from "@/lib/cryptoCoins";
+import { coinLabel, useCryptoCoins, useCryptoMinimum } from "@/lib/cryptoCoins";
 import {
   EMPTY_SUKUK_DRAFT,
   SukukCertificateFields,
@@ -152,6 +152,11 @@ const InvestmentCalculator = ({
   // Pronova promo: discount off the WHOLE payable (server-authoritative; shown to match the charge).
   const paymentDiscountAmount = pronovaSelected ? (nominalPayable * pronovaDiscountPct) / 100 : 0;
   const totalPayable = nominalPayable - paymentDiscountAmount;
+  // the chosen coin's smallest payment, against what is charged now
+  const { below: belowCoinMinimum } = useCryptoMinimum(
+    cryptoSelected && !reinvesting ? coin : null,
+    totalPayable,
+  );
   const investmentValue = pricedAmount;
 
   // Expected returns (net of annual management fee) - based on full investment value
@@ -424,7 +429,12 @@ const InvestmentCalculator = ({
           )}
           {cryptoSelected && !reinvesting && (
             <div className="mt-3">
-              <CryptoCoinSelect value={coin} onChange={setCoin} purpose="purchase" />
+              <CryptoCoinSelect
+                value={coin}
+                onChange={setCoin}
+                purpose="purchase"
+                amount={totalPayable}
+              />
             </div>
           )}
         </div>
@@ -558,6 +568,12 @@ const InvestmentCalculator = ({
               });
               return;
             }
+            if (cryptoSelected && !reinvesting && belowCoinMinimum) {
+              toast.error("Under the smallest payment in the coin you chose", {
+                description: "Choose another coin under Cryptocurrency, or a larger amount.",
+              });
+              return;
+            }
             setShowConfirmation(true);
           }}
         >
@@ -660,7 +676,8 @@ const InvestmentCalculator = ({
                   {coin ? `You pay in ${chosenCoin ? coinLabel(chosenCoin) : coin.toUpperCase()}. ` : ""}
                   Send that coin and network
                   only, the exact amount the payment page shows: your units are confirmed once
-                  the network confirms it. Anything less goes to your wallet instead.
+                  the network confirms it. A payment that is clearly less goes to your
+                  wallet instead.
                 </p>
               )}
               {!reinvesting && sukukSelected && (

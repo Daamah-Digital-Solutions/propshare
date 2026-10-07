@@ -814,10 +814,24 @@ export interface OpenCryptoPayment {
   title: string | null;
 }
 
+/** The smallest payment one coin takes right now (it moves with the network's fees). */
+export interface CryptoMinimum {
+  coin: string;
+  /** in `currency`; null when the provider does not say */
+  minimum: string | null;
+  currency: string;
+}
+
 export const cryptoApi = {
   /** The coins switched on in the platform's account, stablecoins first. */
   coins(): Promise<{ items: CryptoCoin[]; total: number }> {
     return apiRequest("/api/v1/payments/crypto/coins");
+  },
+  /** The smallest payment `code` takes right now. */
+  minimum(code: string): Promise<CryptoMinimum> {
+    return apiRequest<CryptoMinimum>(
+      `/api/v1/payments/crypto/minimum?coin=${encodeURIComponent(code)}`,
+    );
   },
   /** The caller's crypto payments still on their way. */
   open(): Promise<OpenCryptoPayment[]> {

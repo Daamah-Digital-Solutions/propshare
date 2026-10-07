@@ -381,3 +381,43 @@ async def test_assistant_setting_changes_are_validated_and_audited(client, db, k
         data={"key": "assistant_model_pricing", "value": "[1,2]", "description": ""},
     )
     assert "JSON object" in r.text
+
+
+@pytest.mark.asyncio
+async def test_the_crypto_tolerance_is_bounded_and_audited_in_the_panel(client, db, keys):
+    """How far short of the amount due a crypto purchase may arrive and still complete is a
+    money rule (2026-10-07): the panel refuses a value past its ceiling, so a typo cannot let
+    a purchase complete far short, and who changed it, from what, is kept."""
+    admin = await _panel_user(client, db, "admin5@x.com", "admin")
+    await _panel_login(client, "admin5@x.com")
+    for key, typo, ceiling in (
+        ("crypto_short_tolerance_max", "100", "20"),
+        ("crypto_short_tolerance_pct", "50", "2"),
+    ):
+        r = await client.post(
+            "/admin/platform-setting/create", data={"key": key, "value": typo, "description": ""}
+        )
+        assert f"must be between 0 and {ceiling}" in r.text
+        assert db("SELECT count(*) FROM platform_settings WHERE key=:k", k=key)[0][0] == 0
+    r = await client.post(
+        "/admin/platform-setting/create",
+        data={"key": "crypto_short_tolerance_max", "value": "2.00", "description": ""},
+    )
+    assert r.status_code in (200, 302, 303)
+    # 0 turns the tolerance off
+    r = await client.post(
+        "/admin/platform-setting/edit/crypto_short_tolerance_max",
+        data={"key": "crypto_short_tolerance_max", "value": "0", "description": ""},
+    )
+    assert r.status_code in (200, 302, 303)
+    stored = db("SELECT value FROM platform_settings WHERE key='crypto_short_tolerance_max'")
+    assert stored[0][0] == "0"
+    audit = db(
+        "SELECT actor_id, entity_id, before, after FROM audit_log"
+        " WHERE action='payments.settings_changed' ORDER BY created_at"
+    )
+    assert [row[1] for row in audit] == ["crypto_short_tolerance_max"] * 2
+    assert audit[1][0] == admin
+    assert audit[1][2] == {"value": "2.00"} and audit[1][3] == {"value": "0"}
+    # the assistant's own trail is not mixed with it
+    assert db("SELECT count(*) FROM audit_log WHERE action='assistant.settings_changed'")[0][0] == 0

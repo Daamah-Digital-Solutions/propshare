@@ -11,14 +11,17 @@ wallet with the provider-captured amount. Never credit on a browser redirect.
 from __future__ import annotations
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 
 from app.api.deps import AdminOrCronDep, PrincipalDep, SessionDep
-from app.core.ratelimit import WEBHOOK_LIMIT, limiter
+from app.core.errors import AppError
+from app.core.ratelimit import CRYPTO_MINIMUM_LIMIT, WEBHOOK_LIMIT, limiter
 from app.schemas.wallet import (
     CryptoCoinOut,
     CryptoCoinsOut,
+    CryptoMinimumOut,
     OpenCryptoPaymentOut,
     PaymentStatusOut,
 )
@@ -35,6 +38,28 @@ async def crypto_coins(principal: PrincipalDep):
     then asks for that coin only."""
     coins = await nowpayments_gateway.list_coins()
     return CryptoCoinsOut(items=[CryptoCoinOut(**c) for c in coins], total=len(coins))
+
+
+@router.get("/crypto/minimum", response_model=CryptoMinimumOut)
+@limiter.limit(CRYPTO_MINIMUM_LIMIT)
+async def crypto_minimum(
+    request: Request,  # the limiter reads the caller's address from it
+    principal: PrincipalDep,
+    coin: Annotated[str, Query(pattern="^[A-Za-z0-9]{2,24}$")],
+):
+    """The smallest payment one coin takes right now, in USD, so the member sees it under the
+    coin they chose instead of learning it from a refusal (USDT on Tron asked for 12 USD on
+    2026-10-06, while members were trying 3 and 4). ``minimum`` is null when NOWPayments does
+    not say: the payment is then made anyway and it has the last word."""
+    code = coin.lower()
+    if code not in {c["code"] for c in await nowpayments_gateway.list_coins()}:
+        raise AppError(
+            "UNKNOWN_COIN", "This coin is not accepted. Choose one from the list.", status_code=422
+        )
+    floor = await nowpayments_gateway.minimum_usd(code)
+    return CryptoMinimumOut(
+        coin=code, minimum=str(floor) if floor is not None else None, currency="USD"
+    )
 
 
 @router.get("/crypto/open", response_model=list[OpenCryptoPaymentOut])

@@ -25,6 +25,8 @@ const LIVE = {
   pronova_discount_pct: "5.0",
 };
 let options: Record<string, unknown> = LIVE;
+// each coin's smallest payment as it was on 2026-10-06 (it moves with the network's fees)
+const MINIMUMS: Record<string, string> = { usdttrc20: "12.00", btc: "1.12" };
 vi.mock("@/lib/api", () => ({
   investApi: {
     create: (...args: unknown[]) => createMock(...args),
@@ -42,6 +44,8 @@ vi.mock("@/lib/api", () => ({
         ],
         total: 2,
       }),
+    minimum: (code: string) =>
+      Promise.resolve({ coin: code, minimum: MINIMUMS[code] ?? null, currency: "usd" }),
   },
   ApiError: class ApiError extends Error {
     code: string;
@@ -304,6 +308,13 @@ describe("InvestmentCalculator — every payment method (the same list on every 
     expect(await screen.findByTestId("crypto-pay-notice")).toHaveTextContent(
       "Send USDT on the Tron network only",
     );
+    expect(screen.getByTestId("crypto-pay-notice")).toHaveTextContent(
+      "Send the full amount: if what arrives is clearly less, the purchase is not completed and it goes to your wallet instead",
+    );
+    // the coin's smallest payment is said under it, before anything is pressed
+    expect(await screen.findByTestId("crypto-minimum")).toHaveTextContent(
+      "Smallest payment in this coin right now: about $12.00.",
+    );
     fireEvent.click(screen.getByRole("button", { name: /Invest \$1,000/i }));
     expect(screen.getByText(/You pay in USDT · Tether USD \(Tron\)\./)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Continue to secure payment/i }));
@@ -314,6 +325,44 @@ describe("InvestmentCalculator — every payment method (the same list on every 
       method: "crypto",
       pay_currency: "usdttrc20",
     });
+  });
+
+  it("does not open the review for a payment under the chosen coin's smallest payment", async () => {
+    // 2026-10-06: USDT on Tron took no less than 12 USD while a member was trying 3 and 4.
+    // Left unsaid, that is learnt from a refusal after pressing pay: it is said under the coin.
+    createMock.mockResolvedValue(checkout("crypto"));
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReinvestProvider>
+          <InvestmentCalculator
+            propertyId="prop-123"
+            propertyData={{ ...propertyData, minInvestment: 5, unitPrice: 5 }}
+            investmentAmount={10}
+            setInvestmentAmount={() => {}}
+          />
+        </ReinvestProvider>
+      </QueryClientProvider>,
+    );
+    // 2 units = $10 + the 2.5% fee = $10.25
+    fireEvent.click(await screen.findByRole("button", { name: /Cryptocurrency/i }));
+    fireEvent.click(await screen.findByRole("option", { name: /USDT · Tether USD \(Tron\)/ }));
+    const tooSmall = await screen.findByTestId("crypto-minimum");
+    expect(tooSmall).toHaveAttribute("role", "alert");
+    expect(tooSmall).toHaveTextContent(
+      "USDT · Tether USD (Tron) takes no less than about $12.00 right now, and this payment is $10.25. Choose another coin or a larger amount.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Invest \$10/i }));
+    expect(screen.queryByRole("button", { name: /Continue to secure payment/i })).toBeNull();
+    // a coin that takes this amount goes through
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    fireEvent.click(await screen.findByRole("option", { name: /BTC · Bitcoin/ }));
+    const least = await screen.findByTestId("crypto-minimum");
+    expect(least).not.toHaveAttribute("role");
+    expect(least).toHaveTextContent("Smallest payment in this coin right now: about $1.12.");
+    fireEvent.click(screen.getByRole("button", { name: /Invest \$10/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Continue to secure payment/i }));
+    await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
+    expect(createMock.mock.calls[0][0]).toMatchObject({ method: "crypto", pay_currency: "btc" });
   });
 
   it("sends Google Pay as a card payment (it shows on Stripe's checkout)", async () => {

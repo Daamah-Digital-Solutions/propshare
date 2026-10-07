@@ -48,7 +48,7 @@ import { installmentsApi, ApiError } from "@/lib/api";
 import { rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
 import { PaymentMethodList, usePaymentOptions } from "@/components/payments/PaymentMethodList";
 import { CryptoCoinSelect } from "@/components/payments/CryptoCoinSelect";
-import { coinLabel, useCryptoCoins } from "@/lib/cryptoCoins";
+import { coinLabel, useCryptoCoins, useCryptoMinimum } from "@/lib/cryptoCoins";
 import {
   EMPTY_SUKUK_DRAFT,
   SukukCertificateFields,
@@ -168,6 +168,8 @@ const InstallmentCalculator = ({
   // (platform-funded; the server applies the real rate).
   const downPaymentDiscount = pronovaSelected ? Math.round(downPayment * pronovaPct) / 100 : 0;
   const dueNow = downPayment - downPaymentDiscount;
+  // the chosen coin's smallest payment, against the down payment charged now
+  const { below: belowCoinMinimum } = useCryptoMinimum(cryptoSelected ? coin : null, dueNow);
   const totalInvestment = planAmount + totalFees - downPaymentDiscount;
 
   // Generate installment schedule with fee breakdown
@@ -208,6 +210,24 @@ const InstallmentCalculator = ({
 
   const quickAmounts = [1000, 2500, 5000, 10000, 25000];
 
+  // crypto: nothing is started without a coin, or under that coin's smallest payment
+  const cryptoBlocked = (): boolean => {
+    if (!cryptoSelected) return false;
+    if (!coin) {
+      toast.error("Choose the coin you will send", {
+        description: "Pick it under Cryptocurrency: the payment page is made for that coin.",
+      });
+      return true;
+    }
+    if (belowCoinMinimum) {
+      toast.error("Under the smallest payment in the coin you chose", {
+        description: "Choose another coin under Cryptocurrency, or a larger amount.",
+      });
+      return true;
+    }
+    return false;
+  };
+
   const handleConfirmPayment = async () => {
     if (sukukSelected && !sukukReady(sukuk)) {
       toast.error("Attach your Nova certificate", {
@@ -215,12 +235,7 @@ const InstallmentCalculator = ({
       });
       return;
     }
-    if (cryptoSelected && !coin) {
-      toast.error("Choose the coin you will send", {
-        description: "Pick it under Cryptocurrency: the payment page is made for that coin.",
-      });
-      return;
-    }
+    if (cryptoBlocked()) return;
     setIsSubmitting(true);
     try {
       if (sukukSelected) {
@@ -518,7 +533,7 @@ const InstallmentCalculator = ({
           )}
           {cryptoSelected && (
             <div className="mt-3">
-              <CryptoCoinSelect value={coin} onChange={setCoin} purpose="plan" />
+              <CryptoCoinSelect value={coin} onChange={setCoin} purpose="plan" amount={dueNow} />
             </div>
           )}
         </div>
@@ -642,6 +657,7 @@ const InstallmentCalculator = ({
               });
               return;
             }
+            if (cryptoBlocked()) return;
             if (!scheduleReviewed) {
               setShowSchedule(true);
             } else {
@@ -852,7 +868,8 @@ const InstallmentCalculator = ({
                 <p className="text-xs text-muted-foreground">
                   You pay in {chosenCoin ? coinLabel(chosenCoin) : coin.toUpperCase()}. Send that
                   coin and network only, the exact amount the payment page shows: the plan starts
-                  once the network confirms it. Anything less goes to your wallet instead.
+                  once the network confirms it. A payment that is clearly less goes to your
+                  wallet instead.
                 </p>
               )}
               <div className="flex justify-between">

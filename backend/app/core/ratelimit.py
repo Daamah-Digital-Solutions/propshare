@@ -30,3 +30,6 @@ STATEMENT_LIMIT = "10/minute"  # statement downloads (PDF/Excel rendering), per 
 EMAIL_CHANGE_LIMIT = "5/hour"  # starting an email change sends a mail; the service caps per day
 EMAIL_LINK_LIMIT = "20/minute"  # following an email-change link (tokens are unguessable anyway)
 ATTACHMENT_LIMIT = "20/minute"  # pictures uploaded to the assistant chat, per IP
+# a coin's smallest payment: what the cache cannot answer is asked of NOWPayments, which
+# refuses whoever asks it a few times in a row (a member choosing a coin asks once)
+CRYPTO_MINIMUM_LIMIT = "30/minute"

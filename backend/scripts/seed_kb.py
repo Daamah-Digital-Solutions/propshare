@@ -106,9 +106,13 @@ top of the wallet shows the payment as on its way, and it is credited once the n
 confirms it (usually within minutes), with a notification. A transfer that arrives short, or
 in another coin or network that the payment provider could still process, is credited to the
 wallet at the value that arrived (this can take longer) and you are told the amount. A crypto
-payment for a purchase or a down payment that arrives short does not complete it: the units
-are released and what arrived goes to the wallet, to buy from there. A coin that needs a memo
-or tag must be sent with the one shown on the payment page.
+payment for a purchase or a down payment that arrives clearly short does not complete it: the
+units are released and what arrived goes to the wallet, to buy from there. One that is short
+by a hair only (a rounding or network-fee difference) still completes it. Every coin has a
+smallest payment, which moves with its network's fees: it is shown under the coin when you
+choose it, and an amount under it cannot be paid in that coin (choose another coin or a
+larger amount). A coin that needs a memo or tag must be sent with the one shown on the
+payment page.
 Withdrawals: a request holds the amount immediately. Depending on how the platform is set up
 for each method (the assistant reads this live), a withdrawal is either paid automatically
 through the payment provider as soon as you request it, or reviewed and paid by the team.
@@ -441,7 +445,10 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 الإرسال: يعرض أعلى المحفظة الدفعة على أنها في الطريق، وتُقيَّد عند تأكيد الشبكة (عادةً خلال دقائق)
 مع إشعار. التحويل الذي يصل ناقصًا، أو بعملة أو شبكة أخرى استطاع مزوّد الدفع معالجتها، يُقيَّد في
 المحفظة بالقيمة التي وصلت (وقد يستغرق وقتًا أطول) ويصلك إشعار بالمبلغ. ودفعة العملات الرقمية
-لشراء أو لدفعة مقدمة إذا وصلت ناقصة لا تُتمّه: تُفرج الوحدات ويذهب ما وصل إلى المحفظة لتشتري منها.
+لشراء أو لدفعة مقدمة إذا وصلت ناقصة بفارق واضح لا تُتمّه: تُفرج الوحدات ويذهب ما وصل إلى المحفظة
+لتشتري منها. أما النقص الطفيف جدًا (فرق تقريب أو رسوم شبكة) فلا يمنع إتمامها. ولكل عملة حد أدنى
+للدفعة يتغيّر مع رسوم شبكتها: يظهر تحت العملة عند اختيارها، والمبلغ الأقل منه لا يُدفع بتلك
+العملة (اختر عملة أخرى أو مبلغًا أكبر).
 والعملة التي تحتاج memo أو tag يجب إرسالها مع الرقم المعروض في صفحة الدفع.
 السحب: يحجز الطلب المبلغ فورًا. وحسب إعداد المنصة لكل وسيلة (يقرؤه المساعد مباشرة) إمّا أن يُصرف
 السحب تلقائيًا عبر مزوّد الدفع لحظة طلبه، أو يراجعه الفريق ويصرفه. السحب البنكي التلقائي يذهب إلى

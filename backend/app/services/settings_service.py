@@ -14,7 +14,7 @@ Defaults match the frontend's disclosed fee note so display == what is charged.
 from __future__ import annotations
 
 import json
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import NoReturn
 
 from sqlalchemy import select
@@ -27,8 +27,14 @@ from app.models.investments import PlatformSetting
 #   pct      -> numeric 0..100
 #   pct_open -> numeric >= 0 OR empty string (price bounds; "" == open/no bound)
 #   int      -> integer >= 0
+#   max:N    -> numeric 0..N
 #   bool_locked_false -> only "false" (hard-locked; cannot be enabled)
 #   csv_methods -> empty, or a comma-separated subset of the payout methods (bank, crypto)
+# The most the crypto tolerance can be (percent of the amount due; USD). It is a hair by
+# design: a typo in the admin panel must not let a purchase complete far short.
+CRYPTO_TOLERANCE_PCT_CEILING = Decimal("2")
+CRYPTO_TOLERANCE_USD_CEILING = Decimal("20")
+
 _SETTING_SPECS: dict[str, str] = {
     "platform_fee_pct": "pct",
     "management_fee_pct": "pct",
@@ -80,6 +86,9 @@ _SETTING_SPECS: dict[str, str] = {
     "support_sla_hours_high": "int",
     "ops_stale_hours": "int",
     "ops_payment_stale_hours": "int",
+    # crypto purchases: how far short of the amount due a payment may arrive and still buy
+    "crypto_short_tolerance_pct": f"max:{CRYPTO_TOLERANCE_PCT_CEILING}",
+    "crypto_short_tolerance_max": f"max:{CRYPTO_TOLERANCE_USD_CEILING}",
 }
 
 
@@ -131,10 +140,14 @@ def validate_setting(key: str, value: str) -> None:
         num = Decimal(raw)
     except (ArithmeticError, ValueError):
         _bad("must be a number.")
+    if not num.is_finite():  # "NaN" and "Infinity" parse as numbers
+        _bad("must be a number.")
     if num < 0:
         _bad("must be >= 0.")
     if spec == "pct" and num > 100:
         _bad("must be between 0 and 100.")
+    if spec.startswith("max:") and num > Decimal(spec[4:]):
+        _bad(f"must be between 0 and {spec[4:]}.")
     if spec == "int" and num != num.to_integral_value():
         _bad("must be a whole number.")
 
@@ -239,7 +252,35 @@ DEFAULTS: dict[str, str] = {
     # hours a CARD payment may stay pending before a case (Stripe expires unpaid checkouts at
     # 24 h, and the lookup then fails them — still pending after this = lookup cannot reach it)
     "ops_payment_stale_hours": "25",
+    # A crypto payment for a purchase or a down payment that arrives a hair short of the amount
+    # due still completes it, the platform bearing the difference: short by no more than this
+    # percent of the amount AND this many USD (2026-10-07, on the owner's go-ahead: the down
+    # payment of 2026-10-06 was 13.00 due, arrived worth 12.99 and did not start its plan).
+    # 0 on either turns it off: anything short then goes to the member's wallet. Neither can
+    # be set above its ceiling (CRYPTO_TOLERANCE_*_CEILING).
+    "crypto_short_tolerance_pct": "0.5",
+    "crypto_short_tolerance_max": "1.00",
 }
+
+
+async def crypto_short_tolerance(session: AsyncSession, amount_due: Decimal) -> Decimal:
+    """How much less than ``amount_due`` a crypto payment may be worth and still complete its
+    purchase, in whole cents (rounded down)."""
+
+    def _dec(raw: str) -> Decimal:
+        try:
+            return Decimal(raw)
+        except (ArithmeticError, ValueError):
+            return Decimal(0)  # a value nobody can read turns the tolerance off, not on
+
+    pct = _dec(await get_setting(session, "crypto_short_tolerance_pct"))
+    cap = _dec(await get_setting(session, "crypto_short_tolerance_max"))
+    if not (pct.is_finite() and cap.is_finite() and pct > 0 and cap > 0 and amount_due > 0):
+        return Decimal(0)
+    # whatever the store holds, never more than an admin may set
+    pct = min(pct, CRYPTO_TOLERANCE_PCT_CEILING)
+    cap = min(cap, CRYPTO_TOLERANCE_USD_CEILING)
+    return min(amount_due * pct / 100, cap).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
 
 
 async def get_family_settings(session: AsyncSession) -> dict[str, Decimal]:

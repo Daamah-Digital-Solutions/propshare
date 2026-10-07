@@ -13,6 +13,8 @@ import { PAYMENT_METHODS } from "@/lib/paymentMethods";
 
 const createPlan = vi.fn();
 const createPlanWithSukuk = vi.fn();
+// each coin's smallest payment as it was on 2026-10-06 (it moves with the network's fees)
+const MINIMUMS: Record<string, string> = { usdttrc20: "12.00", usdtbsc: "0.20" };
 vi.mock("@/lib/api", () => ({
   installmentsApi: {
     createPlan: (...a: unknown[]) => createPlan(...a),
@@ -35,10 +37,13 @@ vi.mock("@/lib/api", () => ({
     coins: () =>
       Promise.resolve({
         items: [
+          { code: "usdttrc20", ticker: "USDT", name: "Tether USD (Tron)", network: "TRX", stable: true, popular: true, memo: false },
           { code: "usdtbsc", ticker: "USDT", name: "Tether USD (Binance Smart Chain)", network: "BSC", stable: true, popular: true, memo: false },
         ],
-        total: 1,
+        total: 2,
       }),
+    minimum: (code: string) =>
+      Promise.resolve({ coin: code, minimum: MINIMUMS[code] ?? null, currency: "usd" }),
   },
   ApiError: class ApiError extends Error {},
 }));
@@ -116,12 +121,18 @@ describe("InstallmentCalculator — the down payment takes every method", () => 
     createPlan.mockResolvedValue(plan);
     renderCalc();
     fireEvent.click(await screen.findByRole("button", { name: /Cryptocurrency/i }));
-    fireEvent.click(await screen.findByRole("option", { name: /USDT · Tether USD/ }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: /USDT · Tether USD \(Binance Smart Chain\)/ }),
+    );
     expect(await screen.findByTestId("crypto-pay-notice")).toHaveTextContent(
-      "If less than the down payment arrives, the plan does not start and what arrived goes to your wallet",
+      "Send the full down payment: if what arrives is clearly less, the plan does not start and it goes to your wallet instead",
     );
     expect(screen.getByTestId("crypto-pay-notice")).toHaveTextContent(
       "Send USDT on the BNB Smart Chain (BSC) network only",
+    );
+    // the coin's smallest payment is said under it, before anything is pressed
+    expect(await screen.findByTestId("crypto-minimum")).toHaveTextContent(
+      "Smallest payment in this coin right now: about $0.20.",
     );
     fireEvent.click(screen.getByRole("button", { name: /Start Installment Plan/i }));
     fireEvent.click(await screen.findByRole("checkbox", { name: /reviewed and understand/i }));
@@ -139,6 +150,47 @@ describe("InstallmentCalculator — the down payment takes every method", () => 
       method: "crypto",
       pay_currency: "usdtbsc",
     });
+  });
+
+  it("does not start a plan whose down payment is under the chosen coin's smallest payment", async () => {
+    // 2026-10-06: USDT on Tron took no less than 12 USD while a member was trying 3 and 4.
+    // Left unsaid, that is learnt from a refusal after pressing pay: it is said under the coin.
+    createPlan.mockResolvedValue(plan);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <InstallmentCalculator
+          propertyId="p1"
+          propertyTitle="Creek Rise"
+          propertyData={{ ...property, unitPrice: 10, minInvestment: 10 } as never}
+          investmentAmount={40}
+          setInvestmentAmount={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    // $40 over 12 months: 25% down is $10.00 + 4% fee = $10.40
+    fireEvent.click(await screen.findByRole("button", { name: /Cryptocurrency/i }));
+    // no coin yet: the plan's first step does not open
+    fireEvent.click(screen.getByRole("button", { name: /Start Installment Plan/i }));
+    expect(screen.queryByRole("checkbox", { name: /reviewed and understand/i })).toBeNull();
+    fireEvent.click(await screen.findByRole("option", { name: /USDT · Tether USD \(Tron\)/ }));
+    const tooSmall = await screen.findByTestId("crypto-minimum");
+    expect(tooSmall).toHaveAttribute("role", "alert");
+    expect(tooSmall).toHaveTextContent(
+      "USDT · Tether USD (Tron) takes no less than about $12.00 right now, and this payment is $10.40. Choose another coin or a larger amount.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Start Installment Plan/i }));
+    expect(screen.queryByRole("checkbox", { name: /reviewed and understand/i })).toBeNull();
+    // the same coin on a cheaper network takes it
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: /USDT · Tether USD \(Binance Smart Chain\)/ }),
+    );
+    const least = await screen.findByTestId("crypto-minimum");
+    expect(least).not.toHaveAttribute("role");
+    expect(least).toHaveTextContent("Smallest payment in this coin right now: about $0.20.");
+    await pay(/Continue to pay \$10\.40/i);
+    await waitFor(() => expect(createPlan).toHaveBeenCalledTimes(1));
+    expect(createPlan.mock.calls[0][0]).toMatchObject({ method: "crypto", pay_currency: "usdtbsc" });
   });
 
   it("takes the Pronova discount off the down payment", async () => {

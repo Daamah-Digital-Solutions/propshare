@@ -62,6 +62,14 @@ class CryptoCoinsOut(BaseModel):
     total: int
 
 
+class CryptoMinimumOut(BaseModel):
+    """The smallest payment one coin takes right now (it moves with the network's fees)."""
+
+    coin: str
+    minimum: str | None  # in ``currency``; None when the provider does not say
+    currency: str
+
+
 class OpenCryptoPaymentOut(BaseModel):
     """A crypto payment the member started and that has not settled yet."""
 
