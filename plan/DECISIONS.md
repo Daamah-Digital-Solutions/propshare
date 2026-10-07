@@ -369,10 +369,17 @@ market and a link to its own site (`src/lib/partners.ts`, `src/pages/Partners.ts
   PayPal payment exists on the platform (the assistant says so when asked): told to the owner.
 - **The logos are the brief's own images**, laid on white (every logo tile is white, in the
   dark theme too), nearly white backgrounds brought to white, margins cut, sized for the card
-  (480 x 192 at most) and saved as WebP: 23 files, 180 KB in all, from 4.5 MB. They are not in
-  the service worker's precache (it takes png, not webp): only a visitor of the page loads
-  them. Stripe, PayPal, NOWPayments and Other Approved Banks came as plain name banners, and
-  eleven logos are small files (about 100 to 240 px wide): a better file replaces one by its
-  name in `src/assets/partners/`.
+  (480 x 192 at most) and saved as WebP: 23 files, about 200 KB in all, from 4.5 MB. They are
+  not in the service worker's precache (it takes png, not webp): only a visitor of the page
+  loads them. Eleven logos are small files (about 100 to 240 px wide): a better file replaces
+  one by its name in `src/assets/partners/`.
+- **Stripe, PayPal and NOWPayments show the companies' own logos (owner, 2026-10-07).** The
+  brief carried plain name banners for them (and for Other Approved Banks, which keeps its
+  banner: it is no company). Each comes unaltered from the company's own site: Stripe's
+  wordmark as stripe.com draws it, in its brand colour (#635BFF); PayPal's
+  `paypalobjects.com/paypal-ui/logos/svg/paypal-color.svg`; NOWPayments'
+  `nowpayments.io/images/logo/logo.svg`, which is white and blue, drawn for a dark ground, and
+  so sits on that site's header colour (#1b1e22). They are trademarks of their owners, shown
+  to name a partner; the listing itself (PayPal above all) is the client's statement.
 - **Released by `backend/scripts/release_partners_page.sh`**: the site only (no migration, no
   API restart).

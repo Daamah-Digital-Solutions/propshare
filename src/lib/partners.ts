@@ -14,8 +14,13 @@
  * platforms (Capimax BRX, Capimax RT), not for PropShare: here it is on the Verification
  * Center only (src/lib/verificationPartners.ts).
  *
- * The logos are the brief's own images, sized for the page (src/assets/partners). The assistant
- * reads the same register from backend/app/knowledge/reference/partners_register_2026.md.
+ * The logos are the brief's own images, sized for the page (src/assets/partners), except
+ * Stripe, PayPal and NOWPayments: the brief carried plain name banners for those three, so
+ * theirs are the companies' own logos, unaltered, from their own sites (owner, 2026-10-07):
+ * stripe.com's wordmark in its brand colour, paypalobjects.com's paypal-color.svg, and
+ * nowpayments.io's site logo, which is drawn for a dark ground and so sits on that site's
+ * header colour. The assistant reads the same register from
+ * backend/app/knowledge/reference/partners_register_2026.md.
  */
 import aetheraDevelopment from "@/assets/partners/aethera-development.webp";
 import assuraxInsurance from "@/assets/partners/assurax-insurance.webp";
