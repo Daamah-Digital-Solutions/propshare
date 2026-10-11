@@ -1307,6 +1307,12 @@ async def close_stale_position_listings(
 
 
 # --- due-payment cron (admin OR X-Cron-Secret) ------------------------------ #
+def _closed_accounts():
+    """The accounts that are closed (account_service), as a subquery: nothing is charged to
+    them and they are not reminded. What their wallets hold may be owed to beneficiaries."""
+    return select(User.id).where(User.closed_at.is_not(None))
+
+
 async def run_due(session: AsyncSession, *, now: dt.datetime | None = None) -> dict:
     """Idempotent sweep (FOR UPDATE SKIP LOCKED): send due-soon reminders, then charge due
     installments from the wallet. A payment that can't be charged (insufficient balance) is
@@ -1336,6 +1342,7 @@ async def run_due(session: AsyncSession, *, now: dt.datetime | None = None) -> d
                 InstallmentPayment.due_date >= today,
                 InstallmentPayment.seq > 0,
                 InstallmentPlan.status == "active",
+                InstallmentPlan.investor_id.not_in(_closed_accounts()),
             )
             .with_for_update(skip_locked=True, of=InstallmentPayment)
         )
@@ -1368,6 +1375,8 @@ async def run_due(session: AsyncSession, *, now: dt.datetime | None = None) -> d
                     InstallmentPayment.seq > 0,
                     # a plan that has not started (0032) is not charged, nor its rows locked
                     InstallmentPlan.status == "active",
+                    # a closed account's wallet is left as it is: its plan waits for staff
+                    InstallmentPlan.investor_id.not_in(_closed_accounts()),
                 )
                 .with_for_update(skip_locked=True, of=InstallmentPayment)
                 .order_by(InstallmentPayment.due_date)

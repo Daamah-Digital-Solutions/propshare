@@ -32,6 +32,7 @@ import { BeneficiaryRegister } from "./BeneficiaryRegister";
 import { FamilyActivity } from "./FamilyActivity";
 import { FamilyGifting } from "./FamilyBeneficiaryGifting";
 import { FamilyMemberDetail } from "./FamilyMemberDetail";
+import { ConfirmAddressNotice } from "@/components/account/ConfirmAddressNotice";
 
 const EMPTY_MEMBER = {
   name: "",
@@ -170,11 +171,22 @@ export const FamilyInvestment = () => {
     onError: (e) => onErr(e, "Reinvest failed"),
   });
 
+  // what a relative allocated to this member's address reaches the account only once the
+  // address is confirmed: said here, where they would look for it
+  const addressNotice = (
+    <ConfirmAddressNotice>
+      Units or returns a family member allocated to your email address reach this account only once
+      that address is confirmed. If the link we emailed when you signed up has expired, ask for a new
+      one.
+    </ConfirmAddressNotice>
+  );
+
   // No group yet → offer to create one (the owner becomes the Self member). A member who was
   // added to someone else's group has none of their own: what came to them is listed below.
   if (group === null) {
     return (
       <div className="space-y-6">
+        {addressNotice}
         <Card className="bg-gradient-to-br from-primary/10 to-accent/5 border-primary/20">
           <CardContent className="py-12 text-center space-y-4">
             <div className="h-14 w-14 rounded-full bg-primary/15 flex items-center justify-center mx-auto">
@@ -200,6 +212,7 @@ export const FamilyInvestment = () => {
 
   return (
     <div className="space-y-6">
+      {addressNotice}
       {/* Overview */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20">

@@ -280,7 +280,13 @@ notifications and by email. The Family Investment tab lists the activity of each
 either side (members added, units and returns transferred or allocated, with their dates), so
 a relative who only received sees it there too, and the Active Investments tab lists every
 unit movement with the other person named. Units or returns allocated to a relative who has
-no verified account yet stay reserved for them until they register and verify their identity.
+no verified account yet stay reserved for them until they register with that email address,
+confirm the address and verify their identity. Confirming the address matters: what is sent
+to a person by email address (a family allocation, a gift) reaches the account registered
+with that address only once the account confirmed it. The confirmation link is emailed at
+sign-up and works from inside the account (sign in first, then open it); a new one can be
+requested from Account Settings or from the assistant, and setting a new password with
+"Forgot password" confirms the address too.
 The assistant shows your group and its members' allocations (never their identity documents).
 Brokers: an approved broker has a referral code;
 investors who sign up with it are linked to the broker, who earns a share of the platform's
@@ -311,6 +317,16 @@ must be written in Latin letters, and it needs the identity document number. It 
 holder's wishes and is not a will. The assistant never shows identity documents or their
 numbers.
 
+What a share covers: a person's share of the holder's units is always part of it, and the
+future returns of those units go with them. If the holder also ticked Wallet Balance or Full
+Portfolio for that person, the same share of the holder's wallet balance on the day of the
+transfer moves too (less any returns the holder had already allocated to relatives). Units
+that are held back that day (listed for sale, in an exit request, in a scheduled gift, vested
+under a running installment plan) and installment plans are not part of it: the team handles
+them on request. The transfer condition the holder chose (for example "on verified death" or
+"after 12 months inactivity") records a wish: nothing is ever transferred by itself, only
+through a claim the team reviews.
+
 Claiming: after the holder's death, or when the holder can no longer manage the account, the
 person named opens the public page "Report a death or make a claim" (in the site's menu under
 Help, and on the Support page) and sends their name, country and contact details, the holder's
@@ -325,8 +341,11 @@ and their status on the same page and can add a document the team asked for. A c
 before signing in appears there, and is tied to the claimant's account, once the account uses
 the same email address and that address is confirmed (a new confirmation link can be requested
 on that page or in Account Settings). When the first claim on a holder's account is approved,
-the holder's register is closed and can no longer be changed. Someone who has no certificate
-should contact support.""",
+the holder's register is closed and can no longer be changed; and when that claim is for a
+death, or for a holder who can no longer manage the account, the holder's account itself is
+closed: it can no longer be signed in to, and what remains in it waits for the other claims.
+The holder's address is told, so a holder who is there can object, and the team can reopen
+an account. Someone who has no certificate should contact support.""",
     ),
     (
         "support-and-the-assistant",
@@ -634,8 +653,11 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 "استثمار العائلة" نشاط كل عضو من جهته (الأعضاء المضافون، والوحدات والعوائد المحوّلة أو المخصّصة
 بتواريخها)، فيرى القريب الذي استلم فقط ما وصله هناك أيضًا، ويعرض تبويب "الاستثمارات النشطة" كل
 حركة على الوحدات مع اسم الطرف الآخر. الوحدات أو العوائد المخصّصة لقريب ليس له حساب موثّق بعد تبقى
-محجوزة له إلى أن يسجّل ويوثّق هويته. يعرض المساعد مجموعتك وتخصيصات أعضائها (ولا يعرض وثائق هوياتهم
-أبدًا).
+محجوزة له إلى أن يسجّل بذلك البريد الإلكتروني ويؤكّد البريد ويوثّق هويته. تأكيد البريد مهم: ما
+يُرسل لشخص بعنوان بريده (تخصيص عائلي أو هدية) لا يصل إلى الحساب المسجّل بذلك العنوان إلا بعد أن
+يؤكّده الحساب. رابط التأكيد يُرسل بالبريد عند التسجيل ويعمل من داخل الحساب (سجّل الدخول أولًا ثم
+افتحه)، ويمكن طلب رابط جديد من إعدادات الحساب أو من المساعد، وتعيين كلمة مرور جديدة عبر "نسيت كلمة
+المرور" يؤكّد البريد أيضًا. يعرض المساعد مجموعتك وتخصيصات أعضائها (ولا يعرض وثائق هوياتهم أبدًا).
 الوسطاء: للوسيط المعتمد كود إحالة؛ المستثمرون الذين يسجلون به يُربطون بالوسيط الذي يحصل على نسبة
 من رسوم المنصة على نشاطهم (وليس من الاستثمار نفسه أبدًا). في لوحة الوسيط تبويب "الإدراجات
 والإحالات" يعرض كل ما قدّمه الوسيط وحالته: "إضافة عميل" يرسل للشخص رابط الوسيط بالبريد (ولا يُربط به
@@ -659,6 +681,14 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 اللاتينية، ويلزم لها رقم وثيقة الهوية. وهي سجل لرغبة صاحب الحساب وليست وصية. ولا يعرض المساعد
 وثائق الهوية ولا أرقامها أبدًا.
 
+ما تشمله الحصة: حصة الشخص من وحدات صاحب الحساب مشمولة دائمًا، وتتبعها عوائدها القادمة. وإذا اختار
+صاحب الحساب لذلك الشخص "Wallet Balance" (رصيد المحفظة) أو "Full Portfolio" (المحفظة الكاملة)
+انتقلت معها النسبة نفسها من رصيد محفظته يوم التحويل (بعد خصم العوائد التي كان قد خصّصها لأقاربه).
+أما الوحدات المحجوزة يومها (المعروضة للبيع، أو في طلب خروج، أو في هدية مجدولة، أو المكتسبة ضمن
+خطة تقسيط جارية) وخطط التقسيط فلا تدخل في ذلك، ويتولاها الفريق عند الطلب. وشرط التحويل الذي
+اختاره صاحب الحساب (مثل "عند الوفاة الموثّقة" أو "بعد 12 شهرًا من عدم النشاط") تسجيل لرغبته: لا
+يُحوَّل شيء تلقائيًا أبدًا، وإنما بمطالبة يراجعها الفريق.
+
 المطالبة: بعد وفاة صاحب الحساب، أو إذا لم يعد قادرًا على إدارة حسابه، يفتح الشخص المسمّى الصفحة
 العامة "الإبلاغ عن وفاة أو تقديم مطالبة" (في قائمة الموقع تحت "المساعدة" وفي صفحة الدعم)
 ويرسل اسمه ودولته وبيانات التواصل،
@@ -670,8 +700,10 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 المسجّل دخوله يرى مطالباته وحالتها في الصفحة نفسها ويستطيع إضافة مستند طلبه الفريق. أما المطالبة
 المرسلة قبل تسجيل الدخول فتظهر هناك وتُربط بحساب المطالِب بعد أن يكون الحساب بالبريد الإلكتروني
 نفسه ويُؤكَّد هذا البريد (يمكن طلب رابط تأكيد جديد من الصفحة نفسها أو من إعدادات الحساب). وعند
-الموافقة على أول مطالبة على حساب، يُغلق سجل المستفيدين لذلك الحساب ولا يمكن تعديله بعدها. ومن
-ليست لديه شهادة يتواصل مع الدعم.""",
+الموافقة على أول مطالبة على حساب، يُغلق سجل المستفيدين لذلك الحساب ولا يمكن تعديله بعدها؛ وإذا
+كانت المطالبة بسبب الوفاة أو لأن صاحب الحساب لم يعد قادرًا على إدارته، أُغلق الحساب نفسه: لا يمكن
+تسجيل الدخول إليه، وما بقي فيه ينتظر بقية المطالبات. يُبلَّغ بريد صاحب الحساب بذلك ليعترض إن كان
+موجودًا، ويستطيع الفريق إعادة فتح الحساب. ومن ليست لديه شهادة يتواصل مع الدعم.""",
     ),
     (
         "support-and-the-assistant",

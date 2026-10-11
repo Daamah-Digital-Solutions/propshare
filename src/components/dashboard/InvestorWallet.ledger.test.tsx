@@ -18,8 +18,10 @@ vi.mock("@/lib/api", () => ({
         { id: "t1", type: "investment", amount: "-1940.00", status: "completed", description: "LP fund", payment_method: null, reference_id: "b00cf807-x", created_at: "2026-06-23T10:00:00Z" },
         { id: "t2", type: "deposit", amount: "50000.00", status: "completed", description: "Deposit", payment_method: null, reference_id: null, created_at: "2026-06-22T10:00:00Z" },
         { id: "t3", type: "withdrawal", amount: "-250.00", status: "completed", description: "Payout", payment_method: null, reference_id: null, created_at: "2026-06-24T10:00:00Z" },
+        { id: "t4", type: "estate_transfer", amount: "450.00", status: "completed", description: "Received as a designated beneficiary", payment_method: null, reference_id: null, created_at: "2026-06-25T10:00:00Z" },
+        { id: "t5", type: "family_allocation", amount: "75.00", status: "completed", description: "Family returns", payment_method: null, reference_id: null, created_at: "2026-06-26T10:00:00Z" },
       ],
-      total: 3,
+      total: 5,
     }),
     depositMethods: async () => ({ card: true, crypto: true, bank: false }),
   },
@@ -52,5 +54,9 @@ describe("InvestorWallet transaction history", () => {
     expect(screen.getByText(/-\$\s*250/)).toBeInTheDocument();
     expect(screen.getByText(/\+\$\s*50,000/)).toBeInTheDocument();
     expect(screen.queryByText(/\+\$\s*1,940/)).toBeNull();
+    // a kind is named in words: a beneficiary's share of a wallet, and no underscores
+    expect(screen.getByText("Beneficiary transfer")).toBeInTheDocument();
+    expect(screen.getByText("family allocation")).toBeInTheDocument();
+    expect(screen.queryByText(/estate_transfer|family_allocation/)).toBeNull();
   });
 });

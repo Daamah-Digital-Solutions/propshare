@@ -41,7 +41,7 @@ from app.core.errors import AppError
 from app.core.security import hash_token, new_opaque_token
 from app.models import Profile
 from app.models.identity import EmailChangeRequest, EmailToken, User
-from app.services import auth_service, notification_service
+from app.services import account_service, auth_service, notification_service
 from app.services.integrations import email as email_provider
 
 LINK_TTL = dt.timedelta(hours=24)
@@ -325,6 +325,9 @@ async def follow_link(session: AsyncSession, *, raw: str) -> dict:
         force_email=True,
         email_to=old,
     )
+    # the new address was confirmed from its own mailbox: what was sent to it is theirs
+    await session.flush()
+    await account_service.release_after_confirmation(session, user.id)
     return {"status": "completed", "new_email": mask_email(req.new_email)}
 
 

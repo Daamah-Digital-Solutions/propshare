@@ -149,6 +149,14 @@ describe("BeneficiaryRegister", () => {
     await screen.findByTestId("beneficiary-b1");
     fireEvent.click(screen.getByRole("button", { name: /Add Beneficiary/i }));
     const dialog = await screen.findByRole("dialog");
+    // the form says what its choices do: what the wallet tick adds, and that nothing moves by itself
+    expect(within(dialog).getByTestId("coverage-help")).toHaveTextContent(
+      /Tick Wallet Balance or Full Portfolio to add the same share of your wallet balance/,
+    );
+    expect(within(dialog).getByTestId("condition-help")).toHaveTextContent(
+      /Nothing is transferred by itself: a transfer is made only through a claim/,
+    );
+    expect(within(dialog).getByText(/In Latin letters, as in their passport/)).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText("Full legal name"), { target: { value: "Sara Mansouri" } });
     fireEvent.change(within(dialog).getByLabelText("Relationship"), { target: { value: "Daughter" } });
     fireEvent.change(within(dialog).getByLabelText("ID number"), { target: { value: "P998877" } });

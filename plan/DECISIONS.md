@@ -486,20 +486,76 @@ are private").
     whoever holds the account's password afterwards. Certificates still download.
   - Nothing gives the claimant the holder's account: the units arrive in their own, with a
     notification, an email, and a line on their investments page naming the holder.
-- **Not built, said to the owner:** the wallet balance, units held back by a listing or a gift
-  at the moment of the event, and installment plans are not moved by an approval; the holder's
-  account is not disabled after the event (there is no such switch on an account yet).
-- **Older than this work, said to the owner, not changed here:** what waits for a person by
-  their email address alone (a pending family allocation and its returns, a scheduled gift, a
-  share written by the admin API `verify-death`) is released when an account with that address
-  passes identity verification, whether or not the address was ever confirmed in it
-  (`kyc_service` -> `family_service` / `estate_service` / `gift_service.materialize_for_user`).
-  The same rule as for claims (a confirmed address) belongs there, with a release when the
-  address is confirmed later; it changes what existing members experience, so it is its own
-  change.
+- **Left open in this release, decided in the next section (0036):** what moves beside the
+  units, what becomes of the holder's account, and what waits for a person by email address
+  alone being released to an account that never confirmed that address.
 - **Assistant:** the family article says what the feature does now, a new article
   `beneficiaries-and-claims` (EN + AR) covers the register, the certificate and the claim, the
   prompt's one-paragraph overview no longer says a member "manages relatives' holdings", and
   the claim page is a link the assistant may give (`estate_claim`).
 - **Released by `backend/scripts/release_family_estate.sh`**: backup, migration 0035, API,
+  knowledge base, site.
+
+## The open points of 0035, decided (2026-10-11, migration 0036)
+
+The owner left the six open points to be decided here ("see what is most suitable and do
+it"). What was chosen, and why:
+
+- **A confirmed email address ties things to an account; an unconfirmed one ties nothing.**
+  Anyone can sign up with any address and signing in never asked for the confirmation, so an
+  account opened with a relative's address, with its opener's own identity verified, used to
+  receive what was allocated or gifted to that relative. Now `account_service.
+  confirmed_by_address` is the one lookup behind every such link (a family member, a gift's
+  recipient, a beneficiary record, a claim), and `release_waiting` hands over what waits when
+  the identity is verified AND when the address is confirmed, whichever comes last.
+  - **How an address gets confirmed** always shows that whoever holds the account holds the
+    mailbox: the link, used from INSIDE the account (`POST /auth/verify-email` now needs the
+    account's own session: a person who receives a link for an account they did not open
+    cannot confirm it by following the link; a visitor is sent to sign in and comes back); a
+    password reset through the emailed link (the only password is then theirs: this is how a
+    person takes back an account someone else opened with their address); a provider sign-in
+    whose provider verified the address (Google / Apple must now say so, and an account that
+    never confirmed the address loses the password and the sessions set before); the
+    two-link change of address (unchanged).
+  - A member whose address is not confirmed is told so when their identity is verified, on
+    the Family Investment tab and on the claim page, each with a button that sends a new link
+    (the one from sign-up lasts a day). Said to every such member, never "something waits
+    for you": that is told only to the account that confirmed the address.
+  - Staff can still set `email_verified` in the admin panel; "Verify KYC" on that user runs
+    the handover again.
+- **What a share covers.** The units, always, by the record's percentage (unchanged: nobody's
+  units were made to depend on the coverage boxes). **Plus the same percentage of the holder's
+  wallet balance** when the holder ticked Wallet Balance or Full Portfolio for that person:
+  the balance on the day of the event, less the returns the holder had allocated to relatives
+  who could not be paid yet (promised in life, like the units held back for them), rounded
+  down to the cent. It is written at the event like a share of units (`estate_transfers.
+  amount`), paid with the units when its beneficiary's claim is approved, and if less is in
+  the wallet that day the beneficiary receives what is there and the difference is on the
+  audit log. Passive Income / Rental Returns are what the units already carry (their future
+  returns go with them). The form says all this under the boxes.
+  - Still not moved, and said so (form, knowledge base): units held back that day (a listing,
+    an exit request, a scheduled gift, a pending family allocation, units vested under a
+    running installment plan, a pledge) and installment plans. They need a person's decision
+    case by case; the team handles them.
+- **The transfer condition is a recorded wish.** Nothing is transferred by itself, whatever
+  the holder chose ("after 12 months inactivity" included): only through a claim staff
+  review. The form says so, and staff are shown when a claim's reason is not the record's
+  condition.
+- **The holder's account closes with the event** when the claim is for a death or for a
+  holder who can no longer manage the account (`users.closed_at`): no sign-in, sessions
+  ended, the money and staff gates refuse it at once (a token minted before lasts its few
+  minutes for reading only), installments are neither charged nor reminded. Nothing it holds
+  is touched: what remains waits for the other claims, whoever knows the password. Not for
+  "another reason": a holder who asked for the transfer is still there to use the account.
+  The holder's address is told (a holder who is there can object) and staff reopen an
+  account from the admin panel (Users -> Close account / Reopen account, both audited; the
+  edit form cannot type a closing in).
+- **The death certificate stays required at approval, not at submission**: a death can be
+  reported before the certificate is issued, and staff ask for it on the claim.
+- **The certificate stays in English**: the platform, the ownership certificate and the
+  review are in English, and a passport carries the Latin spelling; the form asks for it up
+  front. Printing Arabic needs fonts and shaping packages the server does not have.
+- **A name on the claimant's account that differs from the record stays a warning**: names
+  are spelled differently from one document to the next, so staff decide.
+- **Released by `backend/scripts/release_estate_decisions.sh`**: backup, migration 0036, API,
   knowledge base, site.

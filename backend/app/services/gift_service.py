@@ -39,6 +39,7 @@ from app.models import KycVerification, Property, ScheduledGift, User
 from app.models.base import TransactionType
 from app.models.investments import OwnershipLedger
 from app.services import (
+    account_service,
     notification_service,
     secondary_service,
     settings_service,
@@ -77,12 +78,9 @@ async def _resolve_recipient(
     session: AsyncSession, email: str | None
 ) -> tuple[uuid.UUID | None, bool]:
     """Match a recipient email to a user; ``active`` is True only when KYC-verified
-    (only then can they receive a REAL move). Mirrors estate ``_resolve_user``."""
-    if not email:
-        return None, False
-    user = (
-        await session.execute(select(User).where(func.lower(User.email) == email.lower()))
-    ).scalar_one_or_none()
+    (only then can they receive a REAL move). Mirrors estate ``_resolve_user``: only an
+    account that confirmed the address is matched (account_service)."""
+    user = await account_service.confirmed_by_address(session, email)
     if user is None:
         return None, False
     status = await session.scalar(
@@ -513,8 +511,9 @@ async def _reenqueue(session: AsyncSession, g: ScheduledGift, *, now: dt.datetim
 
 # --- materialization (pending -> real on recipient KYC) --------------------- #
 async def materialize_for_user(session: AsyncSession, *, user_id: uuid.UUID) -> int:
-    """Link pending gifts for this newly-KYC'd user (by email) and convert their pending
-    gifts to real moves. Idempotent. Mirrors family/estate ``materialize_for_user``."""
+    """Link pending gifts for this KYC'd user by their CONFIRMED email and convert their
+    pending gifts to real moves. Runs when the identity is verified and when the address is
+    confirmed. Idempotent. Mirrors family/estate ``materialize_for_user``."""
     user = await session.get(User, user_id)
     if user is None:
         return 0
@@ -524,7 +523,7 @@ async def materialize_for_user(session: AsyncSession, *, user_id: uuid.UUID) -> 
     if str(status) != "verified":
         return 0
 
-    if user.email:
+    if user.email and user.email_verified:
         unlinked = (
             (
                 await session.execute(

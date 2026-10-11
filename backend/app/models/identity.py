@@ -56,6 +56,12 @@ class User(Base):
     referred_by: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
+    # 0036 — a closed account cannot sign in or act (account_service): set by staff, or by
+    # an approved claim about its holder's death. Nothing it holds is touched.
+    closed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_reason: Mapped[str | None] = mapped_column(Text)
+    # no FK: the record of who closed it must survive that staff account
+    closed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )

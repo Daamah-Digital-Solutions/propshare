@@ -34,7 +34,7 @@ from app.core.security import (
 from app.models import KycVerification, Profile, UserRole, Wallet
 from app.models.base import AppRole
 from app.models.identity import EmailToken, OAuthIdentity, RefreshToken, RoleGrantRequest, User
-from app.services import broker_service
+from app.services import account_service, broker_service
 from app.services.integrations import email as email_provider
 from app.services.integrations import storage
 
@@ -165,6 +165,8 @@ async def authenticate(session: AsyncSession, *, email: str, password: str) -> U
     user = await get_user_by_email(session, email)
     if user is None or not user.password_hash or not verify_password(password, user.password_hash):
         raise AppError("INVALID_CREDENTIALS", "Incorrect email or password.", status_code=401)
+    # said only to someone who knows the password: a closed account does not open
+    account_service.ensure_open(user)
     return user
 
 
@@ -178,7 +180,9 @@ async def issue_tokens(
     user_agent: str | None = None,
     ip: str | None = None,
 ) -> tuple[str, str, dt.datetime]:
-    """Return (access_token, raw_refresh_token, refresh_expires_at)."""
+    """Return (access_token, raw_refresh_token, refresh_expires_at). Never for a closed
+    account, whichever way the sign-in came (password, refresh, provider, second factor)."""
+    account_service.ensure_open(user)
     settings = get_settings()
     roles = await get_roles(session, user.id)
     active = str(user.active_role) if user.active_role is not None else None
@@ -477,13 +481,24 @@ async def resend_verification(session: AsyncSession, *, user_id: uuid.UUID) -> N
     await issue_email_token(session, user, kind="verify")
 
 
-async def _consume_email_token(session: AsyncSession, *, raw: str, kind: str) -> User:
+async def _consume_email_token(
+    session: AsyncSession, *, raw: str, kind: str, only_for: uuid.UUID | None = None
+) -> User:
+    """Use a link's token once. ``only_for``: the account that must be the one using it; a
+    link opened from another account is refused and stays usable."""
     res = await session.execute(
         select(EmailToken).where(EmailToken.token_hash == hash_token(raw), EmailToken.kind == kind)
     )
     row = res.scalar_one_or_none()
     if row is None or row.used_at is not None or row.expires_at <= _utcnow():
         raise AppError("TOKEN_INVALID", "Invalid or expired token", status_code=400)
+    if only_for is not None and row.user_id != only_for:
+        raise AppError(
+            "NOT_YOUR_LINK",
+            "This link confirms the email address of another account. Sign in to that "
+            "account, then open the link again.",
+            status_code=403,
+        )
     row.used_at = _utcnow()
     user = await session.get(User, row.user_id)
     if user is None:
@@ -491,9 +506,23 @@ async def _consume_email_token(session: AsyncSession, *, raw: str, kind: str) ->
     return user
 
 
-async def verify_email(session: AsyncSession, *, raw: str) -> None:
-    user = await _consume_email_token(session, raw=raw, kind="verify")
+async def verify_email(session: AsyncSession, *, raw: str, user_id: uuid.UUID) -> None:
+    """Confirm the signed-in account's email address with the link it was sent. The link
+    works from inside the account only: a person who receives one for an account they did
+    not open cannot confirm that account by following it, so a confirmed address always
+    means the one who holds the account also holds the mailbox."""
+    user = await _consume_email_token(session, raw=raw, kind="verify", only_for=user_id)
+    await _address_confirmed(session, user)
+
+
+async def _address_confirmed(session: AsyncSession, user: User) -> None:
+    """The account's holder has shown the mailbox is theirs: what was sent to this address
+    (a family allocation, a gift, a beneficiary's share) is this account's from now on."""
+    if user.email_verified:
+        return
     user.email_verified = True
+    await session.flush()
+    await account_service.release_after_confirmation(session, user.id)
 
 
 async def start_password_reset(session: AsyncSession, *, email: str) -> None:
@@ -508,6 +537,9 @@ async def reset_password(session: AsyncSession, *, raw: str, new_password: str) 
     user.password_hash = hash_password(new_password)
     user.must_change_password = False  # they just chose their own password
     await revoke_all_refresh(session, user_id=user.id)  # force re-login everywhere
+    # the link reached their mailbox and the only password is now theirs: the address is
+    # confirmed (this is how a person takes back an account opened with their address)
+    await _address_confirmed(session, user)
 
 
 async def change_password(
@@ -669,6 +701,14 @@ async def oauth_upsert(
         return user
 
     user = await get_user_by_email(session, email)
+    if user is not None and not user.email_verified:
+        # The provider proved this address; the account under it never did. Whoever opened
+        # it may not be this person, so what they set to get in goes: the password and the
+        # open sessions. The address is confirmed from here on.
+        user.password_hash = None
+        user.must_change_password = False
+        await revoke_all_refresh(session, user_id=user.id)
+        await _address_confirmed(session, user)
     if user is None:
         user = User(
             email=email,

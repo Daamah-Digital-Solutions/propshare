@@ -43,6 +43,7 @@ from app.models.compliance import AuditLog
 from app.models.identity import User
 from app.models.investments import OwnershipLedger
 from app.services import (
+    account_service,
     investment_service,
     notification_service,
     secondary_service,
@@ -144,8 +145,9 @@ async def _tell_member(
             await _tell_user(session, member.user_id, title=title, message=message, tab=tab)
         return
     register = (
-        "Create your Capimax PropShare account with this email address and verify your "
-        f"identity to receive it: {_site('/auth')}\n\n"
+        "To receive it: create your Capimax PropShare account with this email address (or "
+        "sign in, if you have one), confirm the address from the email we send you, and "
+        f"verify your identity: {_site('/auth')}\n\n"
         if how_to_receive
         else ""
     )
@@ -220,9 +222,9 @@ async def add_member(
     user_id: uuid.UUID | None = None
     verified = False
     if email:
-        existing = (
-            await session.execute(select(User).where(func.lower(User.email) == email.lower()))
-        ).scalar_one_or_none()
+        # an account that never confirmed this address is not the member's for certain: the
+        # member stays without an account until it does (account_service)
+        existing = await account_service.confirmed_by_address(session, email)
         if existing is not None:
             user_id = existing.id
             kyc = await session.scalar(
@@ -492,6 +494,7 @@ async def create_transfer(
     group = await _owner_group(session, owner_id)
     src = await _member_in_group(session, group.id, from_member_id)
     dst = await _member_in_group(session, group.id, to_member_id)
+    await _refuse_closed(session, dst)
 
     # The source must be a real, verified user — only real holdings can be moved/reserved.
     if not _is_real(src) or src.user_id is None:
@@ -725,6 +728,7 @@ async def allocate_returns(
         raise AppError("INVALID_AMOUNT", "Amount must be positive.", status_code=422)
     group = await _owner_group(session, owner_id)
     member = await _member_in_group(session, group.id, member_id)
+    await _refuse_closed(session, member)
 
     if await _already_done(session, "family.returns.allocated", idempotency_key):
         return {"member_id": str(member_id), "amount": str(amount_dec), "replayed": True}
@@ -918,9 +922,11 @@ async def reinvest(
 
 # --- materialization (pending -> real on member KYC) ------------------------ #
 async def materialize_for_user(session: AsyncSession, *, user_id: uuid.UUID) -> int:
-    """Link any pending family memberships for this (newly KYC-verified) user by email,
-    then convert their pending allocations to real ledger moves + sweep accrued returns.
-    Idempotent: already-materialized transfers are skipped."""
+    """Link any pending family memberships for this KYC-verified user by their CONFIRMED
+    email, then convert their pending allocations to real ledger moves + sweep accrued
+    returns. Runs when the identity is verified and when the address is confirmed
+    (account_service.release_waiting). Idempotent: already-materialized transfers are
+    skipped."""
     user = await session.get(User, user_id)
     if user is None:
         return 0
@@ -930,8 +936,9 @@ async def materialize_for_user(session: AsyncSession, *, user_id: uuid.UUID) -> 
     if str(kyc) != "verified":
         return 0
 
-    # Link unlinked members matching this user's email.
-    if user.email:
+    # Link unlinked members matching this user's email: only an address the account
+    # confirmed (anyone can sign up with any address).
+    if user.email and user.email_verified:
         members = (
             (
                 await session.execute(
@@ -1042,6 +1049,21 @@ async def materialize_for_user(session: AsyncSession, *, user_id: uuid.UUID) -> 
                 after={"transfers": len(pendings)},
             )
     return count
+
+
+async def _refuse_closed(session: AsyncSession, member: FamilyMember) -> None:
+    """Nothing is sent into a closed account: what is in it waits for its holder's
+    beneficiaries, and what arrives later would not be part of that."""
+    if member.user_id is None:
+        return
+    closed = await session.scalar(select(User.closed_at).where(User.id == member.user_id))
+    if closed is not None:
+        raise AppError(
+            "ACCOUNT_CLOSED",
+            f"{_plain(member.name) or 'This member'}'s account is closed: nothing can be "
+            "transferred or allocated to it.",
+            status_code=409,
+        )
 
 
 async def _group_owner(session: AsyncSession, member: FamilyMember) -> uuid.UUID:

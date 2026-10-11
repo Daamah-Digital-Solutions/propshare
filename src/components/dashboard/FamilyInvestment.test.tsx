@@ -39,6 +39,9 @@ vi.mock("@/lib/api", () => ({
 // The register and the gifting section have their own tests; here they are stand-ins.
 vi.mock("./BeneficiaryRegister", () => ({ BeneficiaryRegister: () => <div>beneficiary register</div> }));
 vi.mock("./FamilyBeneficiaryGifting", () => ({ FamilyGifting: () => <div>gifting section</div> }));
+vi.mock("@/components/account/ConfirmAddressNotice", () => ({
+  ConfirmAddressNotice: ({ children }: { children: React.ReactNode }) => <div data-testid="address-notice">{children}</div>,
+}));
 vi.mock("react-router-dom", () => ({
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => <a href={to}>{children}</a>,
 }));
@@ -84,6 +87,10 @@ describe("FamilyInvestment", () => {
     await waitFor(() => expect(createGroupMock).toHaveBeenCalledTimes(1));
     // nothing happened in any family yet: no empty activity card under the invitation
     expect(screen.queryByTestId("family-activity")).toBeNull();
+    // a relative who only received looks here: they are told what a confirmed address does
+    expect(screen.getByTestId("address-notice")).toHaveTextContent(
+      /Units or returns a family member allocated to your email address reach this account only once that address is confirmed/,
+    );
   });
 
   it("renders live members from the API (the Ahmed Al-Hassan mock is retired)", async () => {

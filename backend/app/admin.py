@@ -85,6 +85,7 @@ from app.models import (
 )
 from app.models.identity import RoleGrantRequest, User
 from app.services import (
+    account_service,
     auth_service,
     distribution_service,
     document_service,
@@ -551,13 +552,68 @@ class UserAdmin(AdminOnlyModelView, model=User):
         User.full_name,
         User.active_role,
         User.email_verified,
+        User.closed_at,
         User.created_at,
     ]
+    column_labels = {User.closed_at: "Closed on"}
     column_searchable_list = [User.email]
     column_sortable_list = [User.email, User.created_at]
     can_create = False
     can_edit = True  # admin may flip active_role / email_verified
     can_delete = False
+    # an account is closed and reopened by the two actions below (they end its sessions,
+    # tell its holder and write the audit row), never by typing a date in the form
+    form_excluded_columns = [User.closed_at, User.closed_reason, User.closed_by]
+
+    async def _set_closed(self, request: Request, closed: bool) -> RedirectResponse:
+        pks = [p for p in request.query_params.get("pks", "").split(",") if p]
+        actor = request.session.get("admin_id")
+        actor_uuid = uuid.UUID(actor) if actor else None
+        async with session_scope() as session:
+            for pk in pks:
+                try:
+                    if pk == actor:
+                        continue  # nobody closes the account they are signed in with
+                    if closed:
+                        await account_service.close(
+                            session,
+                            user_id=uuid.UUID(pk),
+                            reason="closed by our team",
+                            actor_id=actor_uuid,
+                        )
+                    else:
+                        await account_service.reopen(
+                            session, user_id=uuid.UUID(pk), actor_id=actor_uuid
+                        )
+                except (AppError, ValueError):
+                    continue
+        return _back(request)
+
+    @action(
+        name="close-account",
+        label="Close account (no sign-in)",
+        confirmation_message=(
+            "Close the selected account(s)? They can no longer sign in or act, their sessions "
+            "end now and their holder is emailed. Nothing they hold is touched."
+        ),
+        add_in_detail=True,
+        add_in_list=False,
+    )
+    async def close_account(self, request: Request) -> RedirectResponse:
+        return await self._set_closed(request, True)
+
+    @action(
+        name="reopen-account",
+        label="Reopen account",
+        confirmation_message=(
+            "Reopen the selected account(s)? Their holder can sign in again and is emailed. "
+            "For an account closed by an approved claim, only when that claim was a mistake."
+        ),
+        add_in_detail=True,
+        add_in_list=False,
+    )
+    async def reopen_account(self, request: Request) -> RedirectResponse:
+        return await self._set_closed(request, False)
 
     async def _kyc_decide(self, request: Request, approve: bool) -> RedirectResponse:
         # The User pk IS the user_id, so we can verify/reject KYC straight from here.

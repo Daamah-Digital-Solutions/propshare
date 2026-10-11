@@ -27,7 +27,11 @@ PW = "Passw0rd!23"
 
 
 # --- arrange helpers -------------------------------------------------------- #
-async def _user(client, db, email: str, name: str, *, verified: bool = True) -> tuple[str, dict]:
+async def _user(
+    client, db, email: str, name: str, *, verified: bool = True, confirmed: bool = True
+) -> tuple[str, dict]:
+    """An account: its identity verified, and its email address confirmed (as after a real
+    sign-up; only then is anything sent to the address tied to the account)."""
     r = await client.post(
         "/api/v1/auth/register", json={"email": email, "password": PW, "full_name": name}
     )
@@ -35,6 +39,8 @@ async def _user(client, db, email: str, name: str, *, verified: bool = True) -> 
     uid = str(db("SELECT id FROM users WHERE email=:e", e=email)[0][0])
     if verified:
         db("UPDATE kyc_verifications SET status='verified' WHERE user_id=:i", i=uid)
+    if confirmed:
+        db("UPDATE users SET email_verified=true WHERE id=:i", i=uid)
     return uid, {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 

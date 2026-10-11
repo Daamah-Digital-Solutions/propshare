@@ -34,6 +34,18 @@ class OAuthProfile:
     full_name: str | None
 
 
+def _require_verified(provider: str, flag: object) -> None:
+    """A sign-in ties the person to the account under their address, so the provider must
+    say it verified that address (both send the claim as true or "true")."""
+    if flag is True or str(flag).lower() == "true":
+        return
+    raise AppError(
+        "OAUTH_EMAIL_UNVERIFIED",
+        f"Your {provider} account's email address is not verified with {provider}.",
+        status_code=400,
+    )
+
+
 def _not_configured(provider: str) -> AppError:
     return AppError(
         "OAUTH_NOT_CONFIGURED",
@@ -67,6 +79,7 @@ async def exchange_google(code: str, redirect_uri: str) -> OAuthProfile:
     email = info.get("email")
     if not email:
         raise AppError("OAUTH_NO_EMAIL", "Google account did not return an email", status_code=400)
+    _require_verified("Google", info.get("email_verified"))
     return OAuthProfile(subject=str(info["sub"]), email=email, full_name=info.get("name"))
 
 
@@ -114,6 +127,7 @@ async def exchange_apple(code: str, redirect_uri: str) -> OAuthProfile:
     email = claims.get("email")
     if not email:
         raise AppError("OAUTH_NO_EMAIL", "Apple account did not return an email", status_code=400)
+    _require_verified("Apple", claims.get("email_verified"))
     return OAuthProfile(subject=str(claims["sub"]), email=email, full_name=None)
 
 

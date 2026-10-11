@@ -774,15 +774,28 @@ async def test_staff_review_a_claim_and_the_share_moves_to_the_claimants_own_acc
     assert (_holding(db, owner, pid), _holding(db, owner, pid2)) == (4, 2)
     assert (_holding(db, omar, pid), _holding(db, omar, pid2)) == (0, 0)
     statuses = db(
-        "SELECT b.full_name, t.units, t.status FROM estate_transfers t "
+        "SELECT b.full_name, t.units, t.amount, t.status FROM estate_transfers t "
         "JOIN estate_beneficiaries b ON b.id = t.beneficiary_id ORDER BY b.full_name, t.units"
     )
-    assert [tuple(r) for r in statuses] == [
-        ("Fatima Mansouri", 3, "completed"),
-        ("Fatima Mansouri", 6, "completed"),
-        ("Omar Mansouri", 2, "awaiting_claim"),
-        ("Omar Mansouri", 4, "awaiting_claim"),
+    # her record covers the wallet (60% of the 750 there), his does not
+    assert [(r[0], r[1], None if r[2] is None else str(r[2]), r[3]) for r in statuses] == [
+        ("Fatima Mansouri", 0, "450.00", "completed"),
+        ("Fatima Mansouri", 3, None, "completed"),
+        ("Fatima Mansouri", 6, None, "completed"),
+        ("Omar Mansouri", 2, None, "awaiting_claim"),
+        ("Omar Mansouri", 4, None, "awaiting_claim"),
     ]
+    assert db("SELECT balance FROM wallets WHERE user_id=:u", u=fatima)[0][0] == 450
+    assert db("SELECT balance FROM wallets WHERE user_id=:u", u=owner)[0][0] == 300
+    ledger = db(
+        "SELECT user_id, amount, description FROM transactions WHERE type='estate_transfer' "
+        "ORDER BY amount"
+    )
+    assert [(str(r[0]), r[1], r[2]) for r in ledger] == [
+        (owner, -450, "Transferred to a designated beneficiary"),
+        (fatima, 450, "Received as a designated beneficiary"),
+    ]
+    assert db("SELECT wallet_base FROM estate_events")[0][0] == 750
     row = db(
         "SELECT status, decided_by, estate_event_id, claimant_user_id FROM estate_claims WHERE id=:i",
         i=cid,
@@ -813,6 +826,7 @@ async def test_staff_review_a_claim_and_the_share_moves_to_the_claimants_own_acc
     )[0][0]
     assert "designated beneficiary of Ahmed Mansouri" in told
     assert "6 units of Marina Heights" in told and "3 units of Palm Court" in told
+    assert "$450.00 in your wallet" in told
     assert (
         db(
             "SELECT count(*) FROM email_outbox WHERE user_id=:u AND subject='Assets were transferred to your account'",
@@ -836,7 +850,28 @@ async def test_staff_review_a_claim_and_the_share_moves_to_the_claimants_own_acc
         "status"
     ] == "approved"
 
+    # the holder's account closed with the event (a death): its password opens nothing
+    closed = db("SELECT closed_at, closed_reason, closed_by FROM users WHERE id=:i", i=owner)[0]
+    assert closed[0] is not None and str(closed[2]) == staff
+    assert closed[1] == f"approved claim {claim['reference']}: death of the account holder"
+    r = await client.post("/api/v1/auth/login", json={"email": "ahmed7@holders.io", "password": PW})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "ACCOUNT_CLOSED"
+    assert (
+        db("SELECT count(*) FROM refresh_tokens WHERE user_id=:u AND revoked_at IS NULL", u=owner)[
+            0
+        ][0]
+        == 0
+    )
+    assert (
+        db(
+            "SELECT count(*) FROM email_outbox WHERE user_id=:u AND subject='Your account was closed'",
+            u=owner,
+        )[0][0]
+        == 1
+    )
+
     # the register is what it was that day: closed to whoever holds the account's password
+    # (a token minted before the closing still reads, for the minutes it has left)
     locked = (await client.get("/api/v1/estate/beneficiaries", headers=h)).json()
     assert all(b["locked"] for b in locked)
     for call in (
@@ -899,8 +934,220 @@ async def test_staff_review_a_claim_and_the_share_moves_to_the_claimants_own_acc
     )
     assert db("SELECT count(*) FROM estate_events")[0][0] == 1  # one event per holder
     assert db("SELECT count(*) FROM estate_transfers WHERE status <> 'completed'")[0][0] == 0
-    # the wallet is not part of an approval
-    assert db("SELECT balance FROM wallets WHERE user_id=:u", u=owner)[0][0] == 750
+    # his record does not cover the wallet: what was left of it stays in the holder's
+    assert db("SELECT balance FROM wallets WHERE user_id=:u", u=owner)[0][0] == 300
+    assert db("SELECT balance FROM wallets WHERE user_id=:u", u=omar)[0][0] == 0
+
+
+# --- the wallet share, and the holder's account ------------------------------------------- #
+async def _ready_claim(client, db, h, *, account_email: str, account_name: str, **beneficiary):
+    """A record for a person who has their own verified account, and their claim with the
+    official document, sent from that account. Returns (record, claim id, account id)."""
+    record = await _beneficiary(
+        client, h, email=account_email, full_name=account_name, **beneficiary
+    )
+    account, ah = await _user(client, db, account_email, account_name)
+    r = await _submit(
+        client,
+        _claim_fields(
+            record["certificate_no"],
+            claimant_name=account_name,
+            claimant_email=account_email,
+            claimant_id_number=record["meta"]["idNumber"],
+        ),
+        headers=ah,
+        evidence=True,
+    )
+    assert r.status_code == 201, r.text
+    return record, r.json()["id"], account
+
+
+def _wallet(db, uid: str):
+    return db("SELECT balance FROM wallets WHERE user_id=:u", u=uid)[0][0]
+
+
+@pytest.mark.asyncio
+async def test_the_wallet_share_follows_the_coverage_the_holder_ticked(client, db):
+    owner, h = await _user(client, db, "ahmed10@holders.io", "Ahmed Mansouri")
+    pid = _property(db)
+    _grant(db, owner, pid, 10)
+    db("UPDATE wallets SET balance=1100 WHERE user_id=:u", u=owner)
+    # 100 of it was allocated to a relative who could not be paid yet: promised in life,
+    # it is not part of what is shared out
+    group = str(uuid.uuid4())
+    db("INSERT INTO family_groups (id, owner_id, name) VALUES (:g,:o,'Family')", g=group, o=owner)
+    db(
+        "INSERT INTO family_members (family_group_id, name, relationship, allocated_returns, "
+        "pending_returns) VALUES (:g,'Sara','Daughter',100,100)",
+        g=group,
+    )
+    wallet_too = {
+        "role": "heir",
+        "idType": "Passport",
+        "idNumber": "A1234567",
+        "scope": ["portfolio"],
+    }
+    units_only = {
+        "role": "heir",
+        "idType": "Passport",
+        "idNumber": "B7654321",
+        "scope": ["ownership"],
+    }
+    _one, first, fatima = await _ready_claim(
+        client,
+        db,
+        h,
+        account_email="fatima10@heirs.io",
+        account_name="Fatima Mansouri",
+        allocation_pct=50,
+        meta=wallet_too,
+    )
+    _two, second, omar = await _ready_claim(
+        client,
+        db,
+        h,
+        account_email="omar10@heirs.io",
+        account_name="Omar Mansouri",
+        allocation_pct=30,
+        meta={**wallet_too, "idNumber": "C1112223", "scope": ["ownership", "wallet"]},
+    )
+    _three, third, layla = await _ready_claim(
+        client,
+        db,
+        h,
+        account_email="layla10@heirs.io",
+        account_name="Layla Mansouri",
+        allocation_pct=20,
+        meta=units_only,
+    )
+
+    await _admin_login(client, db)
+    page = await client.get(f"/admin/estate-claims/{first}")
+    for text in (
+        "$1,100.00",  # the balance
+        "less $100.00 allocated to relatives who could not be paid yet: $1,000.00 is shared out",
+        "This record covers the wallet: 50%",
+        "$500.00",  # what this approval moves of it
+        "5 unit(s)",
+    ):
+        assert text in page.text, text
+    assert (
+        "This record does not cover the wallet"
+        in (await client.get(f"/admin/estate-claims/{third}")).text
+    )
+
+    r = await client.post(f"/admin/estate-claims/{first}", data={"action": "approve"})
+    assert r.status_code == 303, r.text
+    assert (_wallet(db, fatima), _wallet(db, owner), _holding(db, fatima, pid)) == (500, 600, 5)
+    waiting = db(
+        "SELECT b.full_name, t.amount, t.status FROM estate_transfers t "
+        "JOIN estate_beneficiaries b ON b.id = t.beneficiary_id WHERE t.amount IS NOT NULL "
+        "ORDER BY b.full_name"
+    )
+    assert [(r[0], str(r[1]), r[2]) for r in waiting] == [
+        ("Fatima Mansouri", "500.00", "completed"),
+        ("Omar Mansouri", "300.00", "awaiting_claim"),
+    ]
+    assert (
+        "Approved. Transferred to your account"
+        in db("SELECT admin_note FROM estate_claims WHERE id=:i", i=first)[0][0]
+    )
+    assert (
+        "$500.00 of the wallet balance"
+        in db("SELECT admin_note FROM estate_claims WHERE id=:i", i=first)[0][0]
+    )
+
+    # the second heir's page shows what was written for him that day
+    page = await client.get(f"/admin/estate-claims/{second}")
+    assert "$300.00" in page.text and "3 unit(s)" in page.text
+    # less is there on the day of his claim: he receives what is there, and it is on record
+    db("UPDATE wallets SET balance=250 WHERE user_id=:u", u=owner)
+    r = await client.post(f"/admin/estate-claims/{second}", data={"action": "approve"})
+    assert r.status_code == 303, r.text
+    assert (_wallet(db, omar), _wallet(db, owner), _holding(db, omar, pid)) == (250, 0, 3)
+    short = db("SELECT before, after FROM audit_log WHERE action='estate.wallet_share_short'")[0]
+    assert (short[0]["amount"], short[1]["amount"]) == ("300.00", "250.00")
+    told = db(
+        "SELECT message FROM notifications WHERE user_id=:u AND title='Assets were transferred to your account'",
+        u=omar,
+    )[0][0]
+    assert "3 units of Marina Heights" in told and "$250.00 in your wallet" in told
+
+    # the third record does not cover the wallet: units only
+    r = await client.post(f"/admin/estate-claims/{third}", data={"action": "approve"})
+    assert r.status_code == 303, r.text
+    assert (_wallet(db, layla), _holding(db, layla, pid), _holding(db, owner, pid)) == (0, 2, 0)
+    # every cent that left the holder's wallet arrived in one of theirs
+    moved = db("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type='estate_transfer'")[0][
+        0
+    ]
+    assert moved == 0
+
+
+@pytest.mark.asyncio
+async def test_a_record_that_covers_the_wallet_moves_money_when_no_unit_is_free(client, db):
+    owner, h = await _user(client, db, "ahmed11@holders.io", "Ahmed Mansouri")
+    db("UPDATE wallets SET balance=420.55 WHERE user_id=:u", u=owner)
+    _rec, cid, fatima = await _ready_claim(
+        client,
+        db,
+        h,
+        account_email="fatima11@heirs.io",
+        account_name="Fatima Mansouri",
+        allocation_pct=33,
+        meta={"role": "heir", "idType": "Passport", "idNumber": "A1234567", "scope": ["wallet"]},
+    )
+    await _admin_login(client, db)
+    page = await client.get(f"/admin/estate-claims/{cid}")
+    assert "Not ready to approve" not in page.text and "$138.78" in page.text
+    # nothing is transferred into a closed account
+    db("UPDATE users SET closed_at=now(), closed_reason='closed by our team' WHERE id=:i", i=fatima)
+    r = await client.post(f"/admin/estate-claims/{cid}", data={"action": "approve"})
+    assert r.status_code == 400 and "The claimant&#39;s account is closed." in r.text
+    db("UPDATE users SET closed_at=NULL, closed_reason=NULL WHERE id=:i", i=fatima)
+    r = await client.post(f"/admin/estate-claims/{cid}", data={"action": "approve"})
+    assert r.status_code == 303, r.text
+    # 33% of 420.55 is 138.7815: rounded down to the cent, the rest stays
+    assert (str(_wallet(db, fatima)), str(_wallet(db, owner))) == ("138.78", "281.77")
+
+
+@pytest.mark.asyncio
+async def test_a_claim_for_a_death_or_incapacity_closes_the_holders_account(client, db):
+    await _admin_login(client, db)
+    outcomes = {}
+    for n, reason in enumerate(("incapacity", "other")):
+        owner, h = await _user(client, db, f"holder{n}@closing.io", "Ahmed Mansouri")
+        pid = _property(db, f"Tower {n}")
+        _grant(db, owner, pid, 4)
+        record = await _beneficiary(client, h, email=f"heir{n}@closing.io", allocation_pct=100)
+        _account, ah = await _user(client, db, f"heir{n}@closing.io", "Fatima Mansouri")
+        fields = _claim_fields(
+            record["certificate_no"],
+            claimant_email=f"heir{n}@closing.io",
+            reason=reason,
+            date_of_death=None,
+            details="He asked for the transfer himself." if reason == "other" else "A stroke.",
+        )
+        cid = (await _submit(client, fields, headers=ah, evidence=True)).json()["id"]
+        # the record says "on verified death": staff are shown that the claim says otherwise
+        page = await client.get(f"/admin/estate-claims/{cid}")
+        assert "The holder set this record to transfer &#39;On verified death&#39;" in page.text
+        r = await client.post(f"/admin/estate-claims/{cid}", data={"action": "approve"})
+        assert r.status_code == 303, r.text
+        outcomes[reason] = db("SELECT closed_at, closed_reason FROM users WHERE id=:i", i=owner)[0]
+        login = await client.post(
+            "/api/v1/auth/login", json={"email": f"holder{n}@closing.io", "password": PW}
+        )
+        outcomes[reason + ":login"] = login.status_code
+
+    # a holder who can no longer manage the account: closed, like after a death
+    assert outcomes["incapacity"][0] is not None
+    assert outcomes["incapacity"][1].endswith(
+        ": the account holder can no longer manage the account"
+    )
+    assert outcomes["incapacity:login"] == 403
+    # another reason (the holder may have asked for it): the holder still uses the account
+    assert outcomes["other"] == (None, None) and outcomes["other:login"] == 200
 
 
 async def _materialize(db, user_id: str) -> int:

@@ -310,8 +310,10 @@ async def my_role_application(role: str, principal: PrincipalDep, session: Sessi
 # Email verification & password reset
 # --------------------------------------------------------------------------- #
 @router.post("/verify-email", status_code=204)
-async def verify_email(body: VerifyEmailIn, session: SessionDep):
-    await auth_service.verify_email(session, raw=body.token)
+async def verify_email(body: VerifyEmailIn, principal: PrincipalDep, session: SessionDep):
+    """Confirm the signed-in account's email address with the link it was sent (the link
+    does nothing for a visitor, or from another account)."""
+    await auth_service.verify_email(session, raw=body.token, user_id=principal.user_id)
     return Response(status_code=204)
 
 

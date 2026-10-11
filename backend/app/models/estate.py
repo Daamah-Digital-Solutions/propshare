@@ -1,4 +1,4 @@
-"""Estate / inheritance models (Group 4) — DDL owned by alembic/0018 and 0035.
+"""Estate / inheritance models (Group 4) — DDL owned by alembic/0018, 0035 and 0036.
 
 Free allocation (owner-set %, not Sharia-enforced; disclaimer shown in the UI) +
 manual-admin death verification. REAL/PENDING beneficiary model mirrors Phase-10 family.
@@ -7,6 +7,7 @@ manual-admin death verification. REAL/PENDING beneficiary model mirrors Phase-10
 from __future__ import annotations
 
 import datetime
+import decimal
 import uuid
 
 from sqlalchemy import (
@@ -15,6 +16,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     Text,
     UniqueConstraint,
     func,
@@ -95,6 +97,8 @@ class EstateEvent(Base):
     )
     reason: Mapped[str] = mapped_column(Text, nullable=False, server_default="death")
     date_of_death: Mapped[datetime.date | None] = mapped_column(Date)
+    # 0036 — the wallet balance the percentages were applied to on the day of the event
+    wallet_base: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )
@@ -116,6 +120,8 @@ class EstateTransfer(Base):
         UUID(as_uuid=True), ForeignKey("properties.id", ondelete="SET NULL")
     )
     units: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 0036 — a share of the holder's wallet balance (then: no property, units 0)
+    amount: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="completed")
     materialized_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime.datetime] = mapped_column(

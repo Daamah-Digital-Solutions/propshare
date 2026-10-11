@@ -153,16 +153,18 @@ _CLAIM_PAGE = _env.from_string(
 <div class="card"><h2>The holder's account</h2>{% if b %}
 <table><tr><th>Property</th><th>Held</th><th>Held back</th><th>Free</th></tr>{% for h in holdings %}<tr><td>{{ h.title }}</td><td>{{ h.net }}</td><td>{{ h.reserved }}</td><td>{{ h.available }}</td></tr>{% else %}<tr><td colspan="4" class="muted">The holder holds no units.</td></tr>{% endfor %}</table>
 <p class="help">Held back: units in an open listing, an exit request, a scheduled gift or a pending family allocation. They are not part of the split.</p>
-<dl class="kv" style="margin-top:8px"><dt>Wallet balance</dt><dd>{{ '$%.2f'|format(wallet_balance or 0) }} <span class="muted">(not moved by an approval)</span></dd>
+<dl class="kv" style="margin-top:8px"><dt>Wallet balance</dt><dd>{{ '${:,.2f}'.format(wallet.balance) }}{% if wallet.owed %} <span class="muted">less {{ '${:,.2f}'.format(wallet.owed) }} allocated to relatives who could not be paid yet: {{ '${:,.2f}'.format(wallet.base) }} is shared out</span>{% endif %}
+<div class="help">{% if covers_wallet %}This record covers the wallet: {{ b.allocation_pct }}% of what is shared out goes to the claimant with the units.{% else %}This record does not cover the wallet (the holder ticked neither Wallet Balance nor Full Portfolio): no money moves with this claim.{% endif %}</div></dd>
+<dt>The holder's account</dt><dd>{% if holder.closed_at %}<span class="badge draft">closed</span> {{ holder.closed_at.strftime('%Y-%m-%d') }} <span class="muted">{{ holder.closed_reason or '' }}</span>{% else %}<span class="badge active">open</span> <span class="muted">approving a claim for a death, or for a holder who can no longer manage the account, closes it</span>{% endif %}</dd>
 <dt>Other beneficiaries</dt><dd>{% for o in others %}{{ o.full_name }} ({{ o.allocation_pct }}%){{ ', ' if not loop.last }}{% else %}none{% endfor %}</dd>
 <dt>Transfer event</dt><dd>{% if event %}recorded {{ event.executed_at.strftime('%Y-%m-%d') if event.executed_at else '' }}: the register is closed{% else %}none yet: this approval records it and closes the register{% endif %}</dd></dl>
 {% else %}<p class="muted">Unknown until the claim is matched to a record.</p>{% endif %}</div>
 </div>
 
 <div class="card"><h2>Decision</h2>
-{% if done %}<h3>Already transferred to this beneficiary</h3><table>{% for m in done %}<tr><td>{{ m.property }}</td><td>{{ m.units }} unit(s)</td><td>{{ m.status }}</td></tr>{% endfor %}</table>{% endif %}
+{% if done %}<h3>Already transferred to this beneficiary</h3><table>{% for m in done %}<tr><td>{{ m.property }}</td><td>{{ amount(m) }}</td><td>{{ m.status }}</td></tr>{% endfor %}</table>{% endif %}
 {% if open %}
-{% if to_move %}<h3>An approval transfers to the claimant's account</h3><table>{% for m in to_move %}<tr><td>{{ m.property }}</td><td>{{ m.units }} unit(s)</td></tr>{% endfor %}</table>{% endif %}
+{% if to_move %}<h3>An approval transfers to the claimant's account</h3><table>{% for m in to_move %}<tr><td>{{ m.property }}</td><td>{{ amount(m) }}</td></tr>{% endfor %}</table>{% endif %}
 {% if blockers %}<div class="warn" style="margin-top:10px"><b>Not ready to approve:</b>
 {% for x in blockers %}• {{ x }}
 {% endfor %}</div>{% endif %}
@@ -170,12 +172,19 @@ _CLAIM_PAGE = _env.from_string(
 <div class="actions" style="margin-top:10px">
 {% if c.status == 'submitted' %}<button type="submit" name="action" value="review">Start the review</button>{% endif %}
 <button type="submit" name="action" value="ask">Ask the claimant for information</button>
-<button class="primary" type="submit" name="action" value="approve" {{ 'disabled' if blockers }} onclick="return confirm('Approve this claim and transfer the units to the claimant\\'s account? This cannot be undone.')">Approve and transfer</button>
+<button class="primary" type="submit" name="action" value="approve" {{ 'disabled' if blockers }} onclick="return confirm('Approve this claim and transfer what is listed above to the claimant\\'s account? This cannot be undone.')">Approve and transfer</button>
 <button class="danger" type="submit" name="action" value="reject" onclick="return confirm('Reject this claim?')">Reject</button></div></form>
 {% else %}<p class="muted">{{ 'Approved' if c.status == 'approved' else 'Rejected' }}{% if c.decided_at %} on {{ c.decided_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}.</p>{% endif %}
 {% if c.admin_note %}<dl class="kv" style="margin-top:10px"><dt>Last message to the claimant</dt><dd style="white-space:pre-line">{{ c.admin_note }}</dd></dl>{% endif %}</div>
 </div></body></html>"""
 )
+
+def _amount(line: dict) -> str:
+    """A share as the page prints it: money for the wallet, units for a property."""
+    if line.get("amount") is not None:
+        return f"${line['amount']:,.2f}"
+    return f"{line['units']} unit(s)"
+
 
 _DONE = {
     "review": "The review has started.",
@@ -183,7 +192,7 @@ _DONE = {
     "reject": "Rejected. The claimant was told, with your message.",
     "attach": "The document was attached.",
     "match": "The claim was matched.",
-    "approve": "Approved. The units are in the claimant's account, and the claimant was told.",
+    "approve": "Approved. The share is in the claimant's account, and the claimant was told.",
 }
 
 
@@ -341,7 +350,9 @@ class EstateClaimsView(BaseView):
                 to_move=review["to_move"],
                 done=review["done"],
                 holdings=review["holdings"],
-                wallet_balance=review["wallet_balance"],
+                wallet=review["wallet"],
+                covers_wallet=review["covers_wallet"],
+                amount=_amount,
                 others=review["others"],
                 claim_docs=_tiles(claim.documents, estate_service.CLAIM_DOC_KINDS),
                 record_docs=_tiles(ben.id_documents if ben else []),

@@ -24,6 +24,9 @@ async def _user(client, db, email: str) -> tuple[str, str]:
         "/api/v1/auth/register", json={"email": email, "password": PW, "full_name": "U"}
     )
     uid = db("SELECT id FROM users WHERE email=:e", e=email)[0][0]
+    # the address is confirmed, as after a real sign-up: only then is anything sent to it
+    # by address tied to this account
+    db("UPDATE users SET email_verified=true WHERE id=:i", i=uid)
     return r.json()["access_token"], str(uid)
 
 

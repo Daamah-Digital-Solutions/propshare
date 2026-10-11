@@ -8,6 +8,10 @@
                               mid-session cannot act within a still-valid token TTL.
                               Use on every money/privileged endpoint.
 - ``require_kyc_verified``    blocks until KYC status == 'verified'.
+
+A closed account (account_service) gets no new token, and the two gates that re-check the
+database at action time refuse it at once: a token minted before it was closed is good for
+reading until it expires (minutes), never for money or a privileged action.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from app.core.errors import AppError
 from app.core.security import decode_access_token
 from app.models import KycVerification, UserRole
 from app.models.base import AppRole
+from app.services import account_service
 
 # scope="function": the session commits when the route returns, BEFORE the response is sent.
 # FastAPI's default (since 0.118) runs it after the response, so a client was told "done"
@@ -109,6 +114,7 @@ def require_active_role_db(*allowed: str) -> Callable[..., Awaitable[Principal]]
                 "Active role is no longer authorized.",
                 status_code=403,
             )
+        await account_service.ensure_open_id(session, principal.user_id)
         return principal
 
     return _dep
@@ -150,6 +156,7 @@ async def require_kyc_verified(principal: PrincipalDep, session: SessionDep) -> 
     status = res.scalar_one_or_none()
     if str(status) != "verified":
         raise AppError("KYC_REQUIRED", "Identity verification required.", status_code=403)
+    await account_service.ensure_open_id(session, principal.user_id)
     return principal
 
 

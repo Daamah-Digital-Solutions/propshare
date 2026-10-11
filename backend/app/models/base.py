@@ -81,3 +81,5 @@ class TransactionType(enum.StrEnum):
     lp_yield = "lp_yield"  # Phase 9 — PASSIVE fixed interest
     family_allocation = "family_allocation"  # Phase 10 — owner→member returns transfer
     gift = "gift"  # Group 5 — inter-vivos wallet-gift escrow/credit/refund
+    # 0036 — a beneficiary's share of a holder's wallet balance, out of one and into the other
+    estate_transfer = "estate_transfer"

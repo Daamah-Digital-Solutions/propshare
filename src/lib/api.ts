@@ -347,11 +347,12 @@ export const authApi = {
     }).then(() => undefined);
   },
 
+  /** Confirm the signed-in account's address with the link it was sent (the link works from
+   *  inside the account only). */
   verifyEmail(token: string): Promise<void> {
     return apiRequest("/api/v1/auth/verify-email", {
       method: "POST",
       body: { token },
-      auth: false,
     }).then(() => undefined);
   },
 

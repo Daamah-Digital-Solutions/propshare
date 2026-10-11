@@ -226,6 +226,8 @@ export const InvestorWallet = () => {
   const pending = Number(wallet?.pending_balance ?? 0);
   const total = available + pending;
 
+  // a share of a holder's wallet balance moved to their designated beneficiary (either side)
+  const TX_LABEL: Record<string, string> = { estate_transfer: "Beneficiary transfer" };
   const transactions = (txnData?.items ?? []).map((t: TransactionItem) => ({
     id: t.id,
     type: t.type,
@@ -856,7 +858,7 @@ export const InvestorWallet = () => {
                     </div>
                     <div>
                       <p className="text-sm font-medium capitalize">
-                        {transaction.type}
+                        {TX_LABEL[transaction.type] ?? transaction.type.replace(/_/g, " ")}
                         {transaction.method && ` via ${transaction.method}`}
                       </p>
                       <p className="text-xs text-muted-foreground">

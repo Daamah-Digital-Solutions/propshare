@@ -436,6 +436,9 @@ export const BeneficiaryRegister = () => {
                   onChange={(e) => setForm({ ...form, fullName: e.target.value })}
                   placeholder="As shown on ID, in Latin letters"
                 />
+                <p className="text-[11px] text-muted-foreground">
+                  In Latin letters, as in their passport: the certificate is issued in English.
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ben-relationship">Relationship</Label>
@@ -623,6 +626,11 @@ export const BeneficiaryRegister = () => {
                   );
                 })}
               </div>
+              <p className="text-[11px] text-muted-foreground" data-testid="coverage-help">
+                Their share of your units is always part of it, and the future returns of those units go
+                with them. Tick Wallet Balance or Full Portfolio to add the same share of your wallet
+                balance on the day of the transfer.
+              </p>
             </div>
 
             <div className="space-y-1.5">
@@ -635,6 +643,10 @@ export const BeneficiaryRegister = () => {
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-[11px] text-muted-foreground" data-testid="condition-help">
+                This records your wish. Nothing is transferred by itself: a transfer is made only through
+                a claim that this person sends and our team reviews.
+              </p>
             </div>
 
             <div className="space-y-1.5">

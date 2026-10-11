@@ -23,6 +23,7 @@ from app.core.errors import AppError
 from app.models import KycVerification
 from app.models.base import KycStatus
 from app.models.compliance import KycWebhookEvent
+from app.models.identity import User
 from app.services import notification_service
 from app.services.integrations import kyc_sumsub
 
@@ -257,6 +258,14 @@ async def _notify_outcome(
     email_category: str | None = "security"
     if outcome.status == "verified":
         title, message = "Identity verified", "Your identity has been verified. You're all set."
+        user = await session.get(User, user_id)
+        if user is not None and not user.email_verified:
+            # said to every such member, whether or not something waits for the address
+            message = (
+                "Your identity has been verified. One thing is left: confirm your email "
+                "address (Account Settings sends the link again). Units or money sent to "
+                "you by email address reach your account only after that."
+            )
     elif outcome.status == "rejected":
         title, message = (
             "Verification unsuccessful",
@@ -280,12 +289,12 @@ async def _notify_outcome(
 async def _materialize_family(session: AsyncSession, user_id: uuid.UUID) -> None:
     """On KYC-verify, convert any pending family allocations for this user into real
     ledger moves (Phase 10) — plus any pending ESTATE inheritances (Group 4) and pending
-    GIFTS (Group 5). Lazy import avoids a module-load cycle."""
-    from app.services import estate_service, family_service, gift_service
+    GIFTS (Group 5). What was addressed to their email is theirs once the address is
+    confirmed too; the same handover runs again at that moment (account_service). Lazy
+    import avoids a module-load cycle."""
+    from app.services import account_service
 
-    await family_service.materialize_for_user(session, user_id=user_id)
-    await estate_service.materialize_for_user(session, user_id=user_id)
-    await gift_service.materialize_for_user(session, user_id=user_id)
+    await account_service.release_waiting(session, user_id)
 
 
 # Admin exception path -------------------------------------------------------- #

@@ -33,6 +33,7 @@ Who receives at once depends on how the event was recorded:
 from __future__ import annotations
 
 import datetime as dt
+import decimal
 import re
 import secrets
 import uuid
@@ -49,18 +50,23 @@ from app.models import (
     EstateClaim,
     EstateEvent,
     EstateTransfer,
+    FamilyGroup,
+    FamilyMember,
     KycVerification,
     Property,
     UserRole,
     Wallet,
 )
+from app.models.base import TransactionType
 from app.models.identity import User
 from app.models.investments import OwnershipLedger
 from app.services import (
+    account_service,
     estate_certificate,
     notification_service,
     secondary_service,
     settings_service,
+    wallet_service,
 )
 from app.services.distribution_service import hamilton
 from app.services.integrations import storage
@@ -121,6 +127,11 @@ MAX_CLAIM_DOCUMENTS = 10
 CLAIMS_PER_EMAIL_PER_DAY = 5
 # a share written at the event for a beneficiary who has not received it yet
 _WAITING = ("pending", "awaiting_claim")
+_CENTS = decimal.Decimal("0.01")
+# the coverage choices that include the holder's wallet balance
+_WALLET_SCOPES = {"wallet", "portfolio"}
+# a claim for one of these reasons closes the holder's account with the event
+_CLOSING_REASONS = ("death", "incapacity")
 
 _plain = notification_service.plain_text
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -291,12 +302,9 @@ async def _current_sum(
 
 
 async def _resolve_user(session: AsyncSession, email: str | None) -> tuple[uuid.UUID | None, str]:
-    """Match a beneficiary email to a KYC'd user (active) or leave pending (Phase-10 model)."""
-    if not email:
-        return None, "pending"
-    user = (
-        await session.execute(select(User).where(func.lower(User.email) == email.lower()))
-    ).scalar_one_or_none()
+    """Match a beneficiary email to a KYC'd user (active) or leave pending (Phase-10 model).
+    Only an account that confirmed the address is matched (account_service)."""
+    user = await account_service.confirmed_by_address(session, email)
     if user is None:
         return None, "pending"
     verified = await _user_kyc_verified(session, user.id)
@@ -662,6 +670,92 @@ async def preview_split(session: AsyncSession, subject_user_id: uuid.UUID) -> li
     return out
 
 
+def covers_wallet(b: EstateBeneficiary) -> bool:
+    """The holder ticked the wallet for this person: Wallet Balance, or Full Portfolio."""
+    return bool(_WALLET_SCOPES & set(_meta(b.meta)["scope"]))
+
+
+async def _wallet_base(session: AsyncSession, holder_id: uuid.UUID) -> dict:
+    """What of the holder's wallet is shared out: the balance, less the returns the holder
+    allocated to relatives who could not be paid yet (promised in life, like the units held
+    back for them)."""
+    balance = decimal.Decimal(
+        await session.scalar(select(Wallet.balance).where(Wallet.user_id == holder_id)) or 0
+    )
+    owed = decimal.Decimal(
+        await session.scalar(
+            select(func.coalesce(func.sum(FamilyMember.pending_returns), 0))
+            .join(FamilyGroup, FamilyGroup.id == FamilyMember.family_group_id)
+            .where(FamilyGroup.owner_id == holder_id)
+        )
+        or 0
+    )
+    return {"balance": balance, "owed": owed, "base": max(decimal.Decimal(0), balance - owed)}
+
+
+def _wallet_shares(
+    base: decimal.Decimal, bens: list[EstateBeneficiary]
+) -> dict[str, decimal.Decimal]:
+    """Each wallet-covered beneficiary's amount of ``base`` by their percentage, rounded
+    down to the cent, so the amounts together never pass the base. The rest stays in the
+    holder's wallet."""
+    shares: dict[str, decimal.Decimal] = {}
+    for b in bens:
+        if b.allocation_pct <= 0 or not covers_wallet(b):
+            continue
+        amount = (base * b.allocation_pct / 100).quantize(_CENTS, rounding=decimal.ROUND_DOWN)
+        if amount > 0:
+            shares[str(b.id)] = amount
+    return shares
+
+
+async def preview_wallet(session: AsyncSession, subject_user_id: uuid.UUID) -> dict:
+    """What recording the event now would give each beneficiary of the holder's wallet.
+    Read-only (the execution computes it again under the wallet's lock)."""
+    bens = await list_beneficiaries(session, subject_user_id)
+    wallet = await _wallet_base(session, subject_user_id)
+    return {**wallet, "shares": _wallet_shares(wallet["base"], bens)}
+
+
+async def _move_money(
+    session: AsyncSession,
+    *,
+    from_user: uuid.UUID,
+    to_user: uuid.UUID,
+    amount: decimal.Decimal,
+    ref_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+) -> None:
+    """The two wallet ledger rows of one money share: out of the holder's wallet, into the
+    beneficiary's. Both point at their estate transfer."""
+    await wallet_service.lock_wallets(session, [from_user, to_user])
+    await wallet_service.debit(
+        session,
+        user_id=from_user,
+        reference_id=ref_id,
+        line_items=[
+            (TransactionType.estate_transfer, amount, "Transferred to a designated beneficiary")
+        ],
+        actor_id=actor_id,
+    )
+    await wallet_service.credit(
+        session,
+        user_id=to_user,
+        amount=amount,
+        reference_id=ref_id,
+        tx_type=TransactionType.estate_transfer,
+        description="Received as a designated beneficiary",
+        actor_id=actor_id,
+    )
+
+
+def move_text(move: dict) -> str:
+    """One line of what moved, for a person: units of a property, or money."""
+    if move.get("amount") is not None:
+        return f"${move['amount']:,.2f} of the wallet balance"
+    return f"{move['units']} unit(s) of {move['property']}"
+
+
 def _move(
     session: AsyncSession,
     *,
@@ -700,17 +794,24 @@ def _move(
 
 
 async def _tell_received(
-    session: AsyncSession, user_id: uuid.UUID, holder_id: uuid.UUID, lines: list[tuple[str, int]]
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    holder_id: uuid.UUID,
+    lines: list[tuple[str, int]],
+    money: decimal.Decimal = decimal.Decimal(0),
 ) -> None:
     """The beneficiary is told what reached their account (feed and email)."""
-    if not lines:
+    if not lines and money <= 0:
         return
     holder = await session.get(User, holder_id)
     holder_name = _plain(holder.full_name if holder else "") or "the account holder"
-    what = "; ".join(f"{n} unit{'' if n == 1 else 's'} of {title}" for title, n in lines)
+    parts = [f"{n} unit{'' if n == 1 else 's'} of {title}" for title, n in lines]
+    if money > 0:
+        parts.append(f"${money:,.2f} in your wallet")
+    what = "; ".join(parts)
     message = (
         f"As a designated beneficiary of {holder_name}, you received {what}. "
-        "They are in your account now."
+        f"{'It is' if len(parts) == 1 and money > 0 else 'They are'} in your account now."
     )
     await notification_service.notify(
         session,
@@ -765,6 +866,16 @@ async def _execute(
     bens = [b for b in await list_beneficiaries(session, subject_user_id) if b.allocation_pct > 0]
     moves: list[dict] = []
     received: dict[uuid.UUID, list[tuple[str, int]]] = {}
+    money: dict[uuid.UUID, decimal.Decimal] = {}
+
+    def receives_now(b: EstateBeneficiary) -> tuple[bool, str]:
+        """Does this beneficiary receive at once, and what is their share called while it
+        waits: a claim's beneficiary alone receives now, the others await their own claim;
+        the admin API pays every beneficiary with a verified account."""
+        if only is not None:
+            return b.id == only and b.beneficiary_user_id is not None, "awaiting_claim"
+        return b.beneficiary_user_id is not None and b.status == "active", "pending"
+
     if bens:
         mgmt_rate = await settings_service.get_management_fee_pct(session)
         for pid in await _held_properties(session, subject_user_id):
@@ -781,12 +892,7 @@ async def _execute(
                 units = split.get(str(b.id), 0)
                 if units <= 0:
                     continue
-                if only is not None:
-                    now_real = b.id == only and b.beneficiary_user_id is not None
-                    waiting = "awaiting_claim"
-                else:
-                    now_real = b.beneficiary_user_id is not None and b.status == "active"
-                    waiting = "pending"
+                now_real, waiting = receives_now(b)
                 transfer_id = uuid.uuid4()
                 if now_real and b.beneficiary_user_id is not None:
                     _move(
@@ -822,6 +928,58 @@ async def _execute(
                     }
                 )
 
+        # the wallet: the same percentages of what the holder's balance is on this day, for
+        # the records that cover it. Every wallet involved is locked first, in the one order.
+        payees = [
+            b.beneficiary_user_id for b in bens if b.beneficiary_user_id and receives_now(b)[0]
+        ]
+        await wallet_service.lock_wallets(session, [subject_user_id, *payees])
+        wallet = await _wallet_base(session, subject_user_id)
+        event.wallet_base = wallet["base"]
+        shares = _wallet_shares(wallet["base"], bens)
+        for b in bens:
+            amount = shares.get(str(b.id))
+            if amount is None:
+                continue
+            now_real, waiting = receives_now(b)
+            transfer_id = uuid.uuid4()
+            if now_real and b.beneficiary_user_id is not None:
+                await _move_money(
+                    session,
+                    from_user=subject_user_id,
+                    to_user=b.beneficiary_user_id,
+                    amount=amount,
+                    ref_id=transfer_id,
+                    actor_id=admin_id,
+                )
+                # one person may be named in two records: they are told the total
+                money[b.beneficiary_user_id] = (
+                    money.get(b.beneficiary_user_id, decimal.Decimal(0)) + amount
+                )
+            status = "completed" if now_real else waiting
+            session.add(
+                EstateTransfer(
+                    id=transfer_id,
+                    estate_event_id=event.id,
+                    beneficiary_id=b.id,
+                    property_id=None,
+                    units=0,
+                    amount=amount,
+                    status=status,
+                    materialized_at=_utcnow() if now_real else None,
+                )
+            )
+            moves.append(
+                {
+                    "beneficiary_id": str(b.id),
+                    "beneficiary": b.full_name,
+                    "property": "Wallet balance",
+                    "units": 0,
+                    "amount": amount,
+                    "status": status,
+                }
+            )
+
     event.status = "executed"
     event.executed_at = _utcnow()
     await write_audit(
@@ -836,8 +994,28 @@ async def _execute(
             "claim": str(claim.id) if claim is not None else None,
         },
     )
-    for user_id, lines in received.items():
-        await _tell_received(session, user_id, subject_user_id, lines)
+    for user_id in {*received, *money}:
+        await _tell_received(
+            session,
+            user_id,
+            subject_user_id,
+            received.get(user_id, []),
+            money.get(user_id, decimal.Decimal(0)),
+        )
+    # The holder's account closes with the event: what stays in it (the other beneficiaries'
+    # shares, what was held back) waits for the claims, whoever knows its password. Not for
+    # another reason: a holder who asked for the transfer is still there to use the account.
+    if event.reason in _CLOSING_REASONS:
+        await account_service.close(
+            session,
+            user_id=subject_user_id,
+            reason=(
+                f"approved claim {claim.reference}: {CLAIM_REASONS[claim.reason].lower()}"
+                if claim is not None
+                else "the account holder's death was recorded"
+            ),
+            actor_id=admin_id,
+        )
     return {"event": event, "replayed": False, "moves": moves}
 
 
@@ -894,10 +1072,55 @@ async def _release(
     mgmt_rate = await settings_service.get_management_fee_pct(session)
     moves: list[dict] = []
     received: list[tuple[str, int]] = []
+    money = decimal.Decimal(0)
     holder_id: uuid.UUID | None = None
     for tr in waiting:
         event = await session.get(EstateEvent, tr.estate_event_id)
-        if event is None or tr.property_id is None:
+        if event is None:
+            continue
+        if tr.amount is not None:
+            # a share of the wallet: what is there today, up to what was written that day
+            holder_id = event.subject_user_id
+            await wallet_service.lock_wallets(session, [holder_id, to_user])
+            there = decimal.Decimal(
+                await session.scalar(select(Wallet.balance).where(Wallet.user_id == holder_id)) or 0
+            )
+            pay = min(tr.amount, there)
+            line = {
+                "beneficiary_id": str(b.id),
+                "beneficiary": b.full_name,
+                "property": "Wallet balance",
+                "units": 0,
+                "amount": pay,
+            }
+            if pay <= 0:
+                moves.append({**line, "amount": tr.amount, "status": "missing"})
+                continue
+            await _move_money(
+                session,
+                from_user=holder_id,
+                to_user=to_user,
+                amount=pay,
+                ref_id=tr.id,
+                actor_id=None,
+            )
+            if pay < tr.amount:
+                await write_audit(
+                    session,
+                    action="estate.wallet_share_short",
+                    entity_type="estate_transfer",
+                    entity_id=str(tr.id),
+                    actor_id=None,
+                    before={"amount": str(tr.amount)},
+                    after={"amount": str(pay), "holder_balance": str(there)},
+                )
+                tr.amount = pay
+            tr.status = "completed"
+            tr.materialized_at = _utcnow()
+            money += pay
+            moves.append({**line, "status": "completed"})
+            continue
+        if tr.property_id is None:
             continue
         holder_id = event.subject_user_id
         prop = (
@@ -939,20 +1162,21 @@ async def _release(
             }
         )
     if holder_id is not None:
-        await _tell_received(session, to_user, holder_id, received)
+        await _tell_received(session, to_user, holder_id, received, money)
     return moves
 
 
 # --- materialization (pending -> real on beneficiary KYC) ------------------- #
 async def materialize_for_user(session: AsyncSession, *, user_id: uuid.UUID) -> int:
-    """Link pending estate beneficiaries for this newly-KYC'd user (by email) and convert
-    their PENDING estate transfers to real ledger moves. Idempotent. Shares that await a
-    claim (``awaiting_claim``) are not touched here: they move when staff approve it."""
+    """Link pending estate beneficiaries for this KYC'd user by their CONFIRMED email and
+    convert their PENDING estate transfers to real ledger moves. Runs when the identity is
+    verified and when the address is confirmed. Idempotent. Shares that await a claim
+    (``awaiting_claim``) are not touched here: they move when staff approve it."""
     user = await session.get(User, user_id)
     if user is None or not await _user_kyc_verified(session, user_id):
         return 0
 
-    if user.email:
+    if user.email and user.email_verified:
         unlinked = (
             (
                 await session.execute(
@@ -1076,7 +1300,7 @@ async def _tell_claimant(
     )
     user_id = claim.claimant_user_id
     if user_id is None:
-        account = await _account_of(session, claim.claimant_email)
+        account = await account_service.confirmed_by_address(session, claim.claimant_email)
         user_id = account.id if account is not None else None
     if user_id is not None:
         await notification_service.notify(
@@ -1097,22 +1321,6 @@ async def _new_reference(session: AsyncSession) -> str:
         if taken is None:
             return reference
     raise AppError("TRY_AGAIN", "Please try again.", status_code=503)
-
-
-async def _user_by_email(session: AsyncSession, email: str | None) -> User | None:
-    if not email:
-        return None
-    return (
-        await session.execute(select(User).where(func.lower(User.email) == email.lower()))
-    ).scalar_one_or_none()
-
-
-async def _account_of(session: AsyncSession, email: str | None) -> User | None:
-    """The account an address belongs to for certain: registered with it, with the address
-    confirmed in it. An address nobody confirmed could have been typed at sign-up by anyone
-    who knew it, so it ties neither a claim nor a transfer to that account."""
-    user = await _user_by_email(session, email)
-    return user if user is not None and user.email_verified else None
 
 
 async def submit_claim(
@@ -1210,7 +1418,11 @@ async def submit_claim(
             )
         ).scalar_one_or_none()
     # the claim is the account's when it is sent from it, or to its confirmed address
-    account = await session.get(User, user_id) if user_id else await _account_of(session, email)
+    account = (
+        await session.get(User, user_id)
+        if user_id
+        else await account_service.confirmed_by_address(session, email)
+    )
 
     claim = EstateClaim(
         id=uuid.uuid4(),
@@ -1411,11 +1623,13 @@ async def claim_review(session: AsyncSession, claim_id: uuid.UUID) -> dict:
     account = (
         await session.get(User, claim.claimant_user_id)
         if claim.claimant_user_id
-        else await _account_of(session, claim.claimant_email)
+        else await account_service.confirmed_by_address(session, claim.claimant_email)
     )
     # an account opened with the claim's address that never confirmed it is not offered as
     # where the share goes: staff see it, and say whose it is
-    unconfirmed = await _user_by_email(session, claim.claimant_email) if account is None else None
+    unconfirmed = (
+        await account_service.by_address(session, claim.claimant_email) if account is None else None
+    )
     kyc = await _kyc_status(session, account.id) if account else "none"
     event = (
         (
@@ -1433,8 +1647,10 @@ async def claim_review(session: AsyncSession, claim_id: uuid.UUID) -> dict:
     to_move: list[dict] = []
     done: list[dict] = []
     holdings: list[dict] = []
+    wallet: dict | None = None
     if ben:
         holdings = await preview_split(session, ben.owner_id)
+        wallet = await preview_wallet(session, ben.owner_id)
         rows = (
             await session.execute(
                 select(EstateTransfer, Property.title)
@@ -1445,6 +1661,8 @@ async def claim_review(session: AsyncSession, claim_id: uuid.UUID) -> dict:
         ).all()
         for tr, title in rows:
             line = {"property": title or "-", "units": tr.units, "status": tr.status}
+            if tr.amount is not None:
+                line = {**line, "property": "Wallet balance", "amount": tr.amount}
             (to_move if tr.status in _WAITING else done).append(line)
         if event is None or event.status != "executed":
             to_move = [
@@ -1452,6 +1670,15 @@ async def claim_review(session: AsyncSession, claim_id: uuid.UUID) -> dict:
                 for h in holdings
                 if h["shares"].get(str(ben.id), 0) > 0
             ]
+            if str(ben.id) in wallet["shares"]:
+                to_move.append(
+                    {
+                        "property": "Wallet balance",
+                        "units": 0,
+                        "amount": wallet["shares"][str(ben.id)],
+                        "status": "now",
+                    }
+                )
 
     checks: list[dict] = []
 
@@ -1506,6 +1733,25 @@ async def claim_review(session: AsyncSession, claim_id: uuid.UUID) -> dict:
             f"The certificate presented must show Version {ben.version}: an older copy was "
             "issued before the holder changed this record.",
         )
+        # the condition the holder set is their wish, and nothing checks it by itself: a
+        # death meets every one of them; anything else is put in front of staff
+        condition = TRIGGERS.get(meta["trigger"], TRIGGERS["death"])
+        if claim.reason != "death":
+            given = CLAIM_REASONS[claim.reason].lower()
+            if meta["trigger"] == "death":
+                check(
+                    False,
+                    "",
+                    f"The holder set this record to transfer '{condition}'. This claim gives "
+                    f"another reason: {given}.",
+                )
+            else:
+                check(
+                    None,
+                    "",
+                    f"The holder's condition for this record is '{condition}'. Nothing checks "
+                    "it by itself: confirm it before approving.",
+                )
     if account is not None and ben is not None:
         check(
             _same(account.full_name, ben.full_name),
@@ -1529,6 +1775,8 @@ async def claim_review(session: AsyncSession, claim_id: uuid.UUID) -> dict:
         )
     elif ben is not None and account.id == ben.owner_id:
         blockers.append("The claimant's account is the account holder's own account.")
+    elif account.closed_at is not None:
+        blockers.append("The claimant's account is closed.")
     elif kyc != "verified":
         blockers.append(f"The claimant's identity is not verified in their account (KYC: {kyc}).")
     if not any(d.get("kind") == "evidence" for d in (claim.documents or [])):
@@ -1548,11 +1796,6 @@ async def claim_review(session: AsyncSession, claim_id: uuid.UUID) -> dict:
             )
         )
 
-    wallet = (
-        await session.scalar(select(Wallet.balance).where(Wallet.user_id == ben.owner_id))
-        if ben
-        else None
-    )
     others = (
         [b for b in await list_beneficiaries(session, ben.owner_id) if b.id != ben.id]
         if ben
@@ -1572,7 +1815,9 @@ async def claim_review(session: AsyncSession, claim_id: uuid.UUID) -> dict:
         "to_move": to_move,
         "done": done,
         "holdings": holdings,
-        "wallet_balance": wallet,
+        # the holder's wallet: balance, what they still owe relatives, what is shared out
+        "wallet": wallet,
+        "covers_wallet": covers_wallet(ben) if ben else False,
         "others": others,
     }
 
@@ -1724,7 +1969,7 @@ async def claim_set_match(
         claim.subject_user_id = ben.owner_id
     email = (_clean(account_email, 200) or "").lower()
     if email:
-        account = await _user_by_email(session, email)
+        account = await account_service.by_address(session, email)
         if account is None:
             raise AppError(
                 "NO_SUCH_ACCOUNT", f"No account is registered with {email}.", status_code=422
@@ -1791,7 +2036,7 @@ async def claim_approve(
     claim.decided_by = actor_id
     claim.decided_at = _utcnow()
     claim.updated_at = claim.decided_at
-    summary = "; ".join(f"{m['units']} unit(s) of {m['property']}" for m in moved)
+    summary = "; ".join(move_text(m) for m in moved)
     claim.admin_note = f"Approved. Transferred to your account: {summary}."
     await write_audit(
         session,
