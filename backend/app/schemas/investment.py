@@ -71,6 +71,26 @@ class PortfolioOut(BaseModel):
     sold: str = "0"
 
 
+class UnitMovementOut(BaseModel):
+    """One line of the caller's ownership ledger: units in (> 0) or out (< 0), what it was,
+    and, for a movement between two people, who the other one was."""
+
+    id: str
+    at: str | None
+    property_id: str
+    property_title: str | None
+    units: int
+    direction: str  # in | out
+    reason: str
+    label: str
+    counterparty: str | None = None
+
+
+class UnitMovementListOut(BaseModel):
+    items: list[UnitMovementOut]
+    total: int
+
+
 class ReinvestIn(BaseModel):
     property_id: uuid.UUID
     amount: float = Field(gt=0, le=1_000_000_000)

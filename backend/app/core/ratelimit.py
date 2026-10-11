@@ -33,3 +33,5 @@ ATTACHMENT_LIMIT = "20/minute"  # pictures uploaded to the assistant chat, per I
 # a coin's smallest payment: what the cache cannot answer is asked of NOWPayments, which
 # refuses whoever asks it a few times in a row (a member choosing a coin asks once)
 CRYPTO_MINIMUM_LIMIT = "30/minute"
+# the public claim form (it stores uploaded documents); the service also caps claims per address
+ESTATE_CLAIM_LIMIT = "10/hour"

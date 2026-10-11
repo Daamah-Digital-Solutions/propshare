@@ -22,6 +22,7 @@ import {
   Minimize2,
   Maximize2,
   HeadphonesIcon,
+  ScrollText,
 } from "lucide-react";
 
 // WhatsApp icon component
@@ -244,6 +245,25 @@ const Support = () => {
         <Clock className="h-4 w-4" />
         <span className="text-sm">Business Hours: {businessHours}</span>
       </div>
+
+      {/* Where a person an account holder named reports the holder's death and claims */}
+      <Card className="mb-12 border-primary/20 bg-primary/5">
+        <CardContent className="p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="w-11 h-11 rounded-full bg-primary/15 text-primary flex items-center justify-center shrink-0">
+            <ScrollText className="h-5 w-5" />
+          </div>
+          <div className="flex-1">
+            <h3 className="font-semibold text-foreground">Reporting the death of an account holder?</h3>
+            <p className="text-sm text-muted-foreground">
+              If the holder named you as beneficiary or heir and gave you a certificate, make your claim
+              here. You do not need an account to send it.
+            </p>
+          </div>
+          <Button asChild variant="outline" className="shrink-0">
+            <Link to="/estate-claim">Report a death or make a claim</Link>
+          </Button>
+        </CardContent>
+      </Card>
 
       <Separator className="mb-12" />
 

@@ -390,6 +390,8 @@ async def _allocate_family(
         member = await session.get(FamilyMember, mid)
         if member is not None:
             member.allocated_returns = member.allocated_returns + share
+            # recorded only: owed to them, released when they verify
+            member.pending_returns = member.pending_returns + share
     group.total_returns = group.total_returns + recorded
 
 

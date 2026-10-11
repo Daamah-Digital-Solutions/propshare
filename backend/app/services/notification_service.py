@@ -13,6 +13,7 @@ An event WITHOUT an ``email_category`` can never email — email is opt-in per c
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from sqlalchemy import select
@@ -88,6 +89,39 @@ async def notify(
         )
     )
     return notification
+
+
+_LINKISH = re.compile(r"(https?://|www\.|\S+\.\S+/)\S*", re.IGNORECASE)
+
+
+def plain_text(value: object, limit: int = 120) -> str:
+    """Text a person typed (a name, a relationship), as it may appear in a message the
+    PLATFORM sends to someone else: no links, no angle brackets, one line. An email goes out
+    from our sender to any address, so typed text must never become a clickable link in it."""
+    text = _LINKISH.sub("", str(value or ""))
+    text = re.sub(r"[<>\[\]]", "", text)
+    return re.sub(r"\s+", " ", text).strip()[:limit]
+
+
+def email_external(
+    session: AsyncSession, *, to_email: str | None, subject: str, body: str, category: str
+) -> EmailOutbox | None:
+    """An email to someone who has no account (an invited family member, a claimant, the
+    staff inbox): the outbox row alone, since there is no feed to write to. Sent by the same
+    drainer as every other email. Nothing is queued without an address."""
+    to_email = (to_email or "").strip()
+    if not to_email:
+        return None
+    row = EmailOutbox(
+        user_id=None,
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        category=category,
+        status="pending",
+    )
+    session.add(row)
+    return row
 
 
 # --- reads / mutations for the API ----------------------------------------- #

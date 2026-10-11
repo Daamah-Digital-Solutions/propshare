@@ -383,3 +383,123 @@ market and a link to its own site (`src/lib/partners.ts`, `src/pages/Partners.ts
   to name a partner; the listing itself (PayPal above all) is the client's statement.
 - **Released by `backend/scripts/release_partners_page.sh`**: the site only (no migration, no
   API restart).
+
+## Family traces, the beneficiary's certificate and claims (2026-10-11, migration 0035)
+Client (recordings relayed 2026-10-07): (1) adding a family member and transferring to one "do
+the whole job but leave no trace": no email, no notification, nothing on the investments page,
+nothing for the receiver; (2) a beneficiary / heir must carry an identity document, be editable
+and have a downloadable certificate; (3) a public page where that person reports the holder's
+death and claims, after which staff verify and the assets move to the claimant's OWN account
+("we do not give him the username and password: the old transactions, bank accounts and details
+are private").
+
+- **Every family action tells both sides, twice.** `family_service` notifies the member who did
+  it and the member it was done for (add a member, transfer or allocate units, cancel an
+  allocation, allocate returns, an allocation becoming real when the relative verifies): a
+  notification and an email (category `investment_updates`, so a member's own preference
+  applies). A relative with no account gets the email alone, at the address the owner entered.
+  A name the owner typed is stripped of links before it goes into a message we send.
+- **The pages read what happened from the tables, not from the notifications.**
+  `GET /family/activity` lists everything done with the caller on either side, and the groups
+  they were added to: a relative who only ever received has no group of their own, and this is
+  where they see it ("Activity" tab, and under the "Start your Family Group" card).
+  `GET /family/transfers` carries names, property and dates. `GET /investments/movements`
+  lists the caller's ownership-ledger rows in words on the Active Investments tab, with the
+  other person named: `ownership_ledger.ref_id` now points a transfer's two rows at their
+  `family_transfers` / `estate_transfers` row (filled for the transfers already recorded).
+- **Found while reading that code, and fixed (each has a test):**
+  - *A transfer moves the caller's own units only.* The sender could be ANY verified member of
+    the group, and a member is added by email with no say from them: an investor could add
+    another investor's address and move that investor's units to themselves. `NOT_YOUR_UNITS`
+    (403) now; the dialog no longer asks "From Member".
+  - *Money paid to a verified member was owed a second time.* `allocated_returns` was both
+    "everything allocated" and "what to release on verification", so releasing a verified
+    member's allocations again (their own `POST /family/materialize`, or a repeated
+    verification event) took the same amount from the owner's wallet again. New
+    `family_members.pending_returns` holds only what was recorded and not paid; only that is
+    released. A release the owner's wallet cannot cover no longer fails the relative's identity
+    verification: it stays owed and the owner is told.
+  - *A group's page showed a member's whole portfolio* (every unit an account holds, to anyone
+    who typed its email). It shows what reached them through the group.
+  - A pending allocation recorded a transfer fee that is never charged: its row records none.
+- **The "Gifting" tab shows the gifting that exists.** It said "not available yet" while the
+  real scheduler sat under "Beneficiaries & Inheritance". The register and the gifts each have
+  their tab now.
+- **The beneficiary register** (`BeneficiaryRegister.tsx`, `estate_service`): Edit beside
+  Delete (the API existed, the button did not; an optional field sent empty is now cleared);
+  up to 4 copies of the person's identity document (JPG, PNG, WebP or PDF by extension AND
+  first bytes, 10 MB, private storage `estate-beneficiaries/`, fetched by the holder only);
+  add / edit / remove are audited (which fields changed, never their values).
+  - Copy that claimed what the platform does not do is gone ("encrypted and reviewed by our
+    legal partners", "legally binding", the "Legally acknowledged" badge): the badge says
+    whether the person has a verified account, and the notice says a designation records the
+    holder's wishes and is not a will.
+- **The certificate** (`estate_certificate.py`, same frame, logo and seal as the ownership
+  certificate): the person's details as recorded, a number (`CPB-XXXX-XXXX`, unique, the key a
+  claim is matched by), the record's **version** (raised by every change to what the
+  certificate prints, so a copy issued before a change can be told from the current one), how
+  a claim is made and the claim page as a QR code. It says what it is not: not a will, not
+  transferable, the register at the time of a claim prevails.
+  - Issued in English like every document of the platform (statements, ownership certificate):
+    a name written in another script is refused with what to do, rather than printed as empty
+    boxes. It needs the identity document number: a certificate must identify the person.
+  - The sentence states the allocation ("as heir, with an allocation of 40%") and the coverage
+    is printed as the holder recorded it. **Open point for the owner:** the form's coverage
+    choices (wallet balance, rental returns, passive income, full portfolio) are recorded but
+    the transfer has only ever moved ownership units; the wallet balance stays in the holder's
+    account. The staff page shows it as not moved.
+- **A claim** (`estate_claims`, public page `/estate-claim`, linked from the menu under Help
+  and from the Support page; the site has no footer): who claims
+  (name, country, contact, identity document), the holder's name, the reason (death, the
+  holder can no longer manage the account, another reason) with the date of death, the
+  certificate and its number, the claimant's identity document, and the official supporting
+  document when they have it. No account is needed to send it.
+  - The answer never says whether the certificate number matched. The holder, when it is
+    theirs, is told at once (notification and a forced security email): a living holder is the
+    one who can say a claim is false. Staff are told (notifications and the support inbox).
+  - Limits: 10 claims an hour per IP, 5 a day per address, one open claim per address and
+    certificate, 10 files per claim, photos and PDFs only.
+  - A signed-in claimant sees their claims on the same page and adds a document staff asked
+    for (a guest's claims become theirs once their address is verified).
+  - **A claim is tied to an account in three ways only:** it was sent from the account; its
+    address is the account's CONFIRMED address; or staff linked the account on purpose (on the
+    audit log). An address nobody confirmed could have been typed at sign-up by anyone who knew
+    it, so an account opened with the claim's address is shown to staff but is not taken as
+    the claimant's, and nothing moves to it, until the address is confirmed. The claim page
+    and Account Settings send a new confirmation link (the one from sign-up lasts a day).
+- **Staff review in the admin panel** (Estate Claims, full admins): what the claimant sent
+  beside the beneficiary record, the claimant's documents beside the copy the holder kept, and
+  checks drawn from comparing them (the name, the document number, the holder's name, a record
+  created or changed AFTER the stated date of death, the version the certificate must show).
+  They ask for more, reject with a message, match a mistyped number or the account the
+  claimant registered with, attach a document, or approve.
+  - **An approval is refused** until: the claim is matched to a record; the claimant has their
+    own account, it is not the holder's, and its identity is verified; an official supporting
+    document is on file (asked for at approval, not at submission, so a death can be reported
+    before the certificate is in hand); the record carries a share; there is something to move.
+  - **Only the claimant's share moves.** The first approved claim for a holder records the
+    event and writes every beneficiary's share; the others are `awaiting_claim` and move when
+    their own claim is approved (the admin API `verify-death` keeps its behaviour: everyone
+    with a verified account at once, the rest `pending` until they verify). One event per
+    holder, so the split is made once.
+  - **The register closes with the event** (`REGISTER_CLOSED`): it is what it was that day,
+    whoever holds the account's password afterwards. Certificates still download.
+  - Nothing gives the claimant the holder's account: the units arrive in their own, with a
+    notification, an email, and a line on their investments page naming the holder.
+- **Not built, said to the owner:** the wallet balance, units held back by a listing or a gift
+  at the moment of the event, and installment plans are not moved by an approval; the holder's
+  account is not disabled after the event (there is no such switch on an account yet).
+- **Older than this work, said to the owner, not changed here:** what waits for a person by
+  their email address alone (a pending family allocation and its returns, a scheduled gift, a
+  share written by the admin API `verify-death`) is released when an account with that address
+  passes identity verification, whether or not the address was ever confirmed in it
+  (`kyc_service` -> `family_service` / `estate_service` / `gift_service.materialize_for_user`).
+  The same rule as for claims (a confirmed address) belongs there, with a release when the
+  address is confirmed later; it changes what existing members experience, so it is its own
+  change.
+- **Assistant:** the family article says what the feature does now, a new article
+  `beneficiaries-and-claims` (EN + AR) covers the register, the certificate and the claim, the
+  prompt's one-paragraph overview no longer says a member "manages relatives' holdings", and
+  the claim page is a link the assistant may give (`estate_claim`).
+- **Released by `backend/scripts/release_family_estate.sh`**: backup, migration 0035, API,
+  knowledge base, site.

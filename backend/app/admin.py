@@ -29,6 +29,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from wtforms import SelectField
 
 from app.admin_assistant import ASSISTANT_VIEWS
+from app.admin_estate import ESTATE_VIEWS
 from app.admin_leads import BROKER_LEAD_VIEWS
 from app.admin_listing import ListingEditorView, is_full_admin
 from app.admin_owner import OWNER_VIEWS, platform_listing_filter
@@ -1439,8 +1440,12 @@ class EstateBeneficiaryAdmin(AdminOnlyModelView, model=EstateBeneficiary):
         EstateBeneficiary.allocation_pct,
         EstateBeneficiary.status,
         EstateBeneficiary.beneficiary_user_id,
+        # the number on the person's certificate (what a claim is matched by), and its version
+        EstateBeneficiary.certificate_no,
+        EstateBeneficiary.version,
         EstateBeneficiary.created_at,
     ]
+    column_searchable_list = [EstateBeneficiary.full_name, EstateBeneficiary.certificate_no]
     can_create = False
     can_edit = False
     can_delete = False
@@ -1453,6 +1458,9 @@ class EstateEventAdmin(AdminOnlyModelView, model=EstateEvent):
     column_list = [
         EstateEvent.subject_user_id,
         EstateEvent.status,
+        EstateEvent.reason,
+        EstateEvent.date_of_death,
+        EstateEvent.claim_id,
         EstateEvent.death_certificate_document_id,
         EstateEvent.verified_by,
         EstateEvent.verified_at,
@@ -2018,6 +2026,7 @@ def setup_admin(app) -> Admin:
         ListingEditorView,
         *OWNER_VIEWS,
         *BROKER_LEAD_VIEWS,
+        *ESTATE_VIEWS,
         *SUKUK_VIEWS,
         *PRICING_VIEWS,
         PasswordChangeView,

@@ -12,7 +12,8 @@ moving actions are KYC-gated + Idempotency-Key. The owner is the group's first m
 - POST /family/allocations            allocate returns ($) to a member.
 - POST /family/reinvest               reinvest at the family discount.
 - POST /family/materialize            pull the caller's own pending allocations (after KYC).
-- GET  /family/transfers              transfer history.
+- GET  /family/transfers              transfer history (names, property, dates).
+- GET  /family/activity               everything done with the caller, on either side.
 - GET  /family/settings               discount + transfer-fee knobs.
 """
 
@@ -28,6 +29,7 @@ from app.api.deps import KycVerifiedDep, PrincipalDep, SessionDep
 from app.core.errors import AppError
 from app.models.identity import User
 from app.schemas.family import (
+    ActivityOut,
     AllocateReturnsIn,
     FamilySettingsOut,
     GroupCreateIn,
@@ -200,6 +202,14 @@ async def materialize(session: SessionDep, principal: KycVerifiedDep) -> dict:
 async def list_transfers(session: SessionDep, principal: PrincipalDep):
     rows = await family_service.list_transfers(session, principal.user_id)
     return TransferListOut(items=[TransferOut(**t) for t in rows], total=len(rows))
+
+
+@router.get("/activity", response_model=ActivityOut)
+async def my_activity(session: SessionDep, principal: PrincipalDep):
+    """What the family feature did with the caller, on either side: members they added and
+    groups they were added to, units and returns transferred or allocated. A member who was
+    only ever on the receiving side has no group of their own; this is where they see it."""
+    return ActivityOut(**await family_service.list_activity(session, principal.user_id))
 
 
 @router.get("/settings", response_model=FamilySettingsOut)

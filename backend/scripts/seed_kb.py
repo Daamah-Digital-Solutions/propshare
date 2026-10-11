@@ -274,9 +274,15 @@ property documents are available on each property page.""",
         "Family groups and broker referrals",
         "roles",
         130,
-        """Family group: one member can create a family group, add relatives, transfer units to
-them and allocate returns within the group; the assistant shows your group and its members'
-allocations (never their identity documents). Brokers: an approved broker has a referral code;
+        """Family group: a member can create a family group, add relatives, transfer their own
+units to them and allocate returns within the group. Both sides are told every time, in their
+notifications and by email. The Family Investment tab lists the activity of each member on
+either side (members added, units and returns transferred or allocated, with their dates), so
+a relative who only received sees it there too, and the Active Investments tab lists every
+unit movement with the other person named. Units or returns allocated to a relative who has
+no verified account yet stay reserved for them until they register and verify their identity.
+The assistant shows your group and its members' allocations (never their identity documents).
+Brokers: an approved broker has a referral code;
 investors who sign up with it are linked to the broker, who earns a share of the platform's
 fees on their activity (never a share of the investment itself). The broker dashboard's
 "Listings & Referrals" tab lists everything the broker brought, with its status: "Add client"
@@ -285,6 +291,42 @@ emails the person the broker's link (they are linked only if they sign up throug
 developer contact and documents for the team to review (the team contacts them and lists it,
 or explains why not; an introduction alone earns no commission). Applying for the broker,
 owner or liquidity-provider role is done from Account -> Roles and reviewed by the team.""",
+    ),
+    (
+        "beneficiaries-and-claims",
+        "Beneficiaries, their certificate, and claiming after a holder's death",
+        "roles",
+        135,
+        """Naming beneficiaries: an account holder names the people who should receive their
+holdings under Dashboard -> Family Investment -> Beneficiaries & Inheritance. For each person
+the holder records the full name as on their identity document, the relationship, the role
+(beneficiary, heir, authorized person or legal representative), the identity document type and
+number, and the share allocated to them; the shares of all the people together cannot pass the
+whole. The holder can upload a copy of the person's identity document (a photo or a PDF) to
+keep with the record, can edit or remove a record at any time, and can download a certificate
+for each person. The certificate carries the platform's logo, the person's details as recorded,
+a certificate number, its version (every change to a record makes a new version, and the
+latest one is the valid one) and where a claim is made. It is issued in English, so the name
+must be written in Latin letters, and it needs the identity document number. It records the
+holder's wishes and is not a will. The assistant never shows identity documents or their
+numbers.
+
+Claiming: after the holder's death, or when the holder can no longer manage the account, the
+person named opens the public page "Report a death or make a claim" (in the site's menu under
+Help, and on the Support page) and sends their name, country and contact details, the holder's
+name, the reason and the date of death, the certificate with its number, a copy of their own
+identity document and, when they have it, the official document (for a death, the death
+certificate). They receive a claim reference by email. The team checks the claim against the
+holder's register, may ask for more, and decides. Assets are transferred only to the claimant's
+own Capimax PropShare account once their identity is verified in it, so the claimant needs an
+account of their own; nobody is ever given the holder's account, password or records. Each
+person named makes their own claim for their own share. A signed-in claimant sees their claims
+and their status on the same page and can add a document the team asked for. A claim sent
+before signing in appears there, and is tied to the claimant's account, once the account uses
+the same email address and that address is confirmed (a new confirmation link can be requested
+on that page or in Account Settings). When the first claim on a holder's account is approved,
+the holder's register is closed and can no longer be changed. Someone who has no certificate
+should contact support.""",
     ),
     (
         "support-and-the-assistant",
@@ -587,8 +629,13 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
         "مجموعات العائلة وإحالات الوسطاء",
         "roles",
         130,
-        """مجموعة العائلة: يستطيع عضو إنشاء مجموعة عائلية وإضافة أقاربه وتحويل وحدات إليهم وتخصيص
-العوائد داخل المجموعة؛ يعرض المساعد مجموعتك وتخصيصات أعضائها (ولا يعرض وثائق هوياتهم أبدًا).
+        """مجموعة العائلة: يستطيع العضو إنشاء مجموعة عائلية وإضافة أقاربه وتحويل وحداته هو إليهم
+وتخصيص العوائد داخل المجموعة. يصل الطرفين إشعار داخل المنصة ورسالة بالبريد في كل مرة. يعرض تبويب
+"استثمار العائلة" نشاط كل عضو من جهته (الأعضاء المضافون، والوحدات والعوائد المحوّلة أو المخصّصة
+بتواريخها)، فيرى القريب الذي استلم فقط ما وصله هناك أيضًا، ويعرض تبويب "الاستثمارات النشطة" كل
+حركة على الوحدات مع اسم الطرف الآخر. الوحدات أو العوائد المخصّصة لقريب ليس له حساب موثّق بعد تبقى
+محجوزة له إلى أن يسجّل ويوثّق هويته. يعرض المساعد مجموعتك وتخصيصات أعضائها (ولا يعرض وثائق هوياتهم
+أبدًا).
 الوسطاء: للوسيط المعتمد كود إحالة؛ المستثمرون الذين يسجلون به يُربطون بالوسيط الذي يحصل على نسبة
 من رسوم المنصة على نشاطهم (وليس من الاستثمار نفسه أبدًا). في لوحة الوسيط تبويب "الإدراجات
 والإحالات" يعرض كل ما قدّمه الوسيط وحالته: "إضافة عميل" يرسل للشخص رابط الوسيط بالبريد (ولا يُربط به
@@ -596,6 +643,35 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 المالك أو المطوّر ومستنداته ليراجعه الفريق (يتواصل معه ويدرجه أو يوضح السبب، والتقديم وحده لا
 يستحق عمولة). التقدم لدور الوسيط أو المالك أو مزوّد السيولة يتم من الحساب ← الأدوار ويراجعه
 الفريق.""",
+    ),
+    (
+        "beneficiaries-and-claims",
+        "المستفيدون وشهادتهم والمطالبة بعد وفاة صاحب الحساب",
+        "roles",
+        135,
+        """تسمية المستفيدين: يسمّي صاحب الحساب الأشخاص الذين تؤول إليهم حيازاته من لوحة المستثمر ←
+استثمار العائلة ← المستفيدون والميراث. يسجّل لكل شخص الاسم الكامل كما في وثيقة هويته، وصلة
+القرابة، والصفة (مستفيد، وريث، شخص مفوّض أو ممثل قانوني)، ونوع وثيقة الهوية ورقمها، والحصة المخصّصة
+له؛ ولا يتجاوز مجموع حصص الجميع الكل. يستطيع صاحب الحساب رفع صورة من وثيقة هوية الشخص (صورة أو
+ملف PDF) لتُحفظ مع سجله، وتعديل السجل أو حذفه في أي وقت، وتنزيل شهادة لكل شخص. تحمل الشهادة شعار
+المنصة وبيانات الشخص كما سُجّلت ورقم الشهادة وإصدارها (كل تعديل على السجل يصدر إصدارًا جديدًا،
+والأحدث هو المعتمد) ومكان تقديم المطالبة. تصدر الشهادة بالإنجليزية، فيُكتب الاسم بالحروف
+اللاتينية، ويلزم لها رقم وثيقة الهوية. وهي سجل لرغبة صاحب الحساب وليست وصية. ولا يعرض المساعد
+وثائق الهوية ولا أرقامها أبدًا.
+
+المطالبة: بعد وفاة صاحب الحساب، أو إذا لم يعد قادرًا على إدارة حسابه، يفتح الشخص المسمّى الصفحة
+العامة "الإبلاغ عن وفاة أو تقديم مطالبة" (في قائمة الموقع تحت "المساعدة" وفي صفحة الدعم)
+ويرسل اسمه ودولته وبيانات التواصل،
+واسم صاحب الحساب، والسبب وتاريخ الوفاة، والشهادة ورقمها، وصورة من وثيقة هويته هو، والمستند
+الرسمي إن توفّر (شهادة الوفاة في حالة الوفاة). يصله رقم مرجعي للمطالبة بالبريد. يراجع الفريق
+المطالبة مقارنةً بسجل صاحب الحساب، وقد يطلب مستندات إضافية، ثم يقرّر. تُحوَّل الأصول فقط إلى حساب
+المطالِب نفسه على كابي مكس بروبشير بعد توثيق هويته فيه، ولذلك يلزمه حساب خاص به؛ ولا يُعطى أحدٌ
+حساب صاحب الحساب ولا كلمة مروره ولا سجلاته أبدًا. يقدّم كل شخص مسمّى مطالبته عن حصته هو. المطالِب
+المسجّل دخوله يرى مطالباته وحالتها في الصفحة نفسها ويستطيع إضافة مستند طلبه الفريق. أما المطالبة
+المرسلة قبل تسجيل الدخول فتظهر هناك وتُربط بحساب المطالِب بعد أن يكون الحساب بالبريد الإلكتروني
+نفسه ويُؤكَّد هذا البريد (يمكن طلب رابط تأكيد جديد من الصفحة نفسها أو من إعدادات الحساب). وعند
+الموافقة على أول مطالبة على حساب، يُغلق سجل المستفيدين لذلك الحساب ولا يمكن تعديله بعدها. ومن
+ليست لديه شهادة يتواصل مع الدعم.""",
     ),
     (
         "support-and-the-assistant",

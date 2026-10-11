@@ -37,6 +37,7 @@ from app.schemas.investment import (
     ReinvestOut,
     ReinvestSettingsOut,
     SukukCertificateOut,
+    UnitMovementListOut,
 )
 from app.services import (
     certificate_service,
@@ -46,6 +47,7 @@ from app.services import (
     payment_service,
     settings_service,
     sukuk_service,
+    unit_movement_service,
 )
 
 router = APIRouter(prefix="/api/v1/investments", tags=["investments"])
@@ -121,6 +123,15 @@ async def my_portfolio(principal: PrincipalDep, session: SessionDep):
     """Server-authoritative portfolio summary from the ownership ledger + wallet —
     invested / current value / total returns / properties / units. No client math."""
     return PortfolioOut(**await investment_service.portfolio_summary(session, principal.user_id))
+
+
+@router.get("/movements", response_model=UnitMovementListOut)
+async def my_unit_movements(principal: PrincipalDep, session: SessionDep, limit: int = 100):
+    """The caller's unit movements, newest first: every purchase, sale and transfer in or out
+    of their holdings, with the other person named for a family transfer or an inheritance."""
+    return UnitMovementListOut(
+        **await unit_movement_service.list_for_user(session, principal.user_id, limit=limit)
+    )
 
 
 @router.get("/reinvest-settings", response_model=ReinvestSettingsOut)

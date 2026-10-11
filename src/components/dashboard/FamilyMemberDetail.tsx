@@ -270,7 +270,10 @@ export function FamilyMemberDetail({
             </div>
             <div className="rounded-lg border border-border p-3 text-center">
               <p className="text-lg font-bold text-foreground">{member.real_units}</p>
-              <p className="text-[11px] text-muted-foreground">Units held</p>
+              {/* another member's own portfolio is theirs: the group shows what reached them through it */}
+              <p className="text-[11px] text-muted-foreground">
+                {member.is_self ? "Units held" : "Units received in the group"}
+              </p>
             </div>
             <div className="rounded-lg border border-border p-3 text-center">
               <p className="text-lg font-bold text-amber-600">{member.pending_units}</p>

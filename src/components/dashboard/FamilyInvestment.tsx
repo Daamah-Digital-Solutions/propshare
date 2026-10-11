@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,9 +25,12 @@ import {
   Heart,
   Baby,
   User,
+  History,
 } from "lucide-react";
 import { ApiError, familyApi, holdingsApi, type FamilyMember } from "@/lib/api";
-import { FamilyBeneficiaryGifting } from "./FamilyBeneficiaryGifting";
+import { BeneficiaryRegister } from "./BeneficiaryRegister";
+import { FamilyActivity } from "./FamilyActivity";
+import { FamilyGifting } from "./FamilyBeneficiaryGifting";
 import { FamilyMemberDetail } from "./FamilyMemberDetail";
 
 const EMPTY_MEMBER = {
@@ -50,6 +53,9 @@ const relationshipIcon = (relationship: string) => {
 
 const memberUnits = (m: FamilyMember) => m.real_units + m.pending_units;
 
+const day = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
+
 export const FamilyInvestment = () => {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -59,7 +65,7 @@ export const FamilyInvestment = () => {
   const [reinvestOpen, setReinvestOpen] = useState(false);
   const [newMember, setNewMember] = useState(EMPTY_MEMBER);
   const [detailMember, setDetailMember] = useState<FamilyMember | null>(null);
-  const [transfer, setTransfer] = useState({ from: "", to: "", property: "", units: "" });
+  const [transfer, setTransfer] = useState({ to: "", property: "", units: "" });
   const [alloc, setAlloc] = useState({ memberId: "", amount: "" });
   const [reinvest, setReinvest] = useState({ property: "", amount: "" });
 
@@ -72,11 +78,17 @@ export const FamilyInvestment = () => {
   const totalUnits = members.reduce((s, m) => s + memberUnits(m), 0);
   const totalReturns = Number(group?.total_returns ?? 0);
   const discountPct = settings ? Number(settings.reinvest_discount_pct) : 7.5;
+  const transferFeePct = Number(settings?.transfer_fee_pct ?? 0);
   const ownerProperties = holdings?.items ?? [];
+  // A transfer moves the caller's own units: the sender is always their own row.
+  const self = members.find((m) => m.is_self) ?? members.find((m) => /self|owner/i.test(m.relationship));
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["family"] });
     qc.invalidateQueries({ queryKey: ["secondary", "holdings"] });
+    qc.invalidateQueries({ queryKey: ["holdings"] });
+    qc.invalidateQueries({ queryKey: ["unit-movements"] });
+    qc.invalidateQueries({ queryKey: ["notifications"] });
     qc.invalidateQueries({ queryKey: ["wallet"] });
   };
   const onErr = (err: unknown, title: string) =>
@@ -100,7 +112,14 @@ export const FamilyInvestment = () => {
       address: newMember.address || null,
     }),
     onSuccess: (m) => {
-      toast({ title: "Family member added", description: m.is_verified ? "Linked to their verified account." : "Invited — allocations stay pending until they verify." });
+      toast({
+        title: "Family member added",
+        description: m.is_verified
+          ? "Linked to their verified account. They were told by notification and email."
+          : m.email
+            ? "Invited by email — allocations stay pending until they verify."
+            : "Added — give them an email so they can register and receive allocations.",
+      });
       setNewMember(EMPTY_MEMBER);
       setAddOpen(false);
       invalidate();
@@ -110,14 +129,19 @@ export const FamilyInvestment = () => {
 
   const doTransfer = useMutation({
     mutationFn: () => familyApi.transfer({
-      from_member_id: transfer.from,
+      from_member_id: self?.member_id ?? "",
       to_member_id: transfer.to,
       property_id: transfer.property,
       units: parseInt(transfer.units),
     }, crypto.randomUUID()),
     onSuccess: (t) => {
-      toast({ title: t.status === "completed" ? "Units transferred" : "Allocation pending", description: t.status === "completed" ? `${t.units} units moved.` : `${t.units} units reserved until the member verifies.` });
-      setTransfer({ from: "", to: "", property: "", units: "" });
+      toast({
+        title: t.status === "completed" ? "Units transferred" : "Allocation pending",
+        description: t.status === "completed"
+          ? `${t.units} units moved. You were both told by notification and email.`
+          : `${t.units} units reserved until the member verifies. They were told by email.`,
+      });
+      setTransfer({ to: "", property: "", units: "" });
       setTransferOpen(false);
       invalidate();
     },
@@ -126,7 +150,17 @@ export const FamilyInvestment = () => {
 
   const doAllocate = useMutation({
     mutationFn: () => familyApi.allocateReturns({ member_id: alloc.memberId, amount: parseFloat(alloc.amount) }, crypto.randomUUID()),
-    onSuccess: () => { toast({ title: "Returns allocated" }); setAlloc({ memberId: "", amount: "" }); setAllocOpen(false); invalidate(); },
+    onSuccess: (r) => {
+      toast({
+        title: "Returns allocated",
+        description: r.real
+          ? "Sent to their wallet. You were both told by notification and email."
+          : "Recorded: it moves to their wallet once they verify. They were told by email.",
+      });
+      setAlloc({ memberId: "", amount: "" });
+      setAllocOpen(false);
+      invalidate();
+    },
     onError: (e) => onErr(e, "Allocation failed"),
   });
 
@@ -136,29 +170,33 @@ export const FamilyInvestment = () => {
     onError: (e) => onErr(e, "Reinvest failed"),
   });
 
-  // No group yet → offer to create one (the owner becomes the Self member).
+  // No group yet → offer to create one (the owner becomes the Self member). A member who was
+  // added to someone else's group has none of their own: what came to them is listed below.
   if (group === null) {
     return (
-      <Card className="bg-gradient-to-br from-primary/10 to-accent/5 border-primary/20">
-        <CardContent className="py-12 text-center space-y-4">
-          <div className="h-14 w-14 rounded-full bg-primary/15 flex items-center justify-center mx-auto">
-            <Users className="h-7 w-7 text-primary" />
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold">Start your Family Group</h3>
-            <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
-              Co-invest with family — allocate and transfer real ownership units, and reinvest together at a {discountPct}% family discount.
-            </p>
-          </div>
-          <Button onClick={() => createGroup.mutate()} disabled={createGroup.isPending}>
-            <UserPlus className="h-4 w-4 mr-2" /> Create Family Group
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="space-y-6">
+        <Card className="bg-gradient-to-br from-primary/10 to-accent/5 border-primary/20">
+          <CardContent className="py-12 text-center space-y-4">
+            <div className="h-14 w-14 rounded-full bg-primary/15 flex items-center justify-center mx-auto">
+              <Users className="h-7 w-7 text-primary" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold">Start your Family Group</h3>
+              <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
+                Co-invest with family — allocate and transfer real ownership units, and reinvest together at a {discountPct}% family discount.
+              </p>
+            </div>
+            <Button onClick={() => createGroup.mutate()} disabled={createGroup.isPending}>
+              <UserPlus className="h-4 w-4 mr-2" /> Create Family Group
+            </Button>
+          </CardContent>
+        </Card>
+        <FamilyActivity hideWhenEmpty />
+      </div>
     );
   }
 
-  const realUserMembers = members.filter((m) => m.is_user);
+  const recipients = members.filter((m) => m.member_id !== self?.member_id);
 
   return (
     <div className="space-y-6">
@@ -175,7 +213,7 @@ export const FamilyInvestment = () => {
           <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Coins className="h-4 w-4 text-emerald-600" />Total Family Units</CardTitle></CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{totalUnits}</div>
-            <p className="text-xs text-muted-foreground">Real + pending</p>
+            <p className="text-xs text-muted-foreground">Yours, and those you transferred or allocated</p>
           </CardContent>
         </Card>
         <Card className="bg-gradient-to-br from-amber-500/10 to-amber-500/5 border-amber-500/20">
@@ -202,7 +240,9 @@ export const FamilyInvestment = () => {
               <div className="h-12 w-12 rounded-full bg-primary/20 flex items-center justify-center"><Shield className="h-6 w-6 text-primary" /></div>
               <div>
                 <h3 className="font-semibold">Family Investment Benefits</h3>
-                <p className="text-sm text-muted-foreground">Zero transfer fees • {discountPct}% family reinvest discount • Real on-ledger ownership</p>
+                <p className="text-sm text-muted-foreground">
+                  {transferFeePct === 0 ? "Zero transfer fees" : `${transferFeePct}% transfer fee`} • {discountPct}% family reinvest discount • Real on-ledger ownership
+                </p>
               </div>
             </div>
             <Button onClick={() => setReinvestOpen(true)}><RefreshCcw className="h-4 w-4 mr-2" />Reinvest at {discountPct}% Discount</Button>
@@ -215,6 +255,7 @@ export const FamilyInvestment = () => {
           <TabsTrigger value="members" className="flex items-center gap-2"><Users className="h-4 w-4" />Members</TabsTrigger>
           <TabsTrigger value="transfers" className="flex items-center gap-2"><ArrowRightLeft className="h-4 w-4" />Transfers</TabsTrigger>
           <TabsTrigger value="allocations" className="flex items-center gap-2"><TrendingUp className="h-4 w-4" />Allocations</TabsTrigger>
+          <TabsTrigger value="activity" className="flex items-center gap-2"><History className="h-4 w-4" />Activity</TabsTrigger>
           <TabsTrigger value="estate" className="flex items-center gap-2"><Shield className="h-4 w-4" /><span className="hidden sm:inline">Beneficiaries & Inheritance</span><span className="sm:hidden">Estate</span></TabsTrigger>
           <TabsTrigger value="gifting" className="flex items-center gap-2"><Gift className="h-4 w-4" />Gifting</TabsTrigger>
         </TabsList>
@@ -226,7 +267,7 @@ export const FamilyInvestment = () => {
             <Dialog open={addOpen} onOpenChange={setAddOpen}>
               <DialogTrigger asChild><Button size="sm"><UserPlus className="h-4 w-4 mr-2" />Add Member</Button></DialogTrigger>
               <DialogContent className="max-h-[90vh] overflow-y-auto">
-                <DialogHeader><DialogTitle>Add Family Member</DialogTitle><DialogDescription>If their email matches a verified account they link immediately; otherwise they're invited and allocations stay pending.</DialogDescription></DialogHeader>
+                <DialogHeader><DialogTitle>Add Family Member</DialogTitle><DialogDescription>If their email matches a verified account they link immediately; otherwise they're invited and allocations stay pending. Either way they are told by email.</DialogDescription></DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2"><Label>Full Name</Label><Input value={newMember.name} onChange={(e) => setNewMember({ ...newMember, name: e.target.value })} placeholder="Enter full name" /></div>
                   <div className="grid grid-cols-2 gap-3">
@@ -289,22 +330,25 @@ export const FamilyInvestment = () => {
         {/* Transfers */}
         <TabsContent value="transfers" className="space-y-4">
           <div className="flex justify-between items-center">
-            <div><h3 className="text-lg font-semibold">Unit Transfers</h3><p className="text-sm text-muted-foreground">Move real ownership units between family members</p></div>
+            <div><h3 className="text-lg font-semibold">Unit Transfers</h3><p className="text-sm text-muted-foreground">Move your own ownership units to a family member</p></div>
             <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
               <DialogTrigger asChild><Button size="sm"><ArrowRightLeft className="h-4 w-4 mr-2" />New Transfer</Button></DialogTrigger>
               <DialogContent>
-                <DialogHeader><DialogTitle>Transfer Units</DialogTitle><DialogDescription>Real units move when the recipient is verified; otherwise the allocation is held pending until they verify.</DialogDescription></DialogHeader>
+                <DialogHeader><DialogTitle>Transfer Units</DialogTitle><DialogDescription>The units leave your own holding. They move at once when the recipient is verified; otherwise they are held for them until they verify. You are both told by notification and email.</DialogDescription></DialogHeader>
                 <div className="space-y-4 py-4">
-                  <div className="space-y-2"><Label>From Member</Label>
-                    <Select value={transfer.from} onValueChange={(v) => setTransfer({ ...transfer, from: v })}>
-                      <SelectTrigger><SelectValue placeholder="Select sender" /></SelectTrigger>
-                      <SelectContent>{realUserMembers.map((m) => <SelectItem key={m.member_id} value={m.member_id}>{m.name} ({m.real_units} units)</SelectItem>)}</SelectContent>
-                    </Select>
+                  <div className="space-y-2"><Label>From</Label>
+                    <div className="rounded-md border border-input bg-muted/40 px-3 py-2 text-sm" data-testid="transfer-from">
+                      You{self ? ` (${self.real_units} units)` : ""}
+                    </div>
                   </div>
                   <div className="space-y-2"><Label>To Member</Label>
                     <Select value={transfer.to} onValueChange={(v) => setTransfer({ ...transfer, to: v })}>
                       <SelectTrigger><SelectValue placeholder="Select recipient" /></SelectTrigger>
-                      <SelectContent>{members.filter((m) => m.member_id !== transfer.from).map((m) => <SelectItem key={m.member_id} value={m.member_id}>{m.name}{m.is_verified ? "" : " (pending)"}</SelectItem>)}</SelectContent>
+                      <SelectContent>
+                        {recipients.length === 0 ? (
+                          <div className="px-3 py-2 text-sm text-muted-foreground">Add a family member first.</div>
+                        ) : recipients.map((m) => <SelectItem key={m.member_id} value={m.member_id}>{m.name}{m.is_verified ? "" : " (pending)"}</SelectItem>)}
+                      </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2"><Label>Property</Label>
@@ -317,12 +361,12 @@ export const FamilyInvestment = () => {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2"><Label>Units to Transfer</Label><Input type="number" value={transfer.units} onChange={(e) => setTransfer({ ...transfer, units: e.target.value })} placeholder="Enter units" /></div>
-                  <Card className="bg-emerald-500/10 border-emerald-500/30"><CardContent className="py-3"><div className="flex items-center gap-2 text-emerald-600"><Gift className="h-4 w-4" /><span className="text-sm font-medium">Transfer Fee: {Number(settings?.transfer_fee_pct ?? 0)}%</span></div></CardContent></Card>
+                  <div className="space-y-2"><Label>Units to Transfer</Label><Input type="number" min={1} value={transfer.units} onChange={(e) => setTransfer({ ...transfer, units: e.target.value })} placeholder="Enter units" /></div>
+                  <Card className="bg-emerald-500/10 border-emerald-500/30"><CardContent className="py-3"><div className="flex items-center gap-2 text-emerald-600"><Gift className="h-4 w-4" /><span className="text-sm font-medium">Transfer Fee: {transferFeePct}%</span></div></CardContent></Card>
                 </div>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setTransferOpen(false)}>Cancel</Button>
-                  <Button onClick={() => doTransfer.mutate()} disabled={!transfer.from || !transfer.to || !transfer.property || !transfer.units || doTransfer.isPending}>Complete Transfer</Button>
+                  <Button onClick={() => doTransfer.mutate()} disabled={!self || !transfer.to || !transfer.property || !transfer.units || doTransfer.isPending}>Complete Transfer</Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
@@ -337,11 +381,23 @@ export const FamilyInvestment = () => {
                 <div className="space-y-3">
                   {(transfersData?.items ?? []).map((t) => {
                     const name = (id: string | null) => members.find((m) => m.member_id === id)?.name ?? "—";
+                    const fee = Number(t.transfer_fee);
                     return (
-                      <div key={t.transfer_id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
-                        <div className="flex items-center gap-4">
-                          <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center"><ArrowRightLeft className="h-5 w-5 text-primary" /></div>
-                          <div><p className="font-medium">{name(t.from_member_id)} → {name(t.to_member_id)}</p><p className="text-sm text-muted-foreground">{t.units} units</p></div>
+                      <div key={t.transfer_id} className="flex items-center justify-between gap-3 py-3 border-b border-border last:border-0" data-testid="transfer-row">
+                        <div className="flex items-center gap-4 min-w-0">
+                          <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0"><ArrowRightLeft className="h-5 w-5 text-primary" /></div>
+                          <div className="min-w-0">
+                            <p className="font-medium">{t.from_name ?? name(t.from_member_id)} → {t.to_name ?? name(t.to_member_id)}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {t.units} unit{t.units === 1 ? "" : "s"}{t.property_title ? ` of ${t.property_title}` : ""}
+                              {fee > 0 ? ` · fee $${fee.toLocaleString()}` : ""}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {day(t.created_at)}
+                              {t.status === "completed" && t.completed_at && day(t.completed_at) !== day(t.created_at) ? ` · received ${day(t.completed_at)}` : ""}
+                              {t.status === "pending" ? " · held until they verify" : ""}
+                            </p>
+                          </div>
                         </div>
                         <Badge variant="outline" className={t.status === "completed" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" : t.status === "pending" ? "bg-amber-500/10 text-amber-600 border-amber-500/30" : "bg-muted text-muted-foreground"}>{t.status}</Badge>
                       </div>
@@ -361,7 +417,7 @@ export const FamilyInvestment = () => {
               <Dialog open={allocOpen} onOpenChange={setAllocOpen}>
                 <DialogTrigger asChild><Button size="sm" variant="outline"><TrendingUp className="h-4 w-4 mr-2" />Allocate Returns</Button></DialogTrigger>
                 <DialogContent>
-                  <DialogHeader><DialogTitle>Allocate Returns</DialogTitle><DialogDescription>Move returns to a member's wallet (verified) or record the allocation (pending).</DialogDescription></DialogHeader>
+                  <DialogHeader><DialogTitle>Allocate Returns</DialogTitle><DialogDescription>Move returns to a member's wallet (verified) or record the allocation (pending). You are both told by notification and email.</DialogDescription></DialogHeader>
                   <div className="space-y-4 py-4">
                     <div className="space-y-2"><Label>Member</Label>
                       <Select value={alloc.memberId} onValueChange={(v) => setAlloc({ ...alloc, memberId: v })}>
@@ -385,7 +441,14 @@ export const FamilyInvestment = () => {
                 {members.map((m) => (
                   <div key={m.member_id} className="flex items-center justify-between">
                     <div className="flex items-center gap-2">{relationshipIcon(m.relationship)}<span className="text-sm">{m.name}</span></div>
-                    <span className="font-semibold text-emerald-600">${Number(m.allocated_returns).toLocaleString()}</span>
+                    <span className="text-right">
+                      <span className="font-semibold text-emerald-600">${Number(m.allocated_returns).toLocaleString()}</span>
+                      {Number(m.pending_returns ?? 0) > 0 && (
+                        <span className="block text-[11px] text-amber-600">
+                          ${Number(m.pending_returns).toLocaleString()} held until they verify
+                        </span>
+                      )}
+                    </span>
                   </div>
                 ))}
                 <div className="border-t border-border pt-4 flex items-center justify-between"><span className="font-medium">Total Family Returns</span><span className="font-bold text-lg text-emerald-600">${totalReturns.toLocaleString()}</span></div>
@@ -402,26 +465,19 @@ export const FamilyInvestment = () => {
           </div>
         </TabsContent>
 
-        {/* Estate / Beneficiaries — Capimax's OWN feature (not BRX). Real beneficiary
-            register wired to the estate API (Group 4); inheritance executes on admin-verified
-            death. The gifting section inside is an honest placeholder (backend pending). */}
-        <TabsContent value="estate" className="space-y-4">
-          <FamilyBeneficiaryGifting />
+        {/* Activity — everything done with this member, on either side (client, 2026-10-07) */}
+        <TabsContent value="activity" className="space-y-4">
+          <FamilyActivity />
         </TabsContent>
+
+        {/* Estate / Beneficiaries — Capimax's OWN feature (not BRX): the beneficiary register,
+            each person's identity document and certificate. */}
+        <TabsContent value="estate" className="space-y-4">
+          <BeneficiaryRegister />
+        </TabsContent>
+        {/* Scheduled and recurring gifts (real: a server job executes them on their date) */}
         <TabsContent value="gifting" className="space-y-4">
-          <Card className="border-dashed">
-            <CardContent className="py-12 flex flex-col items-center text-center gap-3">
-              <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-                <Gift className="h-6 w-6 text-muted-foreground" />
-              </div>
-              <h3 className="text-lg font-semibold">Scheduled gifting is not available yet</h3>
-              <p className="text-sm text-muted-foreground max-w-md">
-                To move ownership to a family member today, use the Transfers tab — it
-                performs a real on-ledger transfer. Scheduled/automated gifting is planned
-                for a future release.
-              </p>
-            </CardContent>
-          </Card>
+          <FamilyGifting />
         </TabsContent>
       </Tabs>
 

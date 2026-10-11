@@ -62,7 +62,12 @@ class MemberOut(BaseModel):
     is_user: bool
     pending_units: int
     allocated_returns: str
+    # the part of allocated_returns not paid yet (released when the member verifies)
+    pending_returns: str = "0"
+    # the owner: units held; another member: units that reached them through this group
     real_units: int = 0
+    # the group owner's own row (the sender of every transfer)
+    is_self: bool = False
     date_of_birth: str | None = None
     phone: str | None = None
     national_id: str | None = None
@@ -95,11 +100,51 @@ class TransferOut(BaseModel):
     transfer_fee: str
     status: str
     created_at: str | None
+    # the history's own fields (the list fills them; a single create/cancel answer does not)
+    from_name: str | None = None
+    to_name: str | None = None
+    property_title: str | None = None
+    completed_at: str | None = None
 
 
 class TransferListOut(BaseModel):
     items: list[TransferOut]
     total: int
+
+
+class ActivityItemOut(BaseModel):
+    """One line of the caller's family activity. ``kind``: transfer | returns | member.
+    ``direction``: out (the caller did it) | in (it was done for the caller) | other."""
+
+    id: str
+    kind: str
+    direction: str
+    at: str | None
+    counterparty: str
+    from_name: str | None = None
+    property_id: str | None = None
+    property_title: str | None = None
+    units: int | None = None
+    amount: str | None = None
+    fee: str | None = None
+    status: str
+    completed_at: str | None = None
+    relationship: str | None = None
+
+
+class MembershipOut(BaseModel):
+    """A family group the caller was added to (and does not own)."""
+
+    group_name: str
+    owner_name: str
+    relationship: str
+    since: str | None
+    is_verified: bool
+
+
+class ActivityOut(BaseModel):
+    items: list[ActivityItemOut]
+    memberships: list[MembershipOut]
 
 
 class AllocateReturnsIn(BaseModel):

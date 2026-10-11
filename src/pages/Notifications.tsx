@@ -14,6 +14,8 @@ const TYPE_LABEL: Record<string, string> = {
   secondary: "Secondary market",
   liquidity: "Liquidity",
   family: "Family",
+  estate: "Beneficiaries",
+  gift: "Gift",
   broker: "Broker",
   info: "Notice",
   wallet: "Wallet",

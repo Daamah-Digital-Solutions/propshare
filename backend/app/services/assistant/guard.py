@@ -84,6 +84,8 @@ DEEP_LINKS: dict[str, tuple[str, str]] = {
     "verification_services": ("/verification-center", "All verification services"),
     "my_exits": ("/dashboard?tab=exits", "Your exit requests"),
     "family": ("/dashboard?tab=family", "Family investment group"),
+    # the public page where a person a holder designated claims after the holder's death
+    "estate_claim": ("/estate-claim", "Report a death or make a claim"),
     "kyc": ("/kyc", "Start or continue identity verification"),
     "account": ("/settings", "Open your account settings"),
     "security": ("/settings?tab=security", "Password and two-factor authentication"),

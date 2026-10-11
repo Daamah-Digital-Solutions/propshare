@@ -17,6 +17,7 @@ import { Link } from "react-router-dom";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { PaymentReturnStatus } from "@/components/dashboard/PaymentReturnStatus";
 import { SukukCertificatesCard } from "@/components/dashboard/SukukCertificatesCard";
+import { UnitMovements } from "@/components/dashboard/UnitMovements";
 import { holdingsApi, investApi } from "@/lib/api";
 
 const money = (v: number) => `$${v.toLocaleString()}`;
@@ -287,6 +288,9 @@ export const ActiveInvestments = () => {
           ))}
         </div>
       )}
+
+      {/* how the units got here, and where units that left went */}
+      <UnitMovements />
     </div>
   );
 };

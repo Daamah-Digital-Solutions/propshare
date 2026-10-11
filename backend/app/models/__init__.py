@@ -432,7 +432,13 @@ class FamilyMember(Base):
     nationality: Mapped[str | None] = mapped_column(Text)
     address: Mapped[str | None] = mapped_column(Text)
     allocated_units: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # everything ever allocated to this member (what the page shows)
     allocated_returns: Mapped[decimal.Decimal] = mapped_column(
+        Numeric, nullable=False, server_default="0"
+    )
+    # the part of it they could not be paid yet (no verified account): the ONLY amount that
+    # moves to their wallet when they verify (0035)
+    pending_returns: Mapped[decimal.Decimal] = mapped_column(
         Numeric, nullable=False, server_default="0"
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -556,6 +562,7 @@ from app.models.distributions import Distribution, DistributionItem  # noqa: E40
 from app.models.document_text import DocumentText  # noqa: E402
 from app.models.estate import (  # noqa: E402
     EstateBeneficiary,
+    EstateClaim,
     EstateEvent,
     EstateTransfer,
 )
@@ -659,6 +666,7 @@ __all__ = [
     "PlatformBankAccount",
     # estate / inheritance (Group 4)
     "EstateBeneficiary",
+    "EstateClaim",
     "EstateEvent",
     "EstateTransfer",
     # inter-vivos gifting (Group 5)

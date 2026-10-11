@@ -355,6 +355,11 @@ export const authApi = {
     }).then(() => undefined);
   },
 
+  /** A fresh link to confirm the signed-in member's own address (the one sent at sign-up expires). */
+  resendVerification(): Promise<void> {
+    return apiRequest("/api/v1/auth/resend-verification", { method: "POST" }).then(() => undefined);
+  },
+
   /** The change of sign-in email in progress, if any (addresses come masked). */
   emailChangeStatus(): Promise<{ pending: EmailChange | null }> {
     return apiRequest("/api/v1/auth/email-change");
@@ -889,6 +894,20 @@ export interface PortfolioSummary {
   sold?: string;
 }
 
+/** One line of the caller's ownership ledger: units in (> 0) or out (< 0), what it was,
+ *  and, for a movement between two people, who the other one was. */
+export interface UnitMovement {
+  id: string;
+  at: string | null;
+  property_id: string;
+  property_title: string | null;
+  units: number;
+  direction: "in" | "out";
+  reason: string;
+  label: string;
+  counterparty: string | null;
+}
+
 export const investApi = {
   /** Buy units. The SERVER computes units/fees/charge — we only send amount + method. */
   create(
@@ -916,6 +935,10 @@ export const investApi = {
   /** Server-authoritative portfolio summary (invested / value / returns / units). */
   portfolio(): Promise<PortfolioSummary> {
     return apiRequest<PortfolioSummary>("/api/v1/investments/portfolio");
+  },
+  /** The caller's unit movements, newest first: purchases, sales and transfers in or out. */
+  movements(limit = 100): Promise<{ items: UnitMovement[]; total: number }> {
+    return apiRequest(`/api/v1/investments/movements?limit=${limit}`);
   },
   /** The live, admin-configurable reinvest discount rate (server-authoritative). */
   reinvestSettings(): Promise<{ discount_pct: string }> {
@@ -1149,6 +1172,22 @@ export interface EstateBeneficiary {
   is_user: boolean;
   meta: Record<string, unknown>; // UI extras (role/scope/trigger/id) round-trip here
   created_at: string;
+  updated_at?: string | null;
+  /** The number printed on the person's certificate (what a claim is made with). */
+  certificate_no?: string | null;
+  /** How many times what the certificate prints has changed (the latest copy is the valid one). */
+  version?: number;
+  /** Copies of the person's identity document the holder uploaded. */
+  documents?: BeneficiaryDocument[];
+  /** True once a transfer event was recorded for the holder: the register is read-only. */
+  locked?: boolean;
+}
+export interface BeneficiaryDocument {
+  id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  uploaded_at: string | null;
 }
 export interface EstateBeneficiaryPayload {
   full_name: string;
@@ -1179,6 +1218,90 @@ export const estateApi = {
   },
   remove(id: string): Promise<void> {
     return apiRequest<void>(`/api/v1/estate/beneficiaries/${id}`, { method: "DELETE" });
+  },
+  /** Keep a copy of the person's identity document (a photo or a PDF) with their record. */
+  addDocument(id: string, file: File): Promise<EstateBeneficiary> {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    return apiRequest<EstateBeneficiary>(`/api/v1/estate/beneficiaries/${id}/documents`, {
+      method: "POST",
+      body: fd,
+    });
+  },
+  removeDocument(id: string, docId: string): Promise<EstateBeneficiary> {
+    return apiRequest<EstateBeneficiary>(`/api/v1/estate/beneficiaries/${id}/documents/${docId}`, {
+      method: "DELETE",
+    });
+  },
+  /** One of the copies, for the holder to look at (never a public link). */
+  fetchDocument(id: string, docId: string): Promise<Blob> {
+    return fetchBlob(`/api/v1/estate/beneficiaries/${id}/documents/${docId}`);
+  },
+  /** The person's certificate (PDF): what the register says about them today. */
+  certificate(id: string): Promise<Blob> {
+    return fetchBlob(`/api/v1/estate/beneficiaries/${id}/certificate`);
+  },
+};
+
+// --- Estate claims (public page) --------------------------------------------- //
+export type EstateClaimReason = "death" | "incapacity" | "other";
+export type EstateClaimDocumentKind = "certificate" | "identity" | "evidence" | "other";
+export interface EstateClaim {
+  id: string;
+  reference: string;
+  /** submitted | in_review | needs_info | approved | rejected */
+  status: string;
+  status_label: string;
+  reason: EstateClaimReason;
+  holder_name: string;
+  certificate_no: string | null;
+  /** The team's last message to the claimant. */
+  message: string | null;
+  documents: { kind: string; filename: string }[];
+  can_add_documents: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+export interface EstateClaimFields {
+  claimant_name: string;
+  claimant_email: string;
+  claimant_phone?: string;
+  claimant_country: string;
+  claimant_id_type?: string;
+  claimant_id_number?: string;
+  relationship?: string;
+  holder_name: string;
+  holder_email?: string;
+  certificate_no: string;
+  reason: EstateClaimReason;
+  date_of_death?: string | null;
+  details?: string;
+}
+
+/** Claims by a person a holder designated. Sending one needs no account; following it does. */
+export const estateClaimsApi = {
+  submit(
+    fields: EstateClaimFields,
+    files: { certificate: File; identity: File[]; evidence: File[] },
+  ): Promise<EstateClaim> {
+    const fd = new FormData();
+    fd.append("fields", JSON.stringify(fields));
+    fd.append("certificate", files.certificate, files.certificate.name);
+    for (const f of files.identity) fd.append("identity", f, f.name);
+    for (const f of files.evidence) fd.append("evidence", f, f.name);
+    return apiRequest<EstateClaim>("/api/v1/estate/claims", { method: "POST", body: fd });
+  },
+  mine(): Promise<EstateClaim[]> {
+    return apiRequest<EstateClaim[]>("/api/v1/estate/claims/mine");
+  },
+  addDocument(id: string, kind: EstateClaimDocumentKind, file: File): Promise<EstateClaim> {
+    const fd = new FormData();
+    fd.append("kind", kind);
+    fd.append("file", file, file.name);
+    return apiRequest<EstateClaim>(`/api/v1/estate/claims/${id}/documents`, {
+      method: "POST",
+      body: fd,
+    });
   },
 };
 
@@ -1941,7 +2064,12 @@ export interface FamilyMember {
   is_user: boolean;
   pending_units: number;
   allocated_returns: string;
+  /** The part of allocated_returns not paid yet (released when the member verifies). */
+  pending_returns?: string;
+  /** The owner: units held. Another member: units that reached them through this group. */
   real_units: number;
+  /** The group owner's own row (the sender of every transfer). */
+  is_self?: boolean;
   date_of_birth: string | null;
   phone: string | null;
   national_id: string | null;
@@ -1978,6 +2106,41 @@ export interface FamilyTransfer {
   transfer_fee: string;
   status: string; // completed | pending | cancelled
   created_at: string | null;
+  // filled by the history list
+  from_name?: string | null;
+  to_name?: string | null;
+  property_title?: string | null;
+  completed_at?: string | null;
+}
+
+/** One line of the caller's family activity, whichever side they were on. */
+export interface FamilyActivityItem {
+  id: string;
+  kind: "transfer" | "returns" | "member";
+  /** out: the caller did it; in: it was done for the caller. */
+  direction: "out" | "in" | "other";
+  at: string | null;
+  counterparty: string;
+  from_name: string | null;
+  property_id: string | null;
+  property_title: string | null;
+  units: number | null;
+  amount: string | null;
+  fee: string | null;
+  status: string;
+  completed_at: string | null;
+  relationship: string | null;
+}
+export interface FamilyMembership {
+  group_name: string;
+  owner_name: string;
+  relationship: string;
+  since: string | null;
+  is_verified: boolean;
+}
+export interface FamilyActivity {
+  items: FamilyActivityItem[];
+  memberships: FamilyMembership[];
 }
 
 export interface FamilySettings {
@@ -2063,6 +2226,11 @@ export const familyApi = {
   },
   listTransfers(): Promise<{ items: FamilyTransfer[]; total: number }> {
     return apiRequest("/api/v1/family/transfers");
+  },
+  /** Everything the family feature did with the caller, on either side (a member who only
+   *  ever received has no group of their own: this is where they see it). */
+  activity(): Promise<FamilyActivity> {
+    return apiRequest<FamilyActivity>("/api/v1/family/activity");
   },
   settings(): Promise<FamilySettings> {
     return apiRequest<FamilySettings>("/api/v1/family/settings");

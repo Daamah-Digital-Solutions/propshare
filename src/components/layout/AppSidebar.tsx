@@ -79,6 +79,7 @@ import {
   Droplets,
   Layers,
   ShieldCheck,
+  ScrollText,
 } from "lucide-react";
 
 interface NavItem {
@@ -142,6 +143,8 @@ const publicNavigation: NavSection[] = [
     items: [
       { title: "FAQ", url: "/faq", icon: HelpCircle },
       { title: "Support", url: "/support", icon: HeadphonesIcon },
+      // a person an account holder named claims here (no account needed to send it)
+      { title: "Report a Death / Claim", url: "/estate-claim", icon: ScrollText },
       { title: "Login / Register", url: "/auth", icon: LogIn },
     ],
   },
@@ -182,6 +185,7 @@ const investorNavigation: NavSection[] = [
       { title: "KYC Verification", url: "/kyc", icon: UserCheck },
       { title: "Notifications", url: "/notifications", icon: Bell },
       { title: "Support", url: "/support", icon: HeadphonesIcon },
+      { title: "Report a Death / Claim", url: "/estate-claim", icon: ScrollText },
       { title: "Account Settings", url: "/settings", icon: Settings },
     ],
   },

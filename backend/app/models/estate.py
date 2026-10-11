@@ -1,4 +1,4 @@
-"""Estate / inheritance models (Group 4) — DDL owned by alembic/0018.
+"""Estate / inheritance models (Group 4) — DDL owned by alembic/0018 and 0035.
 
 Free allocation (owner-set %, not Sharia-enforced; disclaimer shown in the UI) +
 manual-admin death verification. REAL/PENDING beneficiary model mirrors Phase-10 family.
@@ -11,6 +11,7 @@ import uuid
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -54,6 +55,13 @@ class EstateBeneficiary(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    # 0035 — the number on the person's certificate (and typed into a claim); ``version``
+    # counts the changes to what the certificate prints.
+    certificate_no: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    # copies of the person's identity document the holder uploaded:
+    # [{id, key, filename, content_type, size, uploaded_at}] in object storage (never public)
+    id_documents: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )
@@ -81,6 +89,12 @@ class EstateEvent(Base):
     )
     verified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     executed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    # 0035 — the claim the execution came from, and what it recorded
+    claim_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("estate_claims.id", ondelete="SET NULL")
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False, server_default="death")
+    date_of_death: Mapped[datetime.date | None] = mapped_column(Date)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )
@@ -105,5 +119,60 @@ class EstateTransfer(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="completed")
     materialized_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=_NOW
+    )
+
+
+class EstateClaim(Base):
+    """A claim on a holder's assets by the person the holder designated (0035): sent from the
+    public page with the beneficiary certificate and the claimant's identity document, reviewed
+    by staff, and, once approved, executed as a transfer to the claimant's OWN account.
+
+    Statuses: submitted -> in_review -> approved | rejected, with needs_info while staff wait
+    for the claimant."""
+
+    __tablename__ = "estate_claims"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    reference: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="submitted")
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    claimant_name: Mapped[str] = mapped_column(Text, nullable=False)
+    claimant_email: Mapped[str] = mapped_column(Text, nullable=False)
+    claimant_phone: Mapped[str | None] = mapped_column(Text)
+    claimant_country: Mapped[str] = mapped_column(Text, nullable=False)
+    claimant_id_type: Mapped[str | None] = mapped_column(Text)
+    claimant_id_number: Mapped[str | None] = mapped_column(Text)
+    relationship: Mapped[str | None] = mapped_column(Text)
+    claimant_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    holder_name: Mapped[str] = mapped_column(Text, nullable=False)
+    holder_email: Mapped[str | None] = mapped_column(Text)
+    certificate_no: Mapped[str | None] = mapped_column(Text)
+    date_of_death: Mapped[datetime.date | None] = mapped_column(Date)
+    details: Mapped[str | None] = mapped_column(Text)
+    documents: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    subject_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    beneficiary_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("estate_beneficiaries.id", ondelete="SET NULL")
+    )
+    estate_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("estate_events.id", ondelete="SET NULL")
+    )
+    admin_note: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    decided_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    ip: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=_NOW
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )

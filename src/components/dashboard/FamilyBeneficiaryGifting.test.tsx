@@ -2,11 +2,14 @@
  * Group 4 + 5: the beneficiary register and the gifting compose flow are both wired to the
  * real API (data layer). The previous hardcoded mock beneficiaries AND the fabricated gift
  * cards are gone; the lists reflect estateApi / giftsApi data and the actions hit the API.
+ * (The register's own behaviour — edit, identity document, certificate — is tested in
+ * BeneficiaryRegister.test.tsx.)
  */
 import { render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { FamilyBeneficiaryGifting } from "./FamilyBeneficiaryGifting";
+import { FamilyBeneficiaryGifting, FamilyGifting } from "./FamilyBeneficiaryGifting";
 
 const listMock = vi.fn();
 const addMock = vi.fn();
@@ -15,6 +18,7 @@ const giftsListMock = vi.fn();
 const holdingsMineMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
+  ApiError: class ApiError extends Error {},
   estateApi: {
     list: (...a: unknown[]) => listMock(...a),
     add: (...a: unknown[]) => addMock(...a),
@@ -33,8 +37,31 @@ vi.mock("@/lib/api", () => ({
 
 function wrap(node: React.ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>{node}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
+
+const GIFT = {
+  id: "g1",
+  recipient_name: "Layla",
+  recipient_email: "layla@x.com",
+  is_user: true,
+  asset_type: "property_shares",
+  property_id: "p1",
+  units: 5,
+  amount: null,
+  occasion: "birthday",
+  message: "Happy birthday",
+  scheduled_for: "2026-12-01",
+  recurring: true,
+  recurrence_end: null,
+  status: "scheduled",
+  failure_reason: null,
+  created_at: "2026-06-01T00:00:00Z",
+};
 
 describe("FamilyBeneficiaryGifting (real estate + gifting API)", () => {
   beforeEach(() => {
@@ -73,31 +100,21 @@ describe("FamilyBeneficiaryGifting (real estate + gifting API)", () => {
 
   it("loads scheduled gifts from the API with no fabricated gift cards", async () => {
     listMock.mockResolvedValue([]);
-    giftsListMock.mockResolvedValue([
-      {
-        id: "g1",
-        recipient_name: "Layla",
-        recipient_email: "layla@x.com",
-        is_user: true,
-        asset_type: "property_shares",
-        property_id: "p1",
-        units: 5,
-        amount: null,
-        occasion: "birthday",
-        message: "Happy birthday",
-        scheduled_for: "2026-12-01",
-        recurring: true,
-        recurrence_end: null,
-        status: "scheduled",
-        failure_reason: null,
-        created_at: "2026-06-01T00:00:00Z",
-      },
-    ]);
+    giftsListMock.mockResolvedValue([GIFT]);
     wrap(<FamilyBeneficiaryGifting />);
     // a REAL scheduled gift card renders…
     expect(await screen.findByText(/Layla/)).toBeInTheDocument();
     // …and the prior fabricated mock gifts are gone
     expect(screen.queryByText("Omar Al-Hassan")).toBeNull();
     await waitFor(() => expect(giftsListMock).toHaveBeenCalled());
+  });
+
+  it("the gifting section stands on its own (the Gifting tab), without the register", async () => {
+    giftsListMock.mockResolvedValue([GIFT]);
+    wrap(<FamilyGifting />);
+    expect(await screen.findByText(/Layla/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Schedule Gift/i })).toBeInTheDocument();
+    expect(screen.queryByText("Estate, Heirs & Authorized Representatives")).toBeNull();
+    expect(listMock).not.toHaveBeenCalled();
   });
 });

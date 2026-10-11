@@ -9,7 +9,11 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { holdings, portfolio } = vi.hoisted(() => ({ holdings: vi.fn(), portfolio: vi.fn() }));
+const { holdings, portfolio, movements } = vi.hoisted(() => ({
+  holdings: vi.fn(),
+  portfolio: vi.fn(),
+  movements: vi.fn(),
+}));
 vi.mock("@/lib/api", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
   return {
@@ -19,6 +23,7 @@ vi.mock("@/lib/api", async (orig) => {
       list: async () => ({ items: [], total: 0 }),
       mySukuk: async () => [],
       portfolio: () => portfolio(),
+      movements: () => movements(),
     },
   };
 });
@@ -61,6 +66,8 @@ describe("ActiveInvestments: the unit price of each holding", () => {
   beforeEach(() => {
     holdings.mockReset();
     portfolio.mockReset();
+    movements.mockReset();
+    movements.mockResolvedValue({ items: [], total: 0 });
     portfolio.mockResolvedValue({
       invested: "1000.00",
       current_value: "1100.00",
@@ -158,5 +165,37 @@ describe("ActiveInvestments: the unit price of each holding", () => {
     expect(await screen.findByText("$400")).toBeInTheDocument();
     // and says why it is not the sum of the cards below
     expect(screen.getByTestId("value-with-positions")).toHaveTextContent(/installment plans as positions/);
+  });
+
+  it("lists how the units got there, with the other person named (client, 2026-10-07)", async () => {
+    // units that arrived by a family transfer looked exactly like units bought, and the
+    // member who sent them saw only a smaller number
+    holdings.mockResolvedValue({ items: [HOLDING], total: 1 });
+    movements.mockResolvedValue({
+      total: 3,
+      items: [
+        { id: "m3", at: "2026-10-05T09:00:00Z", property_id: "prop-1", property_title: "Creek Tower", units: -2, direction: "out", reason: "family_transfer_out", label: "Transferred to a family member", counterparty: "Omar" },
+        { id: "m2", at: "2026-10-02T09:00:00Z", property_id: "prop-1", property_title: "Creek Tower", units: 7, direction: "in", reason: "family_transfer_in", label: "Received from a family member", counterparty: "Ahmed Mansouri" },
+        { id: "m1", at: "2026-09-20T09:00:00Z", property_id: "prop-1", property_title: "Creek Tower", units: 5, direction: "in", reason: "purchase", label: "Purchase", counterparty: null },
+      ],
+    });
+    mount();
+    const card = await screen.findByTestId("unit-movements");
+    const rows = within(card).getAllByTestId("movement-row");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent("Transferred to a family member · to Omar");
+    expect(rows[0]).toHaveTextContent("Creek Tower · Oct 5, 2026");
+    expect(rows[0]).toHaveTextContent("−2 units");
+    expect(rows[1]).toHaveTextContent("Received from a family member · from Ahmed Mansouri");
+    expect(rows[1]).toHaveTextContent("+7 units");
+    expect(rows[2]).toHaveTextContent("Purchase");
+    expect(rows[2]).toHaveTextContent("+5 units");
+  });
+
+  it("shows no movements card to a member who has none", async () => {
+    holdings.mockResolvedValue({ items: [], total: 0 });
+    mount();
+    expect(await screen.findByText(/You don't own any units yet/)).toBeInTheDocument();
+    expect(screen.queryByTestId("unit-movements")).toBeNull();
   });
 });

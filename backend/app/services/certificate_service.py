@@ -164,8 +164,18 @@ def _emblem(c: canvas.Canvas, cx: float, cy: float, r: float) -> None:
     c.restoreState()
 
 
-def _seal(c: canvas.Canvas, cx: float, cy: float, r: float) -> None:
-    """A gold-gradient wax-style seal with a rosette, monogram and ribbon tails."""
+def _seal(
+    c: canvas.Canvas,
+    cx: float,
+    cy: float,
+    r: float,
+    *,
+    upper: str = "OWNERSHIP",
+    lower: str = "CERTIFIED",
+) -> None:
+    """A gold-gradient wax-style seal with a rosette, monogram and ribbon tails. ``upper``
+    and ``lower`` are the two words around the monogram (the beneficiary certificate has
+    its own)."""
     c.saveState()
     # Ribbon tails first (so the disc overlaps them).
     top, bot = cy - r + 6, cy - r - 24
@@ -219,8 +229,8 @@ def _seal(c: canvas.Canvas, cx: float, cy: float, r: float) -> None:
     c.drawCentredString(cx, cy - 3, "C")
     c.setFont("Helvetica-Bold", 5.5)
     c.setFillColor(_GREEN)
-    c.drawCentredString(cx, cy + 17, "OWNERSHIP")
-    c.drawCentredString(cx, cy - 24, "CERTIFIED")
+    c.drawCentredString(cx, cy + 17, upper)
+    c.drawCentredString(cx, cy - 24, lower)
     c.restoreState()
 
 

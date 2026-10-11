@@ -338,6 +338,8 @@ register(
 # --------------------------------------------------------------------------- #
 class TransferRow(ToolOutput):
     id: str | None
+    # out: the user sent the units; in: the user received them
+    direction: str | None
     member_name: str | None
     property_title: str | None
     units: int | None
@@ -350,18 +352,22 @@ class TransfersOut(ToolOutput):
 
 
 async def _list_my_family_transfers(session: AsyncSession, ctx: AgentContext, args) -> dict:
-    rows = await family_service.list_transfers(session, _uid(ctx))
+    # both sides: a relative who only received has no group of their own, and must not be
+    # told they have no transfers
+    activity = await family_service.list_activity(session, _uid(ctx))
+    transfers = [i for i in activity["items"] if i["kind"] == "transfer"]
     return {
         "items": [
             {
-                "id": _iso(r.get("id") or r.get("transfer_id")),
-                "member_name": r.get("member_name") or r.get("name"),
-                "property_title": r.get("property_title"),
-                "units": r.get("units"),
-                "status": r.get("status"),
-                "created_at": _iso(r.get("created_at")),
+                "id": str(i["id"]).split(":", 1)[-1],
+                "direction": i["direction"],
+                "member_name": i["counterparty"],
+                "property_title": i["property_title"],
+                "units": i["units"],
+                "status": i["status"],
+                "created_at": _iso(i["at"]),
             }
-            for r in rows[:50]
+            for i in transfers[:50]
         ]
     }
 
@@ -369,8 +375,9 @@ async def _list_my_family_transfers(session: AsyncSession, ctx: AgentContext, ar
 register(
     ToolSpec(
         "list_my_family_transfers",
-        "Unit transfers the signed-in user made inside their family group (member, property, "
-        "units, status). No member personal data.",
+        "Unit transfers between the signed-in user and their family, on either side: "
+        "direction out = units the user sent, in = units the user received; with the other "
+        "member's name, the property, units, status and date. No member personal data.",
         NoArgs,
         TransfersOut,
         "read_own",

@@ -57,6 +57,9 @@ class OwnershipLedger(Base):
     # units carry the platform rate at acquisition. Phase-6 derives the rental fee base
     # from this per-row rate (never a global re-derive). NULL on release/legacy rows.
     fee_rate: Mapped[decimal.Decimal | None] = mapped_column(Numeric(6, 3))
+    # The transfer this movement belongs to (0035): a ``family_transfers`` or an
+    # ``estate_transfers`` row, so a movement can name the other person. NULL otherwise.
+    ref_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )

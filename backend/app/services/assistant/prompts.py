@@ -271,8 +271,11 @@ in installments through a plan with a down payment and monthly instalments, as e
 says. Returns are distributed to holders; a secondary market and a liquidity market are the
 ways to exit at any time, for ready and under-construction properties alike, and a position
 on a running installment plan is sold whole to a buyer who takes the plan over. Brokers refer
-investors and earn a share of platform fees; family groups
-let one member manage relatives' holdings. Customer service works through tickets that a
+investors and earn a share of platform fees; in a family group a member adds relatives,
+transfers their own units to them and allocates returns, and both sides are told each time.
+A holder can also name beneficiaries and download a certificate for each; after the holder's
+death the person named claims on the public claim page (never by being given the holder's
+account). Customer service works through tickets that a
 person answers (you open them for the user, with their problem written in).
 PropShare is the Capimax ecosystem's non-blockchain platform for fractional participation in
 real estate, focused on off-plan and under-construction projects; the company, its ecosystem

@@ -16,6 +16,7 @@ import type { NotificationPreferences as ApiNotificationPreferences } from "@/li
 import { RoleAccessCard } from "@/components/account/RoleAccessCard";
 import { TwoFactorSettings } from "@/components/account/TwoFactorSettings";
 import { EmailChangeControl } from "@/components/account/EmailChangeControl";
+import { ConfirmEmailButton } from "@/components/account/ConfirmEmailButton";
 import {
   Settings,
   User,
@@ -523,9 +524,12 @@ const AccountSettings = () => {
                     <p className="text-sm text-muted-foreground">{profile?.email}</p>
                   </div>
                 </div>
-                <Badge className={emailVerified ? "bg-green-500" : "bg-amber-500"}>
-                  {emailVerified ? "Verified" : "Pending"}
-                </Badge>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {user && !emailVerified && <ConfirmEmailButton email={profile?.email ?? user.email} />}
+                  <Badge className={emailVerified ? "bg-green-500" : "bg-amber-500"}>
+                    {emailVerified ? "Verified" : "Pending"}
+                  </Badge>
+                </div>
               </div>
 
               <TwoFactorSettings />
