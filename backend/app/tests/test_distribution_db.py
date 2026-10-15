@@ -145,7 +145,7 @@ async def test_pro_rata_sums_to_pool_exactly(client, db):
         kind="appreciation",
         period_key="2026-Q1",
         start="2026-01-01",
-        end="2026-04-01",
+        end="2026-03-31",
         pool=100,
     )
     assert r.status_code == 200, r.text
@@ -181,7 +181,7 @@ async def test_management_fee_withheld_from_rental(client, db):
         kind="rental",
         period_key="2026-FY",
         start="2025-01-01",
-        end="2026-01-01",
+        end="2025-12-31",
         pool=200,
     )
     assert r.status_code == 200, r.text
@@ -220,7 +220,7 @@ async def test_appreciation_kind_has_no_management_fee(client, db):
         kind="appreciation",
         period_key="2026-APP",
         start="2025-01-01",
-        end="2026-01-01",
+        end="2025-12-31",
         pool=500,
     )
     assert r.json()["total_management_fee"] == "0.00"
@@ -244,7 +244,7 @@ async def test_rerun_same_period_is_refused_no_double_pay(client, db):
         kind="rental",
         period_key="2026-Q2",
         start="2026-04-01",
-        end="2026-07-01",
+        end="2026-06-30",
         pool=300,
     )
     assert first.status_code == 200
@@ -256,7 +256,7 @@ async def test_rerun_same_period_is_refused_no_double_pay(client, db):
         kind="rental",
         period_key="2026-Q2",
         start="2026-04-01",
-        end="2026-07-01",
+        end="2026-06-30",
         pool=300,
     )
     assert second.status_code == 409 and second.json()["error"]["code"] == "DISTRIBUTION_EXISTS"
@@ -298,7 +298,7 @@ async def test_atomic_rollback_on_partial_failure(client, db, monkeypatch):
         kind="appreciation",
         period_key="2026-FAIL",
         start="2026-01-01",
-        end="2026-04-01",
+        end="2026-03-31",
         pool=200,
     )
     assert r.status_code >= 500
@@ -358,7 +358,7 @@ async def test_family_allocation_records_split_exactly(client, db):
         kind="appreciation",
         period_key="2026-FAM",
         start="2026-01-01",
-        end="2026-04-01",
+        end="2026-03-31",
         pool=100,
     )
     assert r.status_code == 200
@@ -388,7 +388,7 @@ async def test_distribution_requires_admin(client, db):
         json={
             "period_key": "x",
             "period_start": "2026-01-01",
-            "period_end": "2026-02-01",
+            "period_end": "2026-01-31",
             "gross_pool": 10,
         },
     )
@@ -402,7 +402,7 @@ async def test_distribution_requires_admin(client, db):
         kind="rental",
         period_key="x",
         start="2026-01-01",
-        end="2026-02-01",
+        end="2026-01-31",
         pool=10,
     )
     assert r1.status_code == 403
@@ -419,7 +419,7 @@ async def test_distribution_no_owners_rejected(client, db):
         kind="rental",
         period_key="2026-EMPTY",
         start="2026-01-01",
-        end="2026-04-01",
+        end="2026-03-31",
         pool=100,
     )
     assert r.status_code == 422 and r.json()["error"]["code"] == "NO_OWNERS"
@@ -439,7 +439,7 @@ async def test_my_returns_endpoint(client, db):
         kind="rental",
         period_key="2026-RET",
         start="2025-01-01",
-        end="2026-01-01",
+        end="2025-12-31",
         pool=200,
     )
     me = await client.get("/api/v1/investments/returns", headers={"Authorization": f"Bearer {t}"})
@@ -450,3 +450,146 @@ async def test_my_returns_endpoint(client, db):
     assert body["total_net"] == "190.00"
     assert body["items"][0]["net_amount"] == "190.00"
     assert body["items"][0]["management_fee"] == "10.00"
+
+
+# --- the admin page: property by name, a preview, then the run ------------------- #
+async def _panel(client, db, email: str) -> None:
+    await _admin(client, db, email)
+    r = await client.post("/admin/login", data={"username": email, "password": PW})
+    assert r.status_code in (200, 302, 303)
+
+
+def _form(pid: str, **over) -> dict:
+    form = {
+        "property_id": pid,
+        "kind": "rental",
+        "basis": "amount",
+        "gross_pool": "200",
+        "period_key": "2026-09",
+        "period_start": "2025-01-01",
+        "period_end": "2025-12-31",
+    }
+    form.update(over)
+    return form
+
+
+@pytest.mark.asyncio
+async def test_admin_page_previews_then_pays_exactly_what_it_showed(client, db):
+    pid = _seed_property(db, unit_price=100, total_units=100)
+    for e, amount in (("pv1@d.com", 1000), ("pv2@d.com", 300)):
+        t = await _verified(client, db, e)
+        db("UPDATE users SET full_name=:n WHERE email=:e", n=e.split("@")[0].upper(), e=e)
+        _fund(db, _uid(db, e), 2000)
+        assert (await _invest(client, t, pid, amount)).status_code == 200
+
+    # the page is staff's alone, and the old raw create form now sends here
+    anon = await client.get("/admin/distribution/new", follow_redirects=False)
+    assert anon.status_code in (302, 307) and "/admin/login" in anon.headers["location"]
+    await _panel(client, db, "pvadmin@d.com")
+    old = await client.post("/admin/distribution/create", data={}, follow_redirects=False)
+    assert old.status_code == 303 and old.headers["location"] == "/admin/distribution/new"
+    page = await client.get("/admin/distribution/new")
+    assert page.status_code == 200 and f'value="{pid}"' in page.text and "Marina Bay" in page.text
+
+    before = _bal(db, _uid(db, "pv1@d.com"))
+    # the preview: 10 + 3 units share 200; rental fee 1% a year on each principal
+    pv = await client.post("/admin/distribution/new", data={**_form(pid), "action": "preview"})
+    assert pv.status_code == 200, pv.text
+    assert "PV1" in pv.text and "PV2" in pv.text and "Distribute now" in pv.text
+    for shown in ("$153.85", "$46.15", "$10.00", "$3.00", "$143.85", "$43.15", "$187.00"):
+        assert shown in pv.text, shown
+    assert db("SELECT count(*) FROM distributions WHERE property_id=:p", p=pid)[0][0] == 0
+    assert _bal(db, _uid(db, "pv1@d.com")) == before  # nothing moved
+
+    # confirming runs the one audited service and pays the previewed amounts
+    done = await client.post(
+        "/admin/distribution/new",
+        data={**_form(pid), "action": "confirm"},
+        follow_redirects=False,
+    )
+    assert done.status_code == 303, done.text
+    did = db("SELECT id FROM distributions WHERE property_id=:p", p=pid)[0][0]
+    assert done.headers["location"] == f"/admin/distribution/details/{did}"
+    items = dict(
+        db(
+            "SELECT u.email, i.net_amount FROM distribution_items i JOIN users u "
+            "ON u.id = i.user_id WHERE i.distribution_id=:d",
+            d=did,
+        )
+    )
+    assert items == {"pv1@d.com": Decimal("143.85"), "pv2@d.com": Decimal("43.15")}
+    assert _bal(db, _uid(db, "pv1@d.com")) == before + Decimal("143.85")
+
+    # the same period again: the preview says so and the run refuses it
+    again = await client.post("/admin/distribution/new", data={**_form(pid), "action": "preview"})
+    assert "already distributed" in again.text and "disabled" in again.text
+    twice = await client.post("/admin/distribution/new", data={**_form(pid), "action": "confirm"})
+    assert twice.status_code == 400 and "already exists" in twice.text
+    assert db("SELECT count(*) FROM distributions WHERE property_id=:p", p=pid)[0][0] == 1
+
+
+@pytest.mark.asyncio
+async def test_admin_page_explains_what_is_missing(client, db):
+    pid = _seed_property(db)
+    await _panel(client, db, "pvadmin2@d.com")
+    no_prop = await client.post("/admin/distribution/new", data={**_form(""), "action": "preview"})
+    assert no_prop.status_code == 400 and "Choose a property" in no_prop.text
+    nobody = await client.post("/admin/distribution/new", data={**_form(pid), "action": "preview"})
+    assert nobody.status_code == 400 and "No confirmed unit owners" in nobody.text
+    unnamed = await client.post(
+        "/admin/distribution/new", data={**_form(pid, period_key=" "), "action": "preview"}
+    )
+    assert unnamed.status_code == 400 and "Name the period" in unnamed.text
+
+
+@pytest.mark.asyncio
+async def test_admin_page_prices_a_yearly_yield(client, db):
+    pid = _seed_property(db, unit_price=100, total_units=100)
+    for e, amount in (("yd1@d.com", 1000), ("yd2@d.com", 300)):
+        t = await _verified(client, db, e)
+        _fund(db, _uid(db, e), 2000)
+        assert (await _invest(client, t, pid, amount)).status_code == 200
+    await _panel(client, db, "ydadmin@d.com")
+
+    # 8% a year on 13 units x $100 = $1,300 for the whole of 2025 (365 days): $104
+    form = _form(pid, basis="yield", annual_yield_pct="8", gross_pool="", period_key="2025")
+    pv = await client.post("/admin/distribution/new", data={**form, "action": "preview"})
+    assert pv.status_code == 200, pv.text
+    assert "8% a year on 13 units" in pv.text and "365 days" in pv.text
+    for shown in ("$104.00", "$80.00", "$24.00", "$70.00", "$21.00"):
+        assert shown in pv.text, shown
+    assert 'name="gross_pool" value="104.00"' in pv.text  # the confirm pays what was shown
+
+    # one month counts its days, both ends included: September = 30 days
+    sept = _form(
+        pid,
+        basis="yield",
+        annual_yield_pct="8",
+        period_key="2025-09",
+        period_start="2025-09-01",
+        period_end="2025-09-30",
+    )
+    pv_sept = await client.post("/admin/distribution/new", data={**sept, "action": "preview"})
+    assert "30 days" in pv_sept.text and "$8.55" in pv_sept.text  # 1300 x 8% x 30/365
+
+    done = await client.post(
+        "/admin/distribution/new",
+        data={**form, "basis": "amount", "gross_pool": "104.00", "action": "confirm"},
+        follow_redirects=False,
+    )
+    assert done.status_code == 303, done.text
+    paid = dict(
+        db(
+            "SELECT u.email, i.net_amount FROM distribution_items i JOIN users u "
+            "ON u.id = i.user_id JOIN distributions d ON d.id = i.distribution_id "
+            "WHERE d.property_id=:p",
+            p=pid,
+        )
+    )
+    assert paid == {"yd1@d.com": Decimal("70.00"), "yd2@d.com": Decimal("21.00")}
+
+    bad = await client.post(
+        "/admin/distribution/new",
+        data={**form, "annual_yield_pct": "", "action": "preview"},
+    )
+    assert bad.status_code == 400 and "Enter the gross yield" in bad.text

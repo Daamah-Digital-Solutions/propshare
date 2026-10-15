@@ -33,7 +33,7 @@ from app.services import broker_service, distribution_service
 
 PW = "Passw0rd!23"
 _P_START = dt.date(2025, 1, 1)
-_P_END = dt.date(2026, 1, 1)  # 365 days -> period_fraction == 1.0
+_P_END = dt.date(2025, 12, 31)  # 365 days, both ends included -> period_fraction == 1.0
 
 
 # --- arrange helpers -------------------------------------------------------- #

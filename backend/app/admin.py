@@ -29,6 +29,7 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from wtforms import SelectField
 
 from app.admin_assistant import ASSISTANT_VIEWS
+from app.admin_distribution import DISTRIBUTION_VIEWS
 from app.admin_estate import ESTATE_VIEWS
 from app.admin_leads import BROKER_LEAD_VIEWS
 from app.admin_listing import ListingEditorView, is_full_admin
@@ -104,6 +105,9 @@ PANEL_ROLES = frozenset({"admin", "content_editor"})
 ADMIN_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 # The raw SQLAdmin create page for properties, replaced by /admin/listing/new.
 LEGACY_PROPERTY_CREATE = "/property/create"
+# The raw create page for distributions (paid at once, property id typed by hand), replaced by
+# /admin/distribution/new (property by name, a preview before anything is paid).
+LEGACY_DISTRIBUTION_CREATE = "/distribution/create"
 
 
 class AdminOnlyModelView(ModelView):
@@ -180,6 +184,9 @@ class AdminAuth(AuthenticationBackend):
                 # One place to add a property: the old raw create form sends admins to the
                 # Listing Editor's New listing form (303, so a POST here creates nothing).
                 return RedirectResponse("/admin/listing/new", status_code=303)
+            if rel.rstrip("/") == LEGACY_DISTRIBUTION_CREATE:
+                # Same for distributions: a POST to the old form pays nobody.
+                return RedirectResponse("/admin/distribution/new", status_code=303)
             return True
         if rel.startswith("/change-password"):
             return True
@@ -879,8 +886,9 @@ class DistributionAdmin(AdminOnlyModelView, model=Distribution):
     name = "Distribution"
     name_plural = "Distributions"
     icon = "fa-solid fa-money-bill-trend-up"
-    # Filling this create form TRIGGERS a real pro-rata distribution run (atomic,
-    # idempotent on property+period) — it is not a plain insert.
+    # Its create button opens /admin/distribution/new (AdminAuth redirect): the property by
+    # name and a preview of every investor's share before the run. insert_model stays as
+    # the same service call, should anything still post the raw form.
     column_list = [
         Distribution.property_id,
         Distribution.kind,
@@ -2083,6 +2091,7 @@ def setup_admin(app) -> Admin:
         *OWNER_VIEWS,
         *BROKER_LEAD_VIEWS,
         *ESTATE_VIEWS,
+        *DISTRIBUTION_VIEWS,
         *SUKUK_VIEWS,
         *PRICING_VIEWS,
         PasswordChangeView,

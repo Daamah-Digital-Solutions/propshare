@@ -26,7 +26,7 @@ from app.services import distribution_service, email_service, notification_servi
 
 PW = "Passw0rd!23"
 _P_START = dt.date(2025, 1, 1)
-_P_END = dt.date(2026, 1, 1)
+_P_END = dt.date(2025, 12, 31)  # 365 days, both ends included -> period_fraction == 1.0
 
 
 # --- helpers ---------------------------------------------------------------- #

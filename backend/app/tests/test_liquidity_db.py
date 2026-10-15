@@ -445,7 +445,7 @@ async def test_mgmt_fee_charged_on_lp_acquired_units(client, db, asession):
         kind="rental",
         period_key="2026-FY",
         period_start=dt.date(2025, 1, 1),
-        period_end=dt.date(2026, 1, 1),
+        period_end=dt.date(2025, 12, 31),
         gross_pool=decimal.Decimal("2000"),
         created_by=uuid.UUID(str(aid)),
     )

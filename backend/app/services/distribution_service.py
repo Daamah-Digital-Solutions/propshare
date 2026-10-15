@@ -159,6 +159,141 @@ async def _fee_base_per_user(
     return out
 
 
+def _check_inputs(
+    kind: str, period_key: str, period_start: dt.date, period_end: dt.date, gross_pool
+) -> None:
+    if kind not in _VALID_KINDS:
+        raise AppError(
+            "INVALID_KIND", f"kind must be one of {sorted(_VALID_KINDS)}", status_code=422
+        )
+    if not str(period_key or "").strip():
+        raise AppError("INVALID_PERIOD", "Name the period (for example 2026-10).", status_code=422)
+    if gross_pool <= 0:
+        raise AppError("INVALID_AMOUNT", "gross_pool must be positive.", status_code=422)
+    if period_end < period_start:
+        raise AppError("INVALID_PERIOD", "The period cannot end before it starts.", status_code=422)
+
+
+def period_days(period_start: dt.date, period_end: dt.date) -> int:
+    """Days in a period, both dates included: 1 to 30 September is 30 days, a calendar year
+    365. Investors see the period's last day as its date, so the last day is part of it."""
+    return (period_end - period_start).days + 1
+
+
+async def pool_from_yield(
+    session: AsyncSession,
+    *,
+    property_id: uuid.UUID,
+    annual_yield_pct: decimal.Decimal,
+    period_start: dt.date,
+    period_end: dt.date,
+) -> dict:
+    """The gross pool an annual yield pays for a period: the yield-eligible units at the
+    property's unit price, times the yearly rate, times the period's share of a year (to
+    the cent). For staff who think of a distribution as "8% a year" rather than an amount."""
+    if annual_yield_pct <= 0 or annual_yield_pct > 100:
+        raise AppError(
+            "INVALID_AMOUNT",
+            "The yield is a yearly percentage above 0 and up to 100.",
+            status_code=422,
+        )
+    if period_end < period_start:
+        raise AppError("INVALID_PERIOD", "The period cannot end before it starts.", status_code=422)
+    prop = await session.get(Property, property_id)
+    if prop is None:
+        raise AppError("NOT_FOUND", "Property not found", status_code=404)
+    units = sum(u for _uid, u in await _ownership(session, property_id))
+    if not units:
+        raise AppError("NO_OWNERS", "No confirmed unit owners to distribute to.", status_code=422)
+    days = period_days(period_start, period_end)
+    value = decimal.Decimal(prop.unit_price) * units
+    pool = (value * annual_yield_pct / 100 * days / 365).quantize(
+        _CENTS, rounding=decimal.ROUND_HALF_UP
+    )
+    if pool <= 0:
+        raise AppError("INVALID_AMOUNT", "That yield pays less than a cent.", status_code=422)
+    return {
+        "pool": pool,
+        "units": units,
+        "unit_price": decimal.Decimal(prop.unit_price),
+        "value": value,
+        "days": days,
+        "annual_yield_pct": annual_yield_pct,
+    }
+
+
+async def _split(
+    session: AsyncSession,
+    *,
+    property_id: uuid.UUID,
+    kind: str,
+    period_start: dt.date,
+    period_end: dt.date,
+    gross_pool: decimal.Decimal,
+) -> list[tuple[uuid.UUID, int, decimal.Decimal, decimal.Decimal, decimal.Decimal]]:
+    """Each owner's ``(user_id, units, gross, fee, net)``, sorted by user_id: the gross pool
+    pro rata to the yield-eligible units (exact to the cent), less the rental management fee
+    at each owner's stamped rate for the period's fraction of a year, never more than the
+    gross. The ONE computation behind a run and its preview."""
+    owners = await _ownership(session, property_id)
+    if not owners:
+        raise AppError("NO_OWNERS", "No confirmed unit owners to distribute to.", status_code=422)
+    gross_cents = hamilton(_to_cents(gross_pool), [(uid, units) for uid, units in owners])
+    period_fraction = decimal.Decimal(period_days(period_start, period_end)) / decimal.Decimal(365)
+    fee_base = await _fee_base_per_user(session, property_id) if kind == "rental" else {}
+    lines = []
+    for uid, units in owners:  # sorted by user_id -> deterministic wallet lock order
+        gross = _from_cents(gross_cents[uid])
+        fee = decimal.Decimal("0")
+        if kind == "rental" and uid in fee_base:
+            fee = (fee_base[uid] * period_fraction).quantize(_CENTS)
+            if fee > gross:
+                fee = gross  # never withhold more than the gross share
+        lines.append((uid, units, gross, fee, gross - fee))
+    return lines
+
+
+async def preview_distribution(
+    session: AsyncSession,
+    *,
+    property_id: uuid.UUID,
+    kind: str,
+    period_key: str,
+    period_start: dt.date,
+    period_end: dt.date,
+    gross_pool: decimal.Decimal,
+) -> dict:
+    """What ``run_distribution`` would pay with these inputs, writing nothing: each owner's
+    units, gross, fee and net, the totals, and whether the period was distributed already."""
+    _check_inputs(kind, period_key, period_start, period_end, gross_pool)
+    prop = await session.get(Property, property_id)
+    if prop is None:
+        raise AppError("NOT_FOUND", "Property not found", status_code=404)
+    already = await session.scalar(
+        select(Distribution.id).where(
+            Distribution.property_id == property_id, Distribution.period_key == period_key
+        )
+    )
+    lines = await _split(
+        session,
+        property_id=property_id,
+        kind=kind,
+        period_start=period_start,
+        period_end=period_end,
+        gross_pool=gross_pool,
+    )
+    return {
+        "property": prop,
+        "already_distributed": already is not None,
+        "lines": lines,
+        "investors": len(lines),
+        "units": sum(units for _u, units, _g, _f, _n in lines),
+        "gross": sum((g for _u, _units, g, _f, _n in lines), decimal.Decimal("0")),
+        "fee": sum((f for _u, _units, _g, f, _n in lines), decimal.Decimal("0")),
+        "net": sum((n for _u, _units, _g, _f, n in lines), decimal.Decimal("0")),
+    }
+
+
 async def run_distribution(
     session: AsyncSession,
     *,
@@ -171,14 +306,7 @@ async def run_distribution(
     created_by: uuid.UUID | None,
     idempotency_key: str | None = None,
 ) -> dict:
-    if kind not in _VALID_KINDS:
-        raise AppError(
-            "INVALID_KIND", f"kind must be one of {sorted(_VALID_KINDS)}", status_code=422
-        )
-    if gross_pool <= 0:
-        raise AppError("INVALID_AMOUNT", "gross_pool must be positive.", status_code=422)
-    if period_end <= period_start:
-        raise AppError("INVALID_PERIOD", "period_end must be after period_start.", status_code=422)
+    _check_inputs(kind, period_key, period_start, period_end, gross_pool)
 
     # Freeze ownership: lock the property row so no invest changes units mid-run.
     prop = (
@@ -200,9 +328,15 @@ async def run_distribution(
             status_code=409,
         )
 
-    owners = await _ownership(session, property_id)
-    if not owners:
-        raise AppError("NO_OWNERS", "No confirmed unit owners to distribute to.", status_code=422)
+    lines = await _split(
+        session,
+        property_id=property_id,
+        kind=kind,
+        period_start=period_start,
+        period_end=period_end,
+        gross_pool=gross_pool,
+    )
+    owners = [(uid, units) for uid, units, _g, _f, _n in lines]
 
     distribution = Distribution(
         property_id=property_id,
@@ -217,13 +351,6 @@ async def run_distribution(
     )
     session.add(distribution)
     await session.flush()  # assign distribution.id
-
-    # Pro-rata gross by units (exact to the cent).
-    gross_cents = hamilton(_to_cents(gross_pool), [(uid, units) for uid, units in owners])
-
-    # Management fee (rental only), from the per-investment snapshot rate × period.
-    period_fraction = decimal.Decimal((period_end - period_start).days) / decimal.Decimal(365)
-    fee_base = await _fee_base_per_user(session, property_id) if kind == "rental" else {}
 
     total_net = decimal.Decimal("0")
     total_fee = decimal.Decimal("0")
@@ -241,14 +368,7 @@ async def run_distribution(
                 broker_ids.append(b)
     await wallet_service.lock_wallets(session, [uid for uid, _u in owners] + broker_ids)
 
-    for uid, units in owners:  # sorted by user_id -> deterministic wallet lock order
-        gross = _from_cents(gross_cents[uid])
-        fee = decimal.Decimal("0")
-        if kind == "rental" and uid in fee_base:
-            fee = (fee_base[uid] * period_fraction).quantize(_CENTS)
-            if fee > gross:
-                fee = gross  # never withhold more than the gross share
-        net = gross - fee
+    for uid, units, gross, fee, net in lines:  # sorted by user_id -> wallet lock order
 
         txn_id: uuid.UUID | None = None
         if net > 0:
