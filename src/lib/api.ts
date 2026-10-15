@@ -938,6 +938,11 @@ export const investApi = {
     return apiRequest<PortfolioSummary>("/api/v1/investments/portfolio");
   },
   /** The caller's unit movements, newest first: purchases, sales and transfers in or out. */
+  /** Unit statement for a period (YYYY-MM-DD, both days included, UTC) as PDF or Excel. */
+  downloadMovementsStatement(start: string, end: string, format: StatementFormat): Promise<Blob> {
+    const q = new URLSearchParams({ start, end, format });
+    return fetchBlob(`/api/v1/investments/movements/statement?${q.toString()}`);
+  },
   movements(limit = 100): Promise<{ items: UnitMovement[]; total: number }> {
     return apiRequest(`/api/v1/investments/movements?limit=${limit}`);
   },

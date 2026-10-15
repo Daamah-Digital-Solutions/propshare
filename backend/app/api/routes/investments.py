@@ -5,6 +5,8 @@
                           (reserve units -> hosted checkout -> webhook confirms).
 - GET  /investments       the caller's investments (newest first).
 - GET  /investments/{id}  one of the caller's investments.
+- GET  /investments/movements/statement  the caller's unit statement for a period
+                          (PDF or Excel).
 
 Money is server-authoritative: the client sends a property + USD amount + method;
 the server computes units, fees and the charge. Direct-pay is finalized ONLY by a
@@ -13,16 +15,19 @@ signed webhook (see routes/payments.py), never on a browser redirect.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
 
 from app.api.deps import AdminOrCronDep, KycVerifiedDep, PrincipalDep, SessionDep
 from app.api.routes._sukuk_form import certificate_upload
+from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.errors import AppError
+from app.core.ratelimit import STATEMENT_LIMIT, limiter
 from app.models import Investment
 from app.schemas.distribution import MyReturnsOut
 from app.schemas.investment import (
@@ -48,6 +53,7 @@ from app.services import (
     settings_service,
     sukuk_service,
     unit_movement_service,
+    unit_statement_render,
 )
 
 router = APIRouter(prefix="/api/v1/investments", tags=["investments"])
@@ -131,6 +137,50 @@ async def my_unit_movements(principal: PrincipalDep, session: SessionDep, limit:
     of their holdings, with the other person named for a family transfer or an inheritance."""
     return UnitMovementListOut(
         **await unit_movement_service.list_for_user(session, principal.user_id, limit=limit)
+    )
+
+
+_STATEMENT_TYPES = {
+    "pdf": "application/pdf",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+
+
+@router.get("/movements/statement")
+@limiter.limit(STATEMENT_LIMIT)
+async def my_unit_statement(
+    request: Request,
+    principal: PrincipalDep,
+    session: SessionDep,
+    start: Annotated[dt.date, Query(description="First day, inclusive (UTC)")],
+    end: Annotated[dt.date, Query(description="Last day, inclusive (UTC)")],
+    format: Annotated[Literal["pdf", "xlsx"], Query()] = "pdf",  # noqa: A002
+):
+    """The caller's own unit statement: every unit movement in the period with the units held
+    afterwards, and per property the units at the start and at the end. Only their ledger is
+    ever read."""
+    stmt = await unit_movement_service.build_statement(session, principal.user_id, start, end)
+    body = (
+        unit_statement_render.render_pdf(stmt)
+        if format == "pdf"
+        else unit_statement_render.render_xlsx(stmt)
+    )
+    await write_audit(
+        session,
+        action="unit_statement.exported",
+        entity_type="user",
+        entity_id=str(principal.user_id),
+        actor_id=principal.user_id,
+        after={"start": start.isoformat(), "end": end.isoformat(), "format": format},
+    )
+    return Response(
+        content=body,
+        media_type=_STATEMENT_TYPES[format],
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{unit_movement_service.statement_filename(stmt, format)}"'
+            )
+        },
     )
 
 

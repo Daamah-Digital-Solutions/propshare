@@ -99,7 +99,10 @@ def _told(db, uid: str, title: str) -> list[str]:
     return [
         r[0]
         for r in db(
-            "SELECT message FROM notifications WHERE user_id=:u AND title=:t", u=uid, t=title
+            # in the order they were sent: a test reads the first or the second
+            "SELECT message FROM notifications WHERE user_id=:u AND title=:t ORDER BY created_at",
+            u=uid,
+            t=title,
         )
     ]
 

@@ -67,7 +67,17 @@ export function validatePeriod(start: string, end: string, today = iso(utcToday(
   return null;
 }
 
-export function AccountStatementCard() {
+/** The period, the presets and the two download buttons of a statement: the wallet's and
+ *  the units'. ``download`` fetches the file; it is saved as ``{filePrefix}-{start}-to-{end}``. */
+export function StatementPeriodForm({
+  download: fetchFile,
+  filePrefix,
+  idPrefix,
+}: {
+  download: (start: string, end: string, format: StatementFormat) => Promise<Blob>;
+  filePrefix: string;
+  idPrefix: string;
+}) {
   const [initialStart, initialEnd] = PRESETS[0].range();
   const [start, setStart] = useState(iso(initialStart));
   const [end, setEnd] = useState(iso(initialEnd));
@@ -78,8 +88,8 @@ export function AccountStatementCard() {
     if (problem) return;
     setBusy(format);
     try {
-      const blob = await walletApi.downloadStatement(start, end, format);
-      saveBlob(blob, `capimax-statement-${start}-to-${end}.${format}`);
+      const blob = await fetchFile(start, end, format);
+      saveBlob(blob, `${filePrefix}-${start}-to-${end}.${format}`);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Could not create the statement. Please try again.");
     } finally {
@@ -88,15 +98,7 @@ export function AccountStatementCard() {
   };
 
   return (
-    <Card data-testid="account-statement">
-      <CardHeader>
-        <CardTitle className="text-lg">Account statement</CardTitle>
-        <CardDescription>
-          Every wallet movement in the period you choose, with opening and closing balances and
-          your holdings at the end of the period. Dates are in UTC and both days are included.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <div className="space-y-4">
         <div className="flex flex-wrap gap-2">
           {PRESETS.map((p) => (
             <Button
@@ -116,12 +118,12 @@ export function AccountStatementCard() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <Label htmlFor="statement-start">From</Label>
-            <Input id="statement-start" type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+            <Label htmlFor={`${idPrefix}-start`}>From</Label>
+            <Input id={`${idPrefix}-start`} type="date" value={start} onChange={(e) => setStart(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="statement-end">To</Label>
-            <Input id="statement-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
+            <Label htmlFor={`${idPrefix}-end`}>To</Label>
+            <Input id={`${idPrefix}-end`} type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
           </div>
         </div>
         {problem && (
@@ -144,6 +146,26 @@ export function AccountStatementCard() {
             {busy === "xlsx" ? "Preparing Excel…" : "Download Excel"}
           </Button>
         </div>
+    </div>
+  );
+}
+
+export function AccountStatementCard() {
+  return (
+    <Card data-testid="account-statement">
+      <CardHeader>
+        <CardTitle className="text-lg">Account statement</CardTitle>
+        <CardDescription>
+          Every wallet movement in the period you choose, with opening and closing balances and
+          your holdings at the end of the period. Dates are in UTC and both days are included.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <StatementPeriodForm
+          download={walletApi.downloadStatement}
+          filePrefix="capimax-statement"
+          idPrefix="statement"
+        />
       </CardContent>
     </Card>
   );

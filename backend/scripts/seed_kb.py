@@ -125,9 +125,12 @@ its speed, fee and status in your wallet and are notified when it is paid or rej
 (rejected funds return to your wallet). An account statement for any period you choose (up to
 three years at a time) can be downloaded as a PDF or an Excel file from the Account statement
 card on the wallet page: opening and closing balance, every movement with a running balance,
-totals by type and your holdings at the end of the period. If a payment looks stuck, the
-assistant can show its current status and open a support ticket with the reference for a
-person to follow up.""",
+totals by type and your holdings at the end of the period. Your units have their own
+statement: Dashboard -> Active Investments -> Unit Movements -> "Download statement" gives,
+for the period you choose and as a PDF or an Excel file, every purchase, sale and transfer of
+units with the units held in that property after it, and per property the units held at the
+start and at the end. If a payment looks stuck, the assistant can show its current status and
+open a support ticket with the reference for a person to follow up.""",
     ),
     (
         "fees-overview",
@@ -520,7 +523,9 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 المحفظة ويصلك إشعار عند الصرف أو الرفض (المبلغ المرفوض يعود لمحفظتك). ويمكنك تنزيل كشف حساب لأي
 فترة تختارها (حتى ثلاث سنوات في المرة) بصيغة PDF أو Excel من بطاقة "كشف الحساب" في صفحة المحفظة:
 الرصيد الافتتاحي والختامي، وكل حركة مع الرصيد بعدها، والإجماليات حسب النوع، وحيازاتك في نهاية
-الفترة. إن بدا دفع متوقفًا،
+الفترة. وللوحدات كشف خاص بها: من لوحة التحكم ← Active Investments ← Unit Movements ← "Download
+statement" تنزّل للفترة التي تختارها، بصيغة PDF أو Excel، كل شراء وبيع وتحويل للوحدات مع عدد
+الوحدات المملوكة في ذلك العقار بعده، ولكل عقار الوحدات في بداية الفترة ونهايتها. إن بدا دفع متوقفًا،
 يستطيع المساعد عرض حالته الحالية وفتح تذكرة دعم بالمرجع ليتابعها شخص من الفريق.""",
     ),
     (
