@@ -12,6 +12,7 @@ import {
   Building2,
 } from "lucide-react";
 import type { Property } from "@/pages/Marketplace";
+import { fundingBar, fundingText } from "@/lib/funding";
 
 interface PropertyGridProps {
   properties: Property[];
@@ -150,9 +151,9 @@ const PropertyCard = ({ property, viewMode }: { property: Property; viewMode: "g
                 <div className="w-32">
                   <div className="flex justify-between text-xs mb-1">
                     <span className="text-muted-foreground">Funded</span>
-                    <span className="font-medium text-foreground">{property.funded}%</span>
+                    <span className="font-medium text-foreground">{fundingText(property.funded)}</span>
                   </div>
-                  <Progress value={property.funded} className="h-1.5" />
+                  <Progress value={fundingBar(property.funded)} className="h-1.5" />
                 </div>
                 <Button variant="default" size="sm">
                   View Details
@@ -240,9 +241,9 @@ const PropertyCard = ({ property, viewMode }: { property: Property; viewMode: "g
           <div className="mb-4">
             <div className="flex justify-between text-sm mb-2">
               <span className="text-muted-foreground">Funding Progress</span>
-              <span className="font-medium text-foreground">{property.funded}%</span>
+              <span className="font-medium text-foreground">{fundingText(property.funded)}</span>
             </div>
-            <Progress value={property.funded} className="h-2" />
+            <Progress value={fundingBar(property.funded)} className="h-2" />
           </div>
 
           {/* Footer Stats */}

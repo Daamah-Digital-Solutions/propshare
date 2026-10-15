@@ -28,6 +28,7 @@ import {
 import { Loader2 } from "lucide-react";
 import { propertyApi } from "@/lib/api";
 import { toSampleProperty } from "@/lib/properties";
+import { fundingBar, fundingText } from "@/lib/funding";
 
 
 const toneClass =(tone: "low" | "medium" | "high" | "positive" | "neutral" | "negative") => {
@@ -353,9 +354,9 @@ const SamplePropertyDetails = () => {
                   <div>
                     <div className="flex justify-between text-sm mb-1">
                       <span className="text-muted-foreground">Funding</span>
-                      <span className="font-medium">{sample.fundingProgress}%</span>
+                      <span className="font-medium">{fundingText(sample.fundingProgress)}</span>
                     </div>
-                    <Progress value={sample.fundingProgress} className="h-2" />
+                    <Progress value={fundingBar(sample.fundingProgress)} className="h-2" />
                   </div>
                   <Button className="w-full" size="lg" asChild>
                     <Link to={`/property/${slug}`}>Invest in this Sample</Link>

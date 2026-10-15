@@ -75,7 +75,8 @@ const PROJECTS = [
     status: "active",
     model: "ready-income",
     content: {},
-    total_value: 5_000_000,
+    // funded 6M of 10M: 60%, as the server computes it
+    total_value: 10_000_000,
     funded_amount: 6_000_000,
     funding_progress: 60,
     investors_count: 100,

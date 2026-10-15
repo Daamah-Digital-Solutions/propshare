@@ -70,6 +70,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { fundedPct, fundingBar, fundingText } from "@/lib/funding";
 
 const OWNER_READY = new Set(["ready-income", "ready-portfolio"]);
 
@@ -88,7 +89,7 @@ const toOwnerPropertyCard = (p: PropertyDetail) => ({
   statusView: ownerListingStatus(p),
   onMarket: isOnMarket(p.status),
   reviewNote: p.review_note ?? null,
-  fundingProgress: Math.round(p.funding_progress),
+  fundingProgress: fundedPct(p),
   investors: p.investors_count,
   // Revenue/occupancy are post-investment operating metrics with no backend yet
   // (no per-owner rental ledger). Shown as "not available" rather than faked.
@@ -430,9 +431,9 @@ const OwnerDashboard = () => {
                           <div className="mb-4">
                             <div className="flex justify-between mb-1">
                               <span className="text-sm text-muted-foreground">Funding Progress</span>
-                              <span className="text-sm font-medium">{property.fundingProgress}%</span>
+                              <span className="text-sm font-medium">{fundingText(property.fundingProgress)}</span>
                             </div>
-                            <Progress value={property.fundingProgress} className="h-2" />
+                            <Progress value={fundingBar(property.fundingProgress)} className="h-2" />
                           </div>
                         )}
 

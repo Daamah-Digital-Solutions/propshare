@@ -6,6 +6,7 @@
 import { assetUrl, type PropertyDetail, type PropertyMilestone, type PropertySummary } from "@/lib/api";
 import type { Property, OwnershipModel } from "@/pages/Marketplace";
 import type { SampleProperty, SampleOwnershipModel } from "@/data/sampleProperties";
+import { fundedPct } from "@/lib/funding";
 
 const READY_MODELS = new Set(["ready-income", "ready-portfolio"]);
 
@@ -78,7 +79,7 @@ export const toMarketplaceProperty = (s: PropertySummary): Property => ({
   price: assetValue(s),
   minInvestment: s.minimum_investment,
   yield: s.expected_yield ?? s.target_yield ?? 0,
-  funded: Math.round(s.funding_progress),
+  funded: fundedPct(s),
   type: coerceType(s.property_type),
   status: coerceStatus(s.status, s.funding_progress),
   propertyStatus: READY_MODELS.has(s.model) ? "ready" : "construction",
@@ -117,7 +118,7 @@ export const toSampleProperty = (d: PropertyDetail): SampleProperty => {
     expectedYield: d.expected_yield ?? d.target_yield ?? undefined,
     capitalAppreciation: d.capital_appreciation ?? undefined,
     totalReturn: d.total_return ?? undefined,
-    fundingProgress: Math.round(d.funding_progress),
+    fundingProgress: fundedPct(d),
     investorsCount: d.investors_count,
     ownershipStructure: arr(c.ownershipStructure) as SampleProperty["ownershipStructure"],
     investmentStructure: arr(c.investmentStructure) as SampleProperty["investmentStructure"],

@@ -45,6 +45,7 @@ import {
 import { INSTALLMENT_DURATIONS } from "@/lib/installments";
 import { assetValue as valueOf } from "@/lib/properties";
 import UnitPriceHistory from "@/components/property/UnitPriceHistory";
+import { fundedPct, fundingBar, fundingText } from "@/lib/funding";
 
 /**
  * Under-construction property page — the design the client knew (the model page removed on
@@ -971,8 +972,8 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                   <Tile label="Min. Investment" value={fmt(detail.minimum_investment)} />
                   <div className="p-3 rounded-lg bg-secondary/40 border border-border text-sm">
                     <div className="text-xs text-muted-foreground">Funding Progress</div>
-                    <div className="font-semibold text-foreground">{Math.round(detail.funding_progress)}%</div>
-                    <Progress value={detail.funding_progress} className="h-1.5 mt-1.5" />
+                    <div className="font-semibold text-foreground">{fundingText(fundedPct(detail))}</div>
+                    <Progress value={fundingBar(fundedPct(detail))} className="h-1.5 mt-1.5" />
                   </div>
                   <Tile label="Investors" value={detail.investors_count} />
                 </div>

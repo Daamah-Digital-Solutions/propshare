@@ -40,6 +40,7 @@ import { ExitButton } from "@/components/exit/ExitButton";
 import { Loader2 } from "lucide-react";
 import { assetUrl, propertyApi, type PropertyDetail } from "@/lib/api";
 import { assetValue } from "@/lib/properties";
+import { fundedPct } from "@/lib/funding";
 
 const READY_MODELS = new Set(["ready-income", "ready-portfolio"]);
 
@@ -87,7 +88,7 @@ const toViewModel = (d: PropertyDetail) => {
     expectedYield: d.expected_yield ?? d.target_yield ?? 0,
     capitalAppreciation: d.capital_appreciation ?? 0,
     totalReturn: d.total_return ?? 0,
-    fundingProgress: Math.round(d.funding_progress),
+    fundingProgress: fundedPct(d),
     fundingGoal: d.total_value,
     fundedAmount: d.funded_amount,
     investorsCount: d.investors_count,

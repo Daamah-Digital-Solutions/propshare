@@ -57,6 +57,7 @@ import {
 } from "@/components/payments/SukukCertificateFields";
 import { payMethod, type PayMethodId } from "@/lib/paymentMethods";
 import { money as fmtMoney, unitPrice as fmtUnitPrice } from "@/lib/money";
+import { fundingBar, fundingText } from "@/lib/funding";
 
 interface PropertyData {
   propertyValue: number;
@@ -410,9 +411,9 @@ const InstallmentCalculator = ({
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span>${propertyData.fundedAmount.toLocaleString()} funded</span>
-            <span>{propertyData.fundingProgress}%</span>
+            <span>{fundingText(propertyData.fundingProgress)}</span>
           </div>
-          <Progress value={propertyData.fundingProgress} className="h-2 bg-background/20" />
+          <Progress value={fundingBar(propertyData.fundingProgress)} className="h-2 bg-background/20" />
         </div>
 
         {/* Stats */}

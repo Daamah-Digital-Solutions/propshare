@@ -56,6 +56,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { fundedPct, fundingBar, fundingText } from "@/lib/funding";
 
 const READY_MODELS = new Set(["ready-income", "ready-portfolio"]);
 
@@ -104,7 +105,7 @@ const toProjectCard = (p: PropertyDetail): ProjectCard => {
     status,
     // Phase 15b — real construction % computed from milestones (legacy blob fallback).
     constructionProgress: p.construction_progress ?? Number(content.constructionProgress ?? 0),
-    fundingProgress: Math.round(p.funding_progress),
+    fundingProgress: fundedPct(p),
     investors: p.investors_count,
     totalRaised: p.funded_amount,
     targetAmount: p.total_value,
@@ -172,7 +173,7 @@ const DeveloperDashboard = () => {
   const totalTarget = projects.reduce((s, p) => s + (p.targetAmount ?? 0), 0);
   const totalInvestors = projects.reduce((s, p) => s + (p.investors ?? 0), 0);
   const avgFunding = projects.length
-    ? Math.round(projects.reduce((s, p) => s + p.fundingProgress, 0) / projects.length)
+    ? projects.reduce((s, p) => s + p.fundingProgress, 0) / projects.length
     : 0;
   const avgInvestment = totalInvestors > 0 ? totalRaised / totalInvestors : null;
   const fundingProjects = projects.filter((p) => p.status === "funding");
@@ -187,7 +188,7 @@ const DeveloperDashboard = () => {
     { title: "Active Projects", value: projects.length.toLocaleString(), icon: Building2 },
     { title: "Total Raised", value: fmtMoney(totalRaised), icon: DollarSign },
     { title: "Total Investors", value: totalInvestors.toLocaleString(), icon: Users },
-    { title: "Avg. Funding Rate", value: `${avgFunding}%`, icon: Target },
+    { title: "Avg. Funding Rate", value: fundingText(avgFunding), icon: Target },
   ];
 
   return (
@@ -411,9 +412,9 @@ const DeveloperDashboard = () => {
                               <div>
                                 <div className="flex justify-between text-sm mb-1">
                                   <span className="text-muted-foreground">Funding Progress</span>
-                                  <span className="font-medium">{project.fundingProgress}%</span>
+                                  <span className="font-medium">{fundingText(project.fundingProgress)}</span>
                                 </div>
-                                <Progress value={project.fundingProgress} className="h-2" />
+                                <Progress value={fundingBar(project.fundingProgress)} className="h-2" />
                               </div>
                               {project.status === "construction" && (
                                 <div>
@@ -508,9 +509,9 @@ const DeveloperDashboard = () => {
                             <h4 className="font-semibold">{project.name}</h4>
                             <p className="text-sm text-muted-foreground">{project.location}</p>
                           </div>
-                          <Badge className="bg-primary">{project.fundingProgress}% Funded</Badge>
+                          <Badge className="bg-primary">{fundingText(project.fundingProgress)} Funded</Badge>
                         </div>
-                        <Progress value={project.fundingProgress} className="h-3 mb-2" />
+                        <Progress value={fundingBar(project.fundingProgress)} className="h-3 mb-2" />
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">
                             ${(project.totalRaised/1000000).toFixed(1)}M raised
