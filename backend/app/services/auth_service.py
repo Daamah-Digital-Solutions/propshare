@@ -296,7 +296,10 @@ async def request_role(session: AsyncSession, *, user: User, role: str) -> dict[
         )
     )
     if existing.scalar_one_or_none() is None:
-        session.add(RoleGrantRequest(user_id=user.id, role=AppRole(role)))
+        req = RoleGrantRequest(user_id=user.id, role=AppRole(role))
+        session.add(req)
+        await session.flush()  # the request's id goes in the admin link
+        await _notify_staff_of_application(session, user=user, req=req, resubmission=False)
     return {"status": "pending_approval", "role": role}
 
 
@@ -366,8 +369,76 @@ async def submit_role_application(
             "content_type": ct,
         }
 
+    resubmission = bool(prev.get("submitted"))
     req.application = {"fields": fields, "documents": list(by_label.values()), "submitted": True}
+    await _notify_staff_of_application(session, user=user, req=req, resubmission=resubmission)
     return req
+
+
+async def _notify_staff_of_application(
+    session: AsyncSession, *, user: User, req: RoleGrantRequest, resubmission: bool
+) -> None:
+    """Tell the team a role request is waiting (client, 2026-10-20): every admin gets an
+    in-app notice and an email, and the support inbox an email, each with the link to the
+    request in the admin panel. Before this an application sat in Role Applications until
+    someone happened to open the page. Best-effort: a mail hiccup never loses the request."""
+    from app.models import EmailOutbox
+    from app.services import notification_service
+
+    role = req.role.value if isinstance(req.role, AppRole) else str(req.role)
+    label = _ROLE_LABELS.get(role, role.replace("_", " ").title())
+    what = "resubmitted" if resubmission else "submitted"
+    who = (user.full_name or "").strip() or user.email
+    docs = len((req.application or {}).get("documents") or [])
+    link = get_settings().admin_url(f"/admin/role-grant-request/details/{req.id}")
+    subject = f"[Role application] {label} — {what} by {who}"
+    body = (
+        f"{who} <{user.email}> {what} an application for the {label} role"
+        + (f", with {docs} document(s)" if docs else "")
+        + ".\n\nReview it and approve or reject it in the admin panel (Role Applications):\n"
+        + link
+    )
+    try:
+        admins = (
+            (
+                await session.execute(
+                    select(User.id, User.email)
+                    .join(UserRole, UserRole.user_id == User.id)
+                    .where(UserRole.role == AppRole.admin, User.closed_at.is_(None))
+                )
+            )
+            .tuples()
+            .all()
+        )
+        for admin_id, _email in admins:
+            await notification_service.notify(
+                session,
+                user_id=admin_id,
+                type="role_review",
+                title=f"{label} application waiting for review",
+                message=(
+                    f"{who} {what} an application for the {label} role. Review it in the admin "
+                    "panel under Role Applications."
+                ),
+                email_category="role_review",
+                force_email=True,
+                email_subject=subject,
+                email_body=body,
+            )
+        inbox = (get_settings().support_inbox_email or "").strip()
+        if inbox and inbox.lower() not in {(e or "").lower() for _i, e in admins}:
+            session.add(
+                EmailOutbox(
+                    user_id=None,
+                    to_email=inbox,
+                    subject=subject,
+                    body=body,
+                    category="role_review",
+                    status="pending",
+                )
+            )
+    except Exception:  # noqa: BLE001 — best-effort, never block the application
+        logger.exception("role application notice to staff failed (request=%s)", req.id)
 
 
 def _doc_label_key(name: str) -> str:

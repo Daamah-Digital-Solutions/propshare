@@ -106,7 +106,7 @@ ok "the unit statement is there, and a member's own (401 without a session)"
 # ---------------------------------------------------------------------------------------------
 say "5. Assistant knowledge base"
 (cd "$BE" && as_app "$VENV/bin/python" scripts/seed_kb.py --approve-as "$ADMIN_EMAIL")
-KB=$(psql_db -c "SELECT count(*) FROM kb_articles a WHERE a.slug='payments' AND a.lang='en' AND a.status='approved' AND a.body_md LIKE '%Your units have their own%' AND a.version = (SELECT max(b.version) FROM kb_articles b WHERE b.slug=a.slug AND b.lang=a.lang)")
+KB=$(psql_db -c "SELECT count(*) FROM kb_articles a WHERE a.slug='wallet-deposits-withdrawals' AND a.lang='en' AND a.status='approved' AND a.body_md LIKE '%Your units have their own%' AND a.version = (SELECT max(b.version) FROM kb_articles b WHERE b.slug=a.slug AND b.lang=a.lang)")
 if [ "${KB:-0}" -ge 1 ]; then
   ok "knowledge base up to date (approved as $ADMIN_EMAIL)"
 else

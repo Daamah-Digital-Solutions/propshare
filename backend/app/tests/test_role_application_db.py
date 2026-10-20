@@ -151,3 +151,47 @@ async def test_role_application_prefill_404_when_none(client, db):
     tok, _uid = await _user(client, db, "noapp@x.com")
     r = await client.get("/api/v1/auth/roles/application/broker", headers=_h(tok))
     assert r.status_code == 404
+
+
+async def test_an_application_tells_every_admin_in_app_and_by_email(client, db, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "support_inbox_email", "desk@capimax.test")
+    await _admin(client, db, "ops-admin@x.com")
+    await _admin(client, db, "gone-admin@x.com")
+    db("UPDATE users SET closed_at=now() WHERE email='gone-admin@x.com'")
+    tok, _uid = await _user(client, db, "lp-apply@x.com")
+    db("UPDATE users SET full_name='Layla Provider' WHERE email='lp-apply@x.com'")
+
+    fields = json.dumps({"entity_name": "Layla Capital", "phone": "+100"})
+    r = await client.post(
+        "/api/v1/auth/roles/apply",
+        data={"role": "liquidity_provider", "fields": fields},
+        files=[("files", ("Government ID - id.pdf", b"%PDF-1.4 id", "application/pdf"))],
+        headers=_h(tok),
+    )
+    assert r.status_code == 200, r.text
+    req_id = db("SELECT id FROM role_grant_requests WHERE role='liquidity_provider'")[0][0]
+
+    admin_id = db("SELECT id FROM users WHERE email='ops-admin@x.com'")[0][0]
+    notes = db("SELECT title, message FROM notifications WHERE user_id=:u", u=admin_id)
+    assert any(
+        t == "Liquidity Provider application waiting for review" and "Layla Provider" in m
+        for t, m in notes
+    ), notes
+    mails = db("SELECT to_email, subject, body FROM email_outbox WHERE category='role_review'")
+    to = sorted(m[0] for m in mails)
+    assert to == ["desk@capimax.test", "ops-admin@x.com"], to  # a closed admin gets nothing
+    subject, body = mails[0][1], mails[0][2]
+    assert "Liquidity Provider" in subject and "submitted by Layla Provider" in subject
+    assert f"/admin/role-grant-request/details/{req_id}" in body and "1 document(s)" in body
+
+    # editing and sending it again tells them it was resubmitted
+    again = await client.post(
+        "/api/v1/auth/roles/apply",
+        data={"role": "liquidity_provider", "fields": fields},
+        headers=_h(tok),
+    )
+    assert again.status_code == 200, again.text
+    subjects = [s for (s,) in db("SELECT subject FROM email_outbox WHERE category='role_review'")]
+    assert sum("resubmitted" in s for s in subjects) == 2, subjects
