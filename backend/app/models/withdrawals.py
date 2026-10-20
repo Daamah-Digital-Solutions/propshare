@@ -53,6 +53,11 @@ class Withdrawal(Base):
     idempotency_key: Mapped[str | None] = mapped_column(Text)
     provider_payout_id: Mapped[str | None] = mapped_column(Text)
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    # 0037: the number quoted for the request (WD-XXXXXXXXXX), where it was to be paid as
+    # text when asked for, and the bank transfer number / tx hash the team paid it with.
+    reference: Mapped[str | None] = mapped_column(Text, unique=True)
+    destination_label: Mapped[str | None] = mapped_column(Text)
+    transfer_reference: Mapped[str | None] = mapped_column(Text)
     reviewed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     reviewed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime.datetime] = mapped_column(

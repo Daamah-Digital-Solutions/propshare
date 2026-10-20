@@ -77,6 +77,7 @@ async def create_withdrawal(
         user_email=str(email or ""),
         payout_method_id=body.payout_method_id,
         speed=body.speed,
+        route=body.route,
     )
     # Automatic rail, under the auto-approve limit: submit to the provider as soon as this
     # request's transaction is committed, so the customer does not wait for the cron pass.
@@ -98,6 +99,11 @@ async def my_withdrawals(principal: PrincipalDep, session: SessionDep):
             failure_reason=w.failure_reason,
             created_at=w.created_at,
             completed_at=w.completed_at,
+            reference=w.reference,
+            destination_label=w.destination_label,
+            transfer_reference=w.transfer_reference,
+            speed=w.speed,
+            fee=str(w.fee),
         )
         for w in rows
     ]

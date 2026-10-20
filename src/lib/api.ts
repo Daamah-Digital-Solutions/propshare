@@ -756,6 +756,10 @@ export const walletApi = {
     const q = new URLSearchParams({ start, end, format });
     return fetchBlob(`/api/v1/wallet/statement?${q.toString()}`);
   },
+  /** A numbered PDF receipt for one of the member's own wallet movements. */
+  receipt(transactionId: string): Promise<Blob> {
+    return fetchBlob(`/api/v1/wallet/transactions/${transactionId}/receipt`);
+  },
   transactions(limit = 50, offset = 0): Promise<TransactionListResponse> {
     return apiRequest<TransactionListResponse>(
       `/api/v1/wallet/transactions?limit=${limit}&offset=${offset}`,
@@ -1593,6 +1597,11 @@ export interface WithdrawalCreateResponse {
   fee: string;
   net_amount: string;
   created_at: string | null;
+  /** WD-XXXXXXXXXX, the number quoted for the request */
+  reference?: string | null;
+  destination_label?: string | null;
+  /** manual (paid by our team) | stripe | nowpayments */
+  provider?: string | null;
 }
 
 export interface WithdrawalItem {
@@ -1604,6 +1613,11 @@ export interface WithdrawalItem {
   failure_reason: string | null;
   created_at: string;
   completed_at: string | null;
+  reference?: string | null;
+  destination_label?: string | null;
+  transfer_reference?: string | null;
+  speed?: string;
+  fee?: string;
 }
 
 export interface ConnectStatus {
@@ -1623,6 +1637,8 @@ export const withdrawApi = {
       payout_method_id?: string;
       /** "instant" reaches an eligible debit card in minutes, for a fee. */
       speed?: "standard" | "instant";
+      /** "auto" = the automatic payout; anything else is paid by our team by hand. */
+      route?: "auto" | "manual";
     },
     idempotencyKey: string,
   ): Promise<WithdrawalCreateResponse> {

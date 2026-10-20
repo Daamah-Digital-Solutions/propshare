@@ -36,7 +36,11 @@ import {
   Sparkles,
   Trash2,
   Star,
+  Download,
+  Zap,
+  Hand,
 } from "lucide-react";
+import { saveBlob } from "@/lib/certificates";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { AccountStatementCard } from "@/components/dashboard/AccountStatementCard";
 import { PaymentReturnStatus, rememberPendingPayment } from "@/components/dashboard/PaymentReturnStatus";
@@ -59,7 +63,20 @@ import {
 } from "@/lib/api";
 import { toast } from "sonner";
 
-const tail = (s: string | null | undefined) => (s ? s.slice(-4) : "");
+const tail = (s: string | null | undefined) => (s ? s.replace(/\s+/g, "").slice(-4) : "");
+// account numbers, IBANs and wallet addresses are only ever shown as their last four
+const masked = (s: string | null | undefined) => `****${tail(s)}`;
+
+// how a withdrawal request stands, in the member's words
+const WITHDRAWAL_STATUS: Record<string, { label: string; tone: "wait" | "ok" | "back" }> = {
+  pending_review: { label: "Pending", tone: "wait" },
+  approved: { label: "Approved", tone: "wait" },
+  processing: { label: "Processing", tone: "wait" },
+  completed: { label: "Paid", tone: "ok" },
+  failed: { label: "Failed — returned to your wallet", tone: "back" },
+  rejected: { label: "Rejected — returned to your wallet", tone: "back" },
+  returned: { label: "Returned to your wallet", tone: "back" },
+};
 
 // Query parameters of a deposit / withdrawal the assistant prepared (see WalletPrefill below).
 const PREFILL_KEYS = ["action", "amount", "method", "speed"];
@@ -109,11 +126,18 @@ export const InvestorWallet = () => {
   const [withdrawing, setWithdrawing] = useState(false);
   const [selectedBankId, setSelectedBankId] = useState("");
   const [selectedWalletId, setSelectedWalletId] = useState("");
+  // bank withdrawals: "auto" (Stripe, for a bank linked there) or "manual" (our team pays a
+  // saved account). Null until the member picks: then it follows what is available.
+  const [bankRoute, setBankRoute] = useState<"auto" | "manual" | null>(null);
 
   const { data: wallet } = useQuery({ queryKey: ["wallet"], queryFn: walletApi.getMe });
   const { data: txnData } = useQuery({
     queryKey: ["wallet-transactions"],
     queryFn: () => walletApi.transactions(),
+  });
+  const { data: myWithdrawals } = useQuery({
+    queryKey: ["my-withdrawals"],
+    queryFn: withdrawApi.list,
   });
   const { data: savedMethods } = useQuery({
     queryKey: ["payment-methods"],
@@ -141,6 +165,7 @@ export const InvestorWallet = () => {
     queryKey: ["payout-config"],
     queryFn: payoutConfigApi.get,
   });
+  // automatic bank payouts are OFFERED (through Stripe); manual ones always are
   const bankIsAuto = payoutConfig?.methods?.bank?.connect_required ?? false;
   const { data: connectStatus } = useQuery({
     queryKey: ["connect-status"],
@@ -149,11 +174,15 @@ export const InvestorWallet = () => {
   });
   const [linkingBank, setLinkingBank] = useState(false);
   const bankLinked = Boolean(connectStatus?.payouts_enabled);
+  // linked through Stripe: automatic is ticked first, manual is the other choice
+  const autoBankReady = bankIsAuto && bankLinked;
+  const routeForBank: "auto" | "manual" = autoBankReady ? (bankRoute ?? "auto") : "manual";
+  const autoBank = withdrawMethod === "bank" && routeForBank === "auto";
   // Instant payouts: minutes to an eligible debit card, for a fee. Offered only when the
   // server says this account can actually take one.
   const [instant, setInstant] = useState(false);
   const instantInfo = payoutConfig?.instant;
-  const instantOffered = withdrawMethod === "bank" && bankIsAuto && Boolean(instantInfo?.available);
+  const instantOffered = autoBank && Boolean(instantInfo?.available);
   const instantFeePct = Number(instantInfo?.fee_pct ?? 0);
   const instantMax = Number(instantInfo?.max_amount ?? 0);
   const requested = Number(withdrawAmount) || 0;
@@ -242,6 +271,20 @@ export const InvestorWallet = () => {
   const invalidateWallet = () => {
     queryClient.invalidateQueries({ queryKey: ["wallet"] });
     queryClient.invalidateQueries({ queryKey: ["wallet-transactions"] });
+    queryClient.invalidateQueries({ queryKey: ["my-withdrawals"] });
+  };
+
+  const [receiptFor, setReceiptFor] = useState<string | null>(null);
+  const downloadReceipt = async (transactionId: string) => {
+    setReceiptFor(transactionId);
+    try {
+      const blob = await walletApi.receipt(transactionId);
+      saveBlob(blob, `capimax-receipt-RCT-${transactionId.replace(/-/g, "").slice(0, 10).toUpperCase()}.pdf`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "The receipt could not be downloaded.");
+    } finally {
+      setReceiptFor(null);
+    }
   };
 
   // ---- Saved cards (entered in Stripe's own form, see AddCardDialog) ----
@@ -268,13 +311,14 @@ export const InvestorWallet = () => {
     account_number: "",
     swift_bic: "",
     country: "",
+    currency: "USD",
   });
   const addBank = useMutation({
     mutationFn: () => bankAccountsApi.add(bankForm),
     onSuccess: () => {
       toast.success("Bank account saved");
       setBankDialogOpen(false);
-      setBankForm({ account_holder: "", bank_name: "", iban: "", account_number: "", swift_bic: "", country: "" });
+      setBankForm({ account_holder: "", bank_name: "", iban: "", account_number: "", swift_bic: "", country: "", currency: "USD" });
       queryClient.invalidateQueries({ queryKey: ["bank-accounts"] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Could not save the account"),
@@ -394,12 +438,7 @@ export const InvestorWallet = () => {
       return;
     }
     // Automatic bank payouts go to the user's Stripe-linked account: there is no saved
-    // destination to pick, only the completed onboarding.
-    const autoBank = withdrawMethod === "bank" && bankIsAuto;
-    if (autoBank && !bankLinked) {
-      toast.error("Link your bank account first to withdraw automatically.");
-      return;
-    }
+    // destination to pick. Everything else is paid by our team to a SAVED destination.
     const payoutId = autoBank
       ? undefined
       : withdrawMethod === "bank"
@@ -420,6 +459,7 @@ export const InvestorWallet = () => {
           method: withdrawMethod,
           ...(payoutId ? { payout_method_id: payoutId } : {}),
           ...(useInstant ? { speed: "instant" as const } : {}),
+          route: autoBank ? ("auto" as const) : ("manual" as const),
         },
         crypto.randomUUID(),
       );
@@ -432,7 +472,9 @@ export const InvestorWallet = () => {
             ? `$${created.net_amount} is on its way to your card and usually arrives within 30 minutes.`
             : created.status === "approved"
               ? "It is on its way to your linked bank. Banks usually post it within 1-2 business days."
-              : "Your request has been sent to our team and will be processed shortly.",
+              : created.provider === "manual"
+                ? `Request ${created.reference ?? ""} to ${created.destination_label ?? "your saved account"}: our team pays it and emails you when it is sent.`
+                : "Your request has been sent to our team and will be processed shortly.",
         },
       );
       setWithdrawAmount("");
@@ -441,6 +483,8 @@ export const InvestorWallet = () => {
       const code = error instanceof ApiError ? error.code : "";
       const map: Record<string, string> = {
         KYC_REQUIRED: "Complete identity verification before withdrawing.",
+        EMAIL_NOT_VERIFIED: "Confirm your email address before withdrawing.",
+        AUTO_NOT_AVAILABLE: "Automatic withdrawal is not available right now. Choose Manual.",
         NO_PAYOUT_METHOD: "Add a payout destination first.",
         CONNECT_NOT_READY: "Finish linking your bank with Stripe before withdrawing.",
         INSTANT_NOT_AVAILABLE: "Instant payout is not available on this account right now.",
@@ -691,34 +735,69 @@ export const InvestorWallet = () => {
                 </Select>
               </div>
 
-              {withdrawMethod === "bank" && bankIsAuto && (
-                <div className="space-y-2 rounded-lg bg-muted/50 p-3" data-testid="connect-bank">
-                  {bankLinked ? (
-                    <p className="text-sm">
-                      Paid automatically to your linked bank account
-                      {connectStatus?.stripe_account_id ? " (secured by Stripe)" : ""}. No waiting
-                      for our team.
-                    </p>
-                  ) : (
-                    <>
-                      <p className="text-sm text-muted-foreground">
-                        Bank withdrawals are paid out automatically. Link your bank account once —
-                        your details are held by Stripe, not by us.
-                      </p>
-                      <Button
-                        variant="outline"
-                        className="w-full"
-                        onClick={handleLinkBank}
-                        disabled={linkingBank}
-                      >
-                        {linkingBank ? "Opening Stripe…" : "Link bank account"}
-                      </Button>
-                    </>
-                  )}
+              {withdrawMethod === "bank" && autoBankReady && (
+                <div className="space-y-2" role="radiogroup" aria-label="How to pay it" data-testid="bank-route">
+                  <Label>How</Label>
+                  {(
+                    [
+                      {
+                        value: "auto" as const,
+                        icon: Zap,
+                        title: "Automatic",
+                        text: "Sent at once to your bank linked through Stripe. No waiting for our team.",
+                      },
+                      {
+                        value: "manual" as const,
+                        icon: Hand,
+                        title: "Manual (saved bank account)",
+                        text: "Our team transfers it by hand to one of your saved bank accounts.",
+                      },
+                    ]
+                  ).map((o) => (
+                    <label
+                      key={o.value}
+                      className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer ${
+                        routeForBank === o.value ? "border-primary bg-primary/5" : "border-border"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="bank-route"
+                        className="mt-1"
+                        checked={routeForBank === o.value}
+                        onChange={() => setBankRoute(o.value)}
+                        aria-label={o.title}
+                      />
+                      <span className="text-sm">
+                        <span className="font-medium flex items-center gap-1.5">
+                          <o.icon className="h-4 w-4 text-primary" /> {o.title}
+                        </span>
+                        <span className="text-muted-foreground">{o.text}</span>
+                      </span>
+                    </label>
+                  ))}
                 </div>
               )}
 
-              {withdrawMethod === "bank" && !bankIsAuto &&
+              {withdrawMethod === "bank" && bankIsAuto && !bankLinked && (
+                <div className="space-y-2 rounded-lg bg-muted/50 p-3" data-testid="connect-bank">
+                  <p className="text-sm text-muted-foreground">
+                    Want it sent automatically next time? Link your bank once through Stripe — your
+                    details are held by Stripe, not by us. Until then our team pays your saved
+                    bank account by hand.
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={handleLinkBank}
+                    disabled={linkingBank}
+                  >
+                    {linkingBank ? "Opening Stripe…" : "Link bank account"}
+                  </Button>
+                </div>
+              )}
+
+              {withdrawMethod === "bank" && !autoBank &&
                 (banks.length === 0 ? (
                   <p className="text-sm text-muted-foreground rounded-lg bg-muted/50 p-3">
                     You have no saved bank account. Add one in <b>Payment Methods</b> below first.
@@ -736,7 +815,7 @@ export const InvestorWallet = () => {
                       <SelectContent>
                         {banks.map((b) => (
                           <SelectItem key={b.id} value={b.id}>
-                            {b.bank_name} ···· {tail(b.iban ?? b.account_number)}
+                            {b.bank_name} · {masked(b.iban ?? b.account_number)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -762,7 +841,7 @@ export const InvestorWallet = () => {
                       <SelectContent>
                         {wallets.map((w) => (
                           <SelectItem key={w.id} value={w.id}>
-                            {w.network} ···· {tail(w.address)}
+                            {w.network} · {masked(w.address)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -809,9 +888,9 @@ export const InvestorWallet = () => {
                 {withdrawing ? "Submitting…" : `Withdraw $${withdrawAmount || "0"}`}
               </Button>
               <p className="text-xs text-muted-foreground text-center">
-                {withdrawMethod === "bank" && bankIsAuto
+                {autoBank
                   ? `Sent automatically up to $${Number(payoutConfig?.auto_approve_limit ?? 0).toLocaleString()} per request; larger amounts are reviewed by our team first.`
-                  : "Withdrawals are reviewed and paid out by our team, usually within 1–2 business days."}
+                  : "The amount is held from your balance now. Our team pays it by hand, usually within 1–2 business days, and emails you when it is sent."}
               </p>
             </div>
           </DialogContent>
@@ -880,6 +959,17 @@ export const InvestorWallet = () => {
                     ) : (
                       <Clock className="h-4 w-4 text-accent" />
                     )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      aria-label="Download receipt"
+                      title="Download receipt (PDF)"
+                      disabled={receiptFor === transaction.id}
+                      onClick={() => downloadReceipt(transaction.id)}
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -1003,10 +1093,17 @@ export const InvestorWallet = () => {
                             onChange={(e) => setBankForm({ ...bankForm, swift_bic: e.target.value })} />
                         </div>
                       </div>
-                      <div className="space-y-1.5">
-                        <Label>Country</Label>
-                        <Input value={bankForm.country}
-                          onChange={(e) => setBankForm({ ...bankForm, country: e.target.value })} />
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <Label>Country</Label>
+                          <Input value={bankForm.country}
+                            onChange={(e) => setBankForm({ ...bankForm, country: e.target.value })} />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Currency</Label>
+                          <Input value={bankForm.currency} maxLength={8}
+                            onChange={(e) => setBankForm({ ...bankForm, currency: e.target.value.toUpperCase() })} />
+                        </div>
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Provide an IBAN or an account number. This is where your bank withdrawals
@@ -1028,7 +1125,7 @@ export const InvestorWallet = () => {
                       className="flex items-center justify-between rounded-lg border border-border p-2.5">
                       <div>
                         <div className="text-sm font-medium text-foreground">
-                          {b.bank_name} ···· {tail(b.iban ?? b.account_number)}
+                          {b.bank_name} · {masked(b.iban ?? b.account_number)}
                           {b.is_default && (
                             <Badge variant="secondary" className="ml-2 text-xs">Default</Badge>
                           )}
@@ -1110,7 +1207,7 @@ export const InvestorWallet = () => {
                       className="flex items-center justify-between rounded-lg border border-border p-2.5">
                       <div>
                         <div className="text-sm font-medium text-foreground">
-                          {w.network} ···· {tail(w.address)}
+                          {w.network} · {masked(w.address)}
                           {w.is_default && (
                             <Badge variant="secondary" className="ml-2 text-xs">Default</Badge>
                           )}
@@ -1167,6 +1264,50 @@ export const InvestorWallet = () => {
                 </div>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Withdrawal requests and how each stands */}
+        <Card className="lg:col-span-2 bg-card border-border" data-testid="my-withdrawals">
+          <CardHeader>
+            <CardTitle className="text-lg">Withdrawal requests</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {(myWithdrawals?.items ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">No withdrawal requests yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {(myWithdrawals?.items ?? []).map((w) => {
+                  const st = WITHDRAWAL_STATUS[w.status] ?? { label: w.status, tone: "wait" as const };
+                  return (
+                    <div key={w.id} className="flex items-start justify-between gap-3 p-3 rounded-lg bg-muted/30 border border-border/50">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">
+                          ${Number(w.amount).toLocaleString()} · {w.method === "bank" ? "Bank" : "Crypto"}
+                          {w.provider === "manual" ? " · Manual" : " · Automatic"}
+                        </p>
+                        <p className="text-xs text-muted-foreground break-all">
+                          {w.reference ?? w.id.slice(0, 8)} · {w.destination_label ?? "—"} ·{" "}
+                          {new Date(w.created_at).toLocaleDateString()}
+                        </p>
+                        {w.status === "completed" && w.transfer_reference && (
+                          <p className="text-xs text-muted-foreground">Transfer reference: {w.transfer_reference}</p>
+                        )}
+                        {w.failure_reason && st.tone === "back" && (
+                          <p className="text-xs text-destructive">{w.failure_reason}</p>
+                        )}
+                      </div>
+                      <Badge
+                        variant={st.tone === "ok" ? "default" : st.tone === "back" ? "destructive" : "secondary"}
+                        className="shrink-0 text-xs"
+                      >
+                        {st.label}
+                      </Badge>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

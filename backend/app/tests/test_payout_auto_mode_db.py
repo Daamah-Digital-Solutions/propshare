@@ -37,6 +37,7 @@ async def _verified(client, db, email: str) -> str:
     )
     uid = db("SELECT id FROM users WHERE email=:e", e=email)[0][0]
     db("UPDATE kyc_verifications SET status='verified' WHERE user_id=:i", i=uid)
+    db("UPDATE users SET email_verified=true WHERE id=:i", i=uid)
     return r.json()["access_token"]
 
 
@@ -89,8 +90,10 @@ def _crypto_unconfigured(monkeypatch):
         monkeypatch.setattr(s, attr, "", raising=False)
 
 
-async def _withdraw(client, token, amount, method, **body_extra):
+async def _withdraw(client, token, amount, method, route="auto", **body_extra):
     body = {"amount": amount, "method": method, **body_extra}
+    if route is not None:
+        body["route"] = route
     return await client.post(
         "/api/v1/wallet/withdrawals",
         json=body,
@@ -130,7 +133,7 @@ async def test_bank_auto_while_crypto_stays_manual(client, db, monkeypatch):
         "VALUES (:u,'USDT-TRC20','Taddr',true)",
         u=uid,
     )
-    r2 = await _withdraw(client, tok, 50, "crypto")
+    r2 = await _withdraw(client, tok, 50, "crypto", route=None)
     assert r2.status_code == 200, r2.text
     status2, provider2, payout_id2 = _row(db, r2.json()["withdrawal_id"])
     assert (status2, provider2, payout_id2) == ("pending_review", "manual", None)
@@ -175,7 +178,8 @@ async def test_auto_bank_requires_finished_stripe_onboarding(client, db, monkeyp
 
 @pytest.mark.asyncio
 async def test_listed_but_unconfigured_provider_falls_back_to_manual(client, db, monkeypatch):
-    """Turning a rail on before its provider exists must not break withdrawals."""
+    """Turning a rail on before its provider exists must not break withdrawals: asking for
+    the automatic payout says it is not available; the manual one works."""
     _setting(db, "manual_payouts_enabled", "true")
     _setting(db, "payout_auto_methods", "bank,crypto")
     _crypto_unconfigured(monkeypatch)
@@ -191,7 +195,9 @@ async def test_listed_but_unconfigured_provider_falls_back_to_manual(client, db,
         u=uid,
     )
 
-    r = await _withdraw(client, tok, 100, "bank")
+    auto = await _withdraw(client, tok, 100, "bank")
+    assert auto.status_code == 409 and auto.json()["error"]["code"] == "AUTO_NOT_AVAILABLE"
+    r = await _withdraw(client, tok, 100, "bank", route=None)
     assert r.status_code == 200, r.text
     status, provider, _ = _row(db, r.json()["withdrawal_id"])
     assert (status, provider) == ("pending_review", "manual")
@@ -444,7 +450,7 @@ async def test_instant_refused_when_switched_off_or_rail_is_manual(client, db, m
         "VALUES (:u,'B','H','IBAN9',true)",
         u=uid,
     )
-    r = await _withdraw(client, tok, 100, "bank", speed="instant")
+    r = await _withdraw(client, tok, 100, "bank", route=None, speed="instant")
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "INSTANT_NOT_AVAILABLE"
 

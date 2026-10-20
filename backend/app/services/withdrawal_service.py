@@ -32,6 +32,7 @@ from __future__ import annotations
 import datetime as dt
 import decimal
 import logging
+import secrets
 import uuid
 
 from sqlalchemy import select
@@ -59,6 +60,92 @@ RECONCILE_AFTER = dt.timedelta(hours=24)
 
 def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
+
+
+# The request's number (WD-XXXXXXXXXX): no 0/O or 1/I, so it reads back over the phone.
+_REF_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+async def _new_reference(session: AsyncSession) -> str:
+    for _ in range(5):
+        ref = "WD-" + "".join(secrets.choice(_REF_ALPHABET) for _ in range(10))
+        if await session.scalar(select(Withdrawal.id).where(Withdrawal.reference == ref)) is None:
+            return ref
+    raise AppError("REFERENCE_UNAVAILABLE", "Please try again.", status_code=503)
+
+
+def masked(value: str | None) -> str:
+    """The last four characters only (``****4321``): what a screen or an email shows of an
+    account number, IBAN or wallet address."""
+    tail = "".join((value or "").split())[-4:]
+    return f"****{tail}" if tail else "****"
+
+
+def destination_label(dest: dict) -> str:
+    """Where a withdrawal goes, as text that survives the saved account being deleted."""
+    if dest.get("connect_account_id"):
+        return "Bank linked through Stripe"
+    if dest.get("type") == "bank":
+        number = dest.get("iban") or dest.get("account_number")
+        return f"{dest.get('bank_name') or 'Bank'} · {masked(number)}"
+    if dest.get("address"):
+        return f"{dest.get('network') or 'Crypto'} · {masked(dest.get('address'))}"
+    return "—"
+
+
+async def _tell_staff(session: AsyncSession, wd: Withdrawal, *, who: str) -> None:
+    """A withdrawal waits for the team: every open admin account gets an in-app notice and an
+    email, the support inbox an email, each with the link to it. Best-effort."""
+    from app.core.config import get_settings
+    from app.models import EmailOutbox, UserRole
+    from app.models.base import AppRole
+
+    link = get_settings().admin_url(f"/admin/withdrawals-desk/{wd.id}")
+    kind = "manual" if wd.provider == "manual" else "over the automatic limit"
+    subject = f"[Withdrawal] {wd.reference} — ${wd.amount} {wd.method} ({kind})"
+    body = (
+        f"{who} asked for a ${wd.amount} {wd.method} withdrawal ({kind}), {wd.reference}, "
+        f"to {wd.destination_label}.\n\nPay it and close it in the admin panel "
+        f"(Withdrawals desk):\n{link}"
+    )
+    try:
+        admins = (
+            (
+                await session.execute(
+                    select(User.id, User.email)
+                    .join(UserRole, UserRole.user_id == User.id)
+                    .where(UserRole.role == AppRole.admin, User.closed_at.is_(None))
+                )
+            )
+            .tuples()
+            .all()
+        )
+        for admin_id, _email in admins:
+            await notification_service.notify(
+                session,
+                user_id=admin_id,
+                type="withdrawal_review",
+                title=f"Withdrawal {wd.reference} waiting",
+                message=f"{who}: ${wd.amount} by {wd.method} to {wd.destination_label}.",
+                email_category="withdrawal_review",
+                force_email=True,
+                email_subject=subject,
+                email_body=body,
+            )
+        inbox = (get_settings().support_inbox_email or "").strip()
+        if inbox and inbox.lower() not in {(e or "").lower() for _i, e in admins}:
+            session.add(
+                EmailOutbox(
+                    user_id=None,
+                    to_email=inbox,
+                    subject=subject,
+                    body=body,
+                    category="withdrawal_review",
+                    status="pending",
+                )
+            )
+    except Exception:  # noqa: BLE001 — best-effort, never block the request
+        logger.exception("withdrawal notice to staff failed (withdrawal=%s)", wd.id)
 
 
 def _provider_configured(method: str) -> bool:
@@ -166,7 +253,11 @@ async def request_withdrawal(
     user_email: str,
     payout_method_id: uuid.UUID | None = None,
     speed: str = "standard",
+    route: str | None = None,
 ) -> dict:
+    """``route="auto"`` asks for the automatic payout (Stripe Connect for bank, NOWPayments for
+    crypto) and goes down that path unchanged; anything else is a MANUAL withdrawal the team
+    pays by hand to a saved bank account or crypto wallet (owner, 2026-10-20)."""
     if method not in _PROVIDER_FOR_METHOD:
         raise AppError("INVALID_METHOD", "method must be 'bank' or 'crypto'.", status_code=422)
 
@@ -179,7 +270,25 @@ async def request_withdrawal(
     if existing is not None:
         return _result(existing)
 
-    manual = await is_manual_for(session, method)
+    if route not in (None, "auto", "manual"):
+        raise AppError("INVALID_ROUTE", "route must be 'auto' or 'manual'.", status_code=422)
+    if route == "auto":
+        if await is_manual_for(session, method):
+            raise AppError(
+                "AUTO_NOT_AVAILABLE",
+                f"Automatic {method} withdrawals are not available. Choose a manual withdrawal.",
+                status_code=409,
+            )
+        manual = False
+    else:
+        manual = True
+        user = await session.get(User, user_id)
+        if user is None or not user.email_verified:
+            raise AppError(
+                "EMAIL_NOT_VERIFIED",
+                "Confirm your email address before withdrawing.",
+                status_code=403,
+            )
     provider = "manual" if manual else _PROVIDER_FOR_METHOD[method]
 
     if not manual and not _provider_configured(method):
@@ -241,6 +350,8 @@ async def request_withdrawal(
         method=method,
         provider=provider,
         destination=destination,
+        reference=await _new_reference(session),
+        destination_label=destination_label(destination),
         status=status,
         idempotency_key=idempotency_key,
         speed=speed,
@@ -267,6 +378,7 @@ async def request_withdrawal(
             "provider": provider,
             "speed": speed,
             "fee": str(fee),
+            "reference": wd.reference,
         },
     )
     if status == "approved":
@@ -277,19 +389,37 @@ async def request_withdrawal(
         # scoped. Everything written in this call still commits as one unit; nothing after
         # this point can fail money.
         await session.commit()
-    if status == "pending_review":
+    if status == "pending_review" and manual:
+        message = (
+            f"We received your ${amount_dec} withdrawal request {wd.reference} to "
+            f"{wd.destination_label}. Our team pays it by hand and tells you when it is sent."
+        )
         await notification_service.notify(
             session,
             user_id=user_id,
             type="withdrawal",
-            title="Withdrawal requested" if manual else "Withdrawal under review",
-            message=(
-                f"Your ${amount_dec} withdrawal request has been received and is being processed."
-                if manual
-                else f"Your ${amount_dec} withdrawal is over the auto-approve limit "
-                "and is being reviewed."
-            ),
+            title="Withdrawal requested",
+            message=message,
+            email_category="security",
+            force_email=True,
+            email_subject=f"Withdrawal request {wd.reference} received",
+            email_body=message,
         )
+    elif status == "pending_review":
+        await notification_service.notify(
+            session,
+            user_id=user_id,
+            type="withdrawal",
+            title="Withdrawal under review",
+            message=f"Your ${amount_dec} withdrawal is over the auto-approve limit "
+            "and is being reviewed.",
+        )
+    if status == "pending_review":
+        who = (
+            await session.execute(select(User.full_name, User.email).where(User.id == user_id))
+        ).one_or_none()
+        name = ((who[0] or "").strip() or who[1]) if who else user_email
+        await _tell_staff(session, wd, who=name)
     return _result(wd)
 
 
@@ -348,8 +478,7 @@ async def _resolve_manual_destination(
     if payout_method_id is not None:
         w = await payout_methods_service.get_crypto_wallet(session, user_id, payout_method_id)
         return {"type": "crypto", "label": w.label, "network": w.network, "address": w.address}
-    if address and address.strip():
-        return {"type": "crypto", "network": None, "address": address.strip()}
+    # never a typed-in address: the team pays only to a wallet the member saved (owner brief)
     wallets = await payout_methods_service.list_crypto_wallets(session, user_id)
     default = next((w for w in wallets if w.is_default), wallets[0] if wallets else None)
     if default is None:
@@ -561,6 +690,13 @@ async def admin_review(
             "Only a pending-review withdrawal can be decided.",
             status_code=409,
         )
+    if approve and wd.provider == "manual":
+        # the executor would hand it to a provider it was never meant for
+        raise AppError(
+            "MANUAL_WITHDRAWAL",
+            "A manual withdrawal is paid by hand: use Mark as processing / paid / failed.",
+            status_code=409,
+        )
     wd.reviewed_by = actor_id
     wd.reviewed_at = _utcnow()
     if approve:
@@ -609,10 +745,11 @@ async def admin_mark_paid(
         raise AppError("NOT_FOUND", "Withdrawal not found", status_code=404)
     if wd.status == "completed":
         return wd
-    if wd.status not in ("pending_review", "approved"):
+    if wd.status not in ("pending_review", "approved", "processing"):
         raise AppError(
             "INVALID_TRANSITION",
-            "Only a pending or approved withdrawal can be marked paid.",
+            "A failed or rejected withdrawal was already returned to the wallet: it cannot be "
+            "marked paid.",
             status_code=409,
         )
     wd.status = "completed"
@@ -620,7 +757,7 @@ async def admin_mark_paid(
     wd.reviewed_by = actor_id
     wd.reviewed_at = _utcnow()
     if reference and reference.strip():
-        wd.provider_payout_id = reference.strip()
+        wd.transfer_reference = reference.strip()
     if note and note.strip():
         dest = dict(wd.destination) if isinstance(wd.destination, dict) else {}
         dest["admin_note"] = note.strip()
@@ -629,13 +766,20 @@ async def admin_mark_paid(
     await wallet_service.settle_withdrawal(
         session, user_id=wd.user_id, amount=wd.amount, reference_id=wd.id, actor_id=actor_id
     )
+    paid = (
+        f"Your ${wd.amount} withdrawal {wd.reference} has been paid to {wd.destination_label}."
+        + (f" Transfer reference: {wd.transfer_reference}." if wd.transfer_reference else "")
+    )
     await notification_service.notify(
         session,
         user_id=wd.user_id,
         type="withdrawal",
         title="Withdrawal sent",
-        message=f"Your ${wd.amount} withdrawal has been paid out.",
+        message=paid,
         email_category="security",
+        force_email=True,
+        email_subject=f"Withdrawal {wd.reference} paid",
+        email_body=paid,
     )
     await write_audit(
         session,
@@ -644,6 +788,137 @@ async def admin_mark_paid(
         entity_id=str(wd.id),
         actor_id=actor_id,
         after={"status": "completed", "reference": reference},
+    )
+    return wd
+
+
+async def _lock(session: AsyncSession, withdrawal_id: uuid.UUID) -> Withdrawal:
+    wd = (
+        await session.execute(
+            select(Withdrawal).where(Withdrawal.id == withdrawal_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if wd is None:
+        raise AppError("NOT_FOUND", "Withdrawal not found", status_code=404)
+    return wd
+
+
+def _with_provider(wd: Withdrawal) -> bool:
+    """Handed to Stripe / NOWPayments and not back yet: the provider decides how it ends."""
+    return wd.status == "processing" and bool(wd.provider_payout_id)
+
+
+async def admin_mark_processing(
+    session: AsyncSession, *, withdrawal_id: uuid.UUID, actor_id: uuid.UUID | None
+) -> Withdrawal:
+    """The team started the transfer by hand. A waiting automatic withdrawal (balance short,
+    over the limit) can be taken over the same way: the automatic submitter only picks
+    ``approved`` rows, so it no longer touches it."""
+    wd = await _lock(session, withdrawal_id)
+    if wd.status == "processing" and not wd.provider_payout_id:
+        return wd
+    if wd.status not in ("pending_review", "approved"):
+        raise AppError(
+            "INVALID_TRANSITION",
+            "Only a pending withdrawal can be marked as processing.",
+            status_code=409,
+        )
+    before = wd.status
+    wd.status = "processing"
+    wd.updated_at = _utcnow()
+    wd.reviewed_by = actor_id
+    wd.reviewed_at = _utcnow()
+    await notification_service.notify(
+        session,
+        user_id=wd.user_id,
+        type="withdrawal",
+        title="Withdrawal being transferred",
+        message=f"Our team is transferring your ${wd.amount} withdrawal {wd.reference} "
+        f"to {wd.destination_label}.",
+    )
+    await write_audit(
+        session,
+        action="withdrawal.marked_processing",
+        entity_type="withdrawal",
+        entity_id=str(wd.id),
+        actor_id=actor_id,
+        before={"status": before},
+        after={"status": "processing", "provider": wd.provider},
+    )
+    return wd
+
+
+async def admin_mark_failed(
+    session: AsyncSession,
+    *,
+    withdrawal_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    reason: str,
+) -> Withdrawal:
+    """It was not sent: the amount goes back to the member's wallet, ONCE. Pressed twice, the
+    second press finds it failed and returns it untouched; the refund row is also unique per
+    withdrawal in the database (0037), whatever else tries to return it."""
+    reason = (reason or "").strip()
+    if len(reason) < 3:
+        raise AppError("REASON_REQUIRED", "Write why it was not sent.", status_code=422)
+    wd = await _lock(session, withdrawal_id)
+    if wd.status == "failed":
+        return wd
+    if wd.status == "completed":
+        raise AppError(
+            "INVALID_TRANSITION",
+            "This withdrawal was paid: it cannot be marked failed.",
+            status_code=409,
+        )
+    if wd.status not in ("pending_review", "approved", "processing"):
+        raise AppError(
+            "INVALID_TRANSITION",
+            "This withdrawal was already returned to the wallet.",
+            status_code=409,
+        )
+    if _with_provider(wd):
+        raise AppError(
+            "WITH_PROVIDER",
+            "This withdrawal is with the payment provider: it settles or fails there.",
+            status_code=409,
+        )
+    before = wd.status
+    wd.status = "failed"
+    wd.failure_reason = reason
+    wd.updated_at = _utcnow()
+    wd.reviewed_by = actor_id
+    wd.reviewed_at = _utcnow()
+    await wallet_service.release_hold(
+        session,
+        user_id=wd.user_id,
+        amount=wd.amount,
+        reference_id=wd.id,
+        reason=f"not sent: {reason}",
+        actor_id=actor_id,
+    )
+    message = (
+        f"Your ${wd.amount} withdrawal {wd.reference} could not be sent: {reason}. "
+        "The amount is back in your wallet."
+    )
+    await notification_service.notify(
+        session,
+        user_id=wd.user_id,
+        type="withdrawal",
+        title="Withdrawal returned",
+        message=message,
+        email_category="security",
+        force_email=True,
+        email_subject=f"Withdrawal {wd.reference} was not sent",
+        email_body=message,
+    )
+    await write_audit(
+        session,
+        action="withdrawal.marked_failed",
+        entity_type="withdrawal",
+        entity_id=str(wd.id),
+        actor_id=actor_id,
+        before={"status": before},
+        after={"status": "failed", "reason": reason},
     )
     return wd
 
@@ -658,21 +933,40 @@ async def list_awaiting_payout(session: AsyncSession) -> list[tuple[Withdrawal, 
     res = await session.execute(
         select(Withdrawal, User.email)
         .join(User, User.id == Withdrawal.user_id, isouter=True)
-        .where(Withdrawal.status.in_(AWAITING_PAYOUT))
+        .where(
+            Withdrawal.status.in_(AWAITING_PAYOUT)
+            # a transfer the team started by hand and never closed waits for a person too
+            | ((Withdrawal.status == "processing") & Withdrawal.provider_payout_id.is_(None))
+        )
         .order_by(Withdrawal.created_at)
     )
     return [(row[0], row[1]) for row in res.all()]
 
 
 async def list_for_admin(
-    session: AsyncSession, *, status: str | None = None
+    session: AsyncSession,
+    *,
+    status: str | None = None,
+    method: str | None = None,
+    provider: str | None = None,
+    search: str | None = None,
+    limit: int = 200,
 ) -> list[tuple[Withdrawal, str | None]]:
-    """Withdrawals for the admin queue (optionally filtered by status), newest first, each
-    paired with the requester's email."""
+    """Withdrawals for the admin queue, newest first, each with the requester's email:
+    filtered by status, method and kind (manual / automatic), searched by email or number."""
     q = select(Withdrawal, User.email).join(User, User.id == Withdrawal.user_id, isouter=True)
     if status:
         q = q.where(Withdrawal.status == status)
-    q = q.order_by(Withdrawal.created_at.desc())
+    if method:
+        q = q.where(Withdrawal.method == method)
+    if provider == "manual":
+        q = q.where(Withdrawal.provider == "manual")
+    elif provider == "auto":
+        q = q.where(Withdrawal.provider != "manual")
+    if search and search.strip():
+        term = search.strip()
+        q = q.where(User.email.ilike(f"%{term}%") | Withdrawal.reference.ilike(f"%{term}%"))
+    q = q.order_by(Withdrawal.created_at.desc()).limit(limit)
     res = await session.execute(q)
     return [(row[0], row[1]) for row in res.all()]
 
@@ -986,4 +1280,7 @@ def _result(wd: Withdrawal) -> dict:
         "fee": str(wd.fee),
         "net_amount": str(wd.amount - wd.fee),
         "created_at": wd.created_at.isoformat() if wd.created_at else None,
+        "reference": wd.reference,
+        "destination_label": wd.destination_label,
+        "provider": wd.provider,
     }

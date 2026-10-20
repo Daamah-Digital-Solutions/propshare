@@ -12,7 +12,7 @@ from __future__ import annotations
 import decimal
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
@@ -195,6 +195,21 @@ async def hold_for_withdrawal(
     return wallet
 
 
+async def _close_hold_row(session: AsyncSession, reference_id: uuid.UUID, status: str) -> None:
+    """The withdrawal's hold row says how it ended (paid: completed; refunded: returned): it
+    read ``pending`` for ever, so a statement showed a paid withdrawal as in progress."""
+    await session.execute(
+        update(Transaction)
+        .where(
+            Transaction.reference_id == reference_id,
+            Transaction.type == TransactionType.withdrawal,
+            Transaction.status == "pending",
+            Transaction.amount < 0,
+        )
+        .values(status=status)
+    )
+
+
 async def settle_withdrawal(
     session: AsyncSession,
     *,
@@ -211,6 +226,7 @@ async def settle_withdrawal(
         raise AppError("NOT_FOUND", "Wallet not found", status_code=404)
     before_pending = wallet.pending_balance
     wallet.pending_balance = max(decimal.Decimal("0"), before_pending - amount)
+    await _close_hold_row(session, reference_id, "completed")
     await write_audit(
         session,
         action="wallet.withdrawal_settled",
@@ -243,6 +259,7 @@ async def release_hold(
     before = wallet.balance
     wallet.balance = before + amount
     wallet.pending_balance = max(decimal.Decimal("0"), wallet.pending_balance - amount)
+    await _close_hold_row(session, reference_id, "returned")
     session.add(
         Transaction(
             user_id=user_id,

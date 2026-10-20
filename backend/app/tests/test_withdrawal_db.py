@@ -35,6 +35,7 @@ async def _verified(client, db, email: str) -> str:
     )
     uid = db("SELECT id FROM users WHERE email=:e", e=email)[0][0]
     db("UPDATE kyc_verifications SET status='verified' WHERE user_id=:i", i=uid)
+    db("UPDATE users SET email_verified=true WHERE id=:i", i=uid)
     return r.json()["access_token"]
 
 
@@ -112,7 +113,7 @@ async def _withdraw(client, token, amount, method="crypto", address="addr1", key
     headers = {"Authorization": f"Bearer {token}"}
     if key is not None:
         headers["Idempotency-Key"] = str(uuid.uuid4()) if key == "auto" else key
-    body = {"amount": amount, "method": method}
+    body = {"amount": amount, "method": method, "route": "auto"}  # the automatic rail
     if address is not None:
         body["address"] = address
     return await client.post("/api/v1/wallet/withdrawals", json=body, headers=headers)

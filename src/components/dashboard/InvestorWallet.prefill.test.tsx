@@ -60,7 +60,10 @@ vi.mock("@/lib/api", () => ({
     },
     open: async () => state.open,
   },
-  withdrawApi: { create: (...a: unknown[]) => api.withdrawCreate(...a) },
+  withdrawApi: {
+    create: (...a: unknown[]) => api.withdrawCreate(...a),
+    list: async () => ({ items: [], total: 0 }),
+  },
   paymentMethodsApi: { list: async () => [], remove: vi.fn(), setDefault: vi.fn() },
   bankAccountsApi: { list: async () => state.banks, create: vi.fn(), remove: vi.fn(), setDefault: vi.fn() },
   cryptoWalletsApi: { list: async () => [], create: vi.fn(), remove: vi.fn(), setDefault: vi.fn() },
@@ -240,7 +243,12 @@ describe("InvestorWallet — prepared by the assistant", () => {
     expect(api.withdrawCreate).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Withdraw $250" }));
     await waitFor(() => expect(api.withdrawCreate).toHaveBeenCalled());
-    expect(api.withdrawCreate.mock.calls[0][0]).toEqual({ amount: 250, method: "bank", payout_method_id: "b1" });
+    expect(api.withdrawCreate.mock.calls[0][0]).toEqual({
+      amount: 250,
+      method: "bank",
+      payout_method_id: "b1",
+      route: "manual",
+    });
   });
 
   it("keeps the instant speed and shows the fee before anything is sent", async () => {

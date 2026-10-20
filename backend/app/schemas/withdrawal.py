@@ -14,6 +14,9 @@ class WithdrawalCreateIn(BaseModel):
     address: str | None = None  # crypto inline-address fallback (Stripe/legacy path)
     payout_method_id: uuid.UUID | None = None  # a saved bank account / crypto wallet (manual)
     speed: str = Field(default="standard", pattern="^(standard|instant)$")
+    # "auto" = the automatic payout (Stripe Connect / NOWPayments), unchanged. Anything else
+    # is a manual withdrawal the team pays by hand to a saved destination.
+    route: str | None = Field(default=None, pattern="^(auto|manual)$")
 
 
 class WithdrawalCreateOut(BaseModel):
@@ -25,6 +28,9 @@ class WithdrawalCreateOut(BaseModel):
     fee: str
     net_amount: str  # what actually reaches the customer (amount - fee)
     created_at: str | None
+    reference: str | None = None
+    destination_label: str | None = None
+    provider: str | None = None
 
 
 class WithdrawalOut(BaseModel):
@@ -36,6 +42,11 @@ class WithdrawalOut(BaseModel):
     failure_reason: str | None
     created_at: dt.datetime
     completed_at: dt.datetime | None
+    reference: str | None = None
+    destination_label: str | None = None
+    transfer_reference: str | None = None
+    speed: str = "standard"
+    fee: str = "0"
 
 
 class WithdrawalListOut(BaseModel):

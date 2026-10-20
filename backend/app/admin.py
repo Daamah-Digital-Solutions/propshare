@@ -37,6 +37,7 @@ from app.admin_owner import OWNER_VIEWS, platform_listing_filter
 from app.admin_pages import PW_PAGE, TWO_FACTOR_PAGE
 from app.admin_pricing import PRICING_VIEWS
 from app.admin_sukuk import SUKUK_VIEWS
+from app.admin_withdrawals import WITHDRAWAL_VIEWS
 from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.db import get_engine, get_sessionmaker, session_scope
@@ -960,6 +961,7 @@ class WithdrawalAdmin(AdminOnlyModelView, model=Withdrawal):
     name = "Withdrawal"
     icon = "fa-solid fa-money-bill-transfer"
     column_list = [
+        Withdrawal.reference,
         Withdrawal.user,
         Withdrawal.amount,
         Withdrawal.method,
@@ -2092,6 +2094,7 @@ def setup_admin(app) -> Admin:
         *BROKER_LEAD_VIEWS,
         *ESTATE_VIEWS,
         *DISTRIBUTION_VIEWS,
+        *WITHDRAWAL_VIEWS,
         *SUKUK_VIEWS,
         *PRICING_VIEWS,
         PasswordChangeView,

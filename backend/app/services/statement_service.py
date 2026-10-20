@@ -54,7 +54,12 @@ TYPE_LABELS = {
     "family_allocation": "Family allocation",
     "gift": "Gift",
 }
-STATUS_LABELS = {"completed": "Completed", "pending": "In progress", "reversed": "Reversed"}
+STATUS_LABELS = {
+    "completed": "Completed",
+    "pending": "In progress",
+    "reversed": "Reversed",
+    "returned": "Returned",
+}
 
 
 @dataclasses.dataclass(frozen=True)

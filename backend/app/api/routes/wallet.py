@@ -5,6 +5,7 @@
                              KYC-gated (verified users only); Idempotency-Key required.
 - GET  /wallet/transactions  paginated ledger.
 - GET  /wallet/statement     account statement for a chosen period (PDF or Excel).
+- GET  /wallet/transactions/{id}/receipt   a numbered PDF receipt for one movement.
 
 Deposits are credited ONLY by the provider webhook (see routes/payments.py), never
 here — this endpoint just creates the intent.
@@ -13,6 +14,7 @@ here — this endpoint just creates the intent.
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, Request, Response
@@ -36,6 +38,7 @@ from app.services import (
     manual_deposit_service,
     payment_service,
     platform_accounts_service,
+    receipt_service,
     statement_render,
     statement_service,
     wallet_service,
@@ -79,6 +82,23 @@ async def statement(
             "Content-Disposition": (
                 f'attachment; filename="{statement_service.filename(stmt, format)}"'
             ),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/transactions/{transaction_id}/receipt")
+@limiter.limit(STATEMENT_LIMIT)
+async def transaction_receipt(
+    request: Request, transaction_id: uuid.UUID, principal: PrincipalDep, session: SessionDep
+):
+    """A numbered PDF receipt for one of the caller's own wallet movements."""
+    receipt = await receipt_service.build_receipt(session, principal.user_id, transaction_id)
+    return Response(
+        content=receipt_service.render_pdf(receipt),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{receipt_service.filename(receipt)}"',
             "Cache-Control": "no-store",
         },
     )

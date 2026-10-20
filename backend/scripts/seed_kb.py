@@ -113,16 +113,24 @@ smallest payment, which moves with its network's fees: it is shown under the coi
 choose it, and an amount under it cannot be paid in that coin (choose another coin or a
 larger amount). A coin that needs a memo or tag must be sent with the one shown on the
 payment page.
-Withdrawals: a request holds the amount immediately. Depending on how the platform is set up
-for each method (the assistant reads this live), a withdrawal is either paid automatically
-through the payment provider as soon as you request it, or reviewed and paid by the team.
-Automatic bank withdrawals go to a bank account you link once through Stripe from the wallet
-page (available for accounts in the US, UK, EEA, Canada and Switzerland). Where instant
+Withdrawals: first save where the money goes (Wallet -> Payment Methods: a bank account with
+the bank, holder, IBAN or account number, SWIFT, country and currency, or a crypto wallet with
+its network and address); numbers are only ever shown as their last four. A withdrawal needs a
+confirmed email address and at most your available balance; the request holds the amount at
+once and gets a number (WD-...). A manual withdrawal is paid by our team by hand to the saved
+account on the request, usually within 1-2 business days: you are notified and emailed when it
+is sent (with the transfer reference) or, if it could not be sent, with the reason, and then
+the amount is back in your wallet. If the platform pays bank withdrawals automatically and
+you have linked your bank once through Stripe from the wallet page (available for accounts in
+the US, UK, EEA, Canada and Switzerland), the withdraw screen lets you choose Automatic (sent
+at once, ticked first) or Manual (a saved bank account our team pays). Crypto withdrawals are
+manual. Every wallet movement, a withdrawal and its refund included, has a numbered PDF
+receipt: the download icon beside it in the wallet's history. Where instant
 payouts are switched on, an eligible debit card can receive the money within minutes for a
 small fee that is shown before you confirm and deducted from the amount; if an instant payout
 cannot go through it is sent at standard speed instead, never lost. You see every withdrawal,
-its speed, fee and status in your wallet and are notified when it is paid or rejected
-(rejected funds return to your wallet). An account statement for any period you choose (up to
+its number, destination and status in your wallet (Withdrawal requests) and are notified when
+it is paid or returned (returned funds go back to your wallet). An account statement for any period you choose (up to
 three years at a time) can be downloaded as a PDF or an Excel file from the Account statement
 card on the wallet page: opening and closing balance, every movement with a running balance,
 totals by type and your holdings at the end of the period. Your units have their own
@@ -514,13 +522,21 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 للدفعة يتغيّر مع رسوم شبكتها: يظهر تحت العملة عند اختيارها، والمبلغ الأقل منه لا يُدفع بتلك
 العملة (اختر عملة أخرى أو مبلغًا أكبر).
 والعملة التي تحتاج memo أو tag يجب إرسالها مع الرقم المعروض في صفحة الدفع.
-السحب: يحجز الطلب المبلغ فورًا. وحسب إعداد المنصة لكل وسيلة (يقرؤه المساعد مباشرة) إمّا أن يُصرف
-السحب تلقائيًا عبر مزوّد الدفع لحظة طلبه، أو يراجعه الفريق ويصرفه. السحب البنكي التلقائي يذهب إلى
-حساب بنكي تربطه مرة واحدة عبر Stripe من صفحة المحفظة (متاح للحسابات في الولايات المتحدة
-والمملكة المتحدة والمنطقة الاقتصادية الأوروبية وكندا وسويسرا). وحيث يكون السحب الفوري مفعّلًا،
+السحب: احفظ أولًا وجهة المبلغ (المحفظة ← Payment Methods: حساب بنكي باسم البنك وصاحب الحساب
+وIBAN أو رقم الحساب وSWIFT والدولة والعملة، أو محفظة كريبتو بالشبكة والعنوان)، والأرقام لا تظهر
+إلا بآخر أربعة. يحتاج السحب إلى بريد إلكتروني مؤكَّد وألا يزيد على رصيدك المتاح؛ ويحجز الطلب المبلغ
+فورًا ويأخذ رقمًا (WD-...). السحب اليدوي يحوّله فريقنا بنفسه إلى الحساب المحفوظ على الطلب، عادة
+خلال يوم إلى يومي عمل: يصلك إشعار وبريد عند التحويل (مع رقم التحويل)، أو بالسبب إن تعذّر التحويل
+وعندها يعود المبلغ إلى محفظتك. وإذا كانت المنصة تصرف السحب البنكي تلقائيًا وربطت بنكك مرة واحدة
+عبر Stripe من صفحة المحفظة (متاح للحسابات في الولايات المتحدة والمملكة المتحدة والمنطقة
+الاقتصادية الأوروبية وكندا وسويسرا)، تختار في شاشة السحب بين "تلقائي" (يُرسل فورًا، ومحدَّد من
+البداية) و"يدوي" (حساب بنكي محفوظ يحوّل له الفريق). سحب الكريبتو يدوي. ولكل حركة في المحفظة،
+ومنها السحب واسترداده، إيصال PDF برقم: أيقونة التنزيل بجانبها في سجل المحفظة. وحيث يكون السحب
+الفوري مفعّلًا،
 يمكن أن يصل المبلغ إلى بطاقة خصم مؤهلة خلال دقائق مقابل رسم صغير يُعرض قبل التأكيد ويُخصم من
 المبلغ؛ وإن تعذّر الصرف الفوري يُرسل بالسرعة العادية ولا يضيع. ترى كل سحب وسرعته ورسمه وحالته في
-المحفظة ويصلك إشعار عند الصرف أو الرفض (المبلغ المرفوض يعود لمحفظتك). ويمكنك تنزيل كشف حساب لأي
+المحفظة (Withdrawal requests) برقمه ووجهته وحالته، ويصلك إشعار عند الصرف أو الإرجاع (المبلغ
+المرتجع يعود لمحفظتك). ويمكنك تنزيل كشف حساب لأي
 فترة تختارها (حتى ثلاث سنوات في المرة) بصيغة PDF أو Excel من بطاقة "كشف الحساب" في صفحة المحفظة:
 الرصيد الافتتاحي والختامي، وكل حركة مع الرصيد بعدها، والإجماليات حسب النوع، وحيازاتك في نهاية
 الفترة. وللوحدات كشف خاص بها: من لوحة التحكم ← Active Investments ← Unit Movements ← "Download

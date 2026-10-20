@@ -28,6 +28,7 @@ async def _verified(client, db, email: str) -> tuple[str, str]:
     )
     uid = db("SELECT id FROM users WHERE email=:e", e=email)[0][0]
     db("UPDATE kyc_verifications SET status='verified' WHERE user_id=:i", i=uid)
+    db("UPDATE users SET email_verified=true WHERE id=:i", i=uid)
     return r.json()["access_token"], uid
 
 
