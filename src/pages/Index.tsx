@@ -8,6 +8,7 @@ import LiquiditySection from "@/components/home/LiquiditySection";
 import PaymentSection from "@/components/home/PaymentSection";
 import CTASection from "@/components/home/CTASection";
 import PropertyTypesBanner from "@/components/home/PropertyTypesBanner";
+import LegalDisclaimer from "@/components/home/LegalDisclaimer";
 
 const Index = () => {
   return (
@@ -24,6 +25,7 @@ const Index = () => {
         <NotificationsSection />
         <CTASection />
       </main>
+      <LegalDisclaimer />
     </div>
   );
 };

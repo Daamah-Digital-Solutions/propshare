@@ -57,7 +57,7 @@ const CTASection = () => {
 
             {/* Trust Note */}
             <p className="mt-8 text-sm text-primary-foreground/60">
-              Regulated platform • 256-bit encryption • KYC verified owners
+              256-bit encryption • KYC verified owners
             </p>
           </div>
         </div>
