@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Link } from "react-router-dom";
 import { ApiError } from "@/lib/api";
 import { ASSISTANT_V2_FLAG, TICKET_CATEGORIES, ticketsApi } from "@/lib/assistantApi";
+import { openAssistant } from "@/lib/assistantEvents";
 import {
   MessageCircle,
   Phone,
@@ -18,11 +19,9 @@ import {
   Send,
   Clock,
   CheckCircle,
-  X,
-  Minimize2,
-  Maximize2,
   HeadphonesIcon,
   ScrollText,
+  Sparkles,
 } from "lucide-react";
 
 // WhatsApp icon component
@@ -32,30 +31,9 @@ const WhatsAppIcon = () => (
   </svg>
 );
 
-// Chat Message Interface
-interface ChatMessage {
-  id: string;
-  sender: "user" | "support";
-  message: string;
-  timestamp: Date;
-}
-
 const Support = () => {
   const { toast } = useToast();
   const { isAuthenticated } = useAuth();
-  
-  // Live Chat State
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [isChatMinimized, setIsChatMinimized] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      id: "1",
-      sender: "support",
-      message: "Hello! Welcome to Capimax PropShare support. How can I help you today?",
-      timestamp: new Date(),
-    },
-  ]);
-  const [currentMessage, setCurrentMessage] = useState("");
   
   // Contact Form State
   const [contactForm, setContactForm] = useState({
@@ -73,35 +51,6 @@ const Support = () => {
   const supportPhones = ["+1 205 350 8771", "+1 205 350 8864", "+44 7577 370309"];
   const officeAddress = "8 The Green, Ste R, Dover, Kent, DE 19901, United States";
   const businessHours = "Mon - Fri: 9:00 AM - 6:00 PM (EST)";
-
-  // Handle sending chat message
-  const handleSendMessage = () => {
-    if (!currentMessage.trim()) return;
-
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      sender: "user",
-      message: currentMessage,
-      timestamp: new Date(),
-    };
-
-    setChatMessages((prev) => [...prev, userMessage]);
-    setCurrentMessage("");
-
-    // Honest auto-reply — this widget is NOT staffed by a live agent yet. We acknowledge
-    // the message and funnel to the real channels (WhatsApp / email / phone) rather than
-    // faking an agent conversation.
-    setTimeout(() => {
-      const autoReply: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        sender: "support",
-        message:
-          "Thanks for your message! This chat isn't staffed live yet — for a response please reach us on WhatsApp or email support@capimaxpropshare.com and our team will get back to you.",
-        timestamp: new Date(),
-      };
-      setChatMessages((prev) => [...prev, autoReply]);
-    }, 800);
-  };
 
   // Handle contact form submission. There is no server-side ticketing backend yet, so
   // we perform a REAL action — compose an email to support via the user's mail client —
@@ -157,6 +106,17 @@ const Support = () => {
   };
 
   // Handle email click
+  // PropShare AI is the first line of support (client, 2026-10-20). With no assistant on
+  // this page (switched off), the ticket form below is the way to reach the team.
+  const handleAskAi = () => {
+    if (openAssistant()) return;
+    document.getElementById("contact-form")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    toast({
+      title: "The assistant is not available right now",
+      description: "Send us your question with the form below and our team will reply.",
+    });
+  };
+
   const handleEmailClick = () => {
     window.location.href = `mailto:${supportEmail}`;
   };
@@ -170,24 +130,60 @@ const Support = () => {
         </div>
         <h1 className="text-4xl font-bold text-foreground mb-4">Support & Help Center</h1>
         <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-          We're here to help! Choose your preferred support channel below.
+          Ask PropShare AI first: it answers right away, any time. Our team is here too.
         </p>
       </div>
 
+      {/* PropShare AI: the first line of support */}
+      <Card className="mb-8 border-primary/30 bg-primary/5" data-testid="propshare-ai">
+        <CardContent className="p-6 md:p-8 grid gap-6 md:grid-cols-[1fr_auto] md:items-center">
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              <h2 className="text-2xl font-bold text-foreground">Ask PropShare AI</h2>
+              <Badge className="ml-1">24/7</Badge>
+            </div>
+            <p className="text-muted-foreground mb-4 max-w-2xl">
+              PropShare AI is our full customer service, ready any time of day. Ask it any question
+              about your account and your investments and it answers straight away, using your own
+              account details, and helps you with what you need next.
+            </p>
+            <ul className="grid gap-2 sm:grid-cols-2 text-sm text-foreground">
+              {[
+                "Your investments, returns, installments and wallet",
+                "Payments, deposits and withdrawals: their status and next steps",
+                "Your documents, certificates and statements, and where to get them",
+                "Verification (KYC) and what your account still needs",
+                "Properties, fees and how PropShare works",
+                "When something needs our team, it opens a support ticket for you",
+              ].map((item) => (
+                <li key={item} className="flex items-start gap-2">
+                  <CheckCircle className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <Button size="lg" className="gap-2" onClick={handleAskAi}>
+            <MessageCircle className="h-5 w-5" /> Chat with PropShare AI
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* Support Channels Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-        {/* Live Chat */}
-        <Card className="hover:shadow-lg transition-shadow cursor-pointer group" onClick={() => setIsChatOpen(true)}>
+        {/* PropShare AI */}
+        <Card className="hover:shadow-lg transition-shadow cursor-pointer group" onClick={handleAskAi}>
           <CardContent className="p-6 text-center">
             <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4 group-hover:bg-primary/20 transition-colors">
               <MessageCircle className="h-7 w-7 text-primary" />
             </div>
-            <h3 className="font-semibold text-foreground mb-2">Message Us</h3>
+            <h3 className="font-semibold text-foreground mb-2">Ask PropShare AI</h3>
             <p className="text-sm text-muted-foreground mb-3">
-              Send a message; we reply by email or WhatsApp
+              Instant answers about your investments, payments, documents and account
             </p>
-            <Badge variant="outline" className="text-muted-foreground border-border">
-              Not staffed live
+            <Badge variant="outline" className="text-primary border-primary/40">
+              Available 24/7
             </Badge>
           </CardContent>
         </Card>
@@ -271,7 +267,7 @@ const Support = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div>
           <div className="mb-4 flex items-center justify-between gap-4">
-            <h2 className="text-2xl font-bold text-foreground">Send Us a Message</h2>
+            <h2 id="contact-form" className="text-2xl font-bold text-foreground scroll-mt-20">Send Us a Message</h2>
             {ASSISTANT_V2_FLAG && isAuthenticated && (
               <Button asChild variant="outline" size="sm">
                 <Link to="/support/tickets">My tickets</Link>
@@ -416,110 +412,6 @@ const Support = () => {
         </div>
       </div>
 
-      {/* Floating Live Chat Widget */}
-      {isChatOpen && (
-        <div
-          className={`fixed z-50 bg-card border rounded-lg shadow-2xl transition-all duration-300 ${
-            isChatMinimized
-              ? "bottom-4 right-4 w-80 h-14"
-              : "bottom-4 right-4 w-96 h-[500px] max-h-[80vh]"
-          }`}
-        >
-          {/* Chat Header */}
-          <div className="flex items-center justify-between p-4 border-b bg-primary text-primary-foreground rounded-t-lg">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-primary-foreground/20 flex items-center justify-center">
-                <MessageCircle className="h-4 w-4" />
-              </div>
-              {!isChatMinimized && (
-                <div>
-                  <h4 className="font-semibold text-sm">Support</h4>
-                  <p className="text-xs opacity-80">We'll reply by email or WhatsApp</p>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-primary-foreground hover:bg-primary-foreground/20"
-                onClick={() => setIsChatMinimized(!isChatMinimized)}
-              >
-                {isChatMinimized ? <Maximize2 className="h-4 w-4" /> : <Minimize2 className="h-4 w-4" />}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-primary-foreground hover:bg-primary-foreground/20"
-                onClick={() => setIsChatOpen(false)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-
-          {/* Chat Content */}
-          {!isChatMinimized && (
-            <>
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 h-[350px]">
-                {chatMessages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`max-w-[80%] rounded-lg p-3 ${
-                        msg.sender === "user"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-foreground"
-                      }`}
-                    >
-                      <p className="text-sm">{msg.message}</p>
-                      <p className="text-xs opacity-70 mt-1">
-                        {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Input */}
-              <div className="p-4 border-t">
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Type your message..."
-                    value={currentMessage}
-                    onChange={(e) => setCurrentMessage(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-                  />
-                  <Button size="icon" onClick={handleSendMessage}>
-                    <Send className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Floating Chat Button (when chat is closed) */}
-      {!isChatOpen && (
-        <Button
-          className="fixed bottom-6 right-6 w-14 h-14 rounded-full shadow-lg z-50"
-          onClick={() => setIsChatOpen(true)}
-        >
-          <MessageCircle className="h-6 w-6" />
-        </Button>
-      )}
-
-      {/* Floating WhatsApp Button */}
-      <Button
-        className="fixed bottom-6 right-24 w-14 h-14 rounded-full shadow-lg z-50 bg-green-500 hover:bg-green-600"
-        onClick={handleWhatsAppClick}
-      >
-        <WhatsAppIcon />
-      </Button>
     </div>
   );
 };

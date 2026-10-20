@@ -37,6 +37,7 @@ import {
 } from "@/lib/assistantApi";
 import { AssistantCardView, LinkButton } from "@/components/assistant/AssistantCards";
 import { saveBlob } from "@/lib/certificates";
+import { OPEN_ASSISTANT_EVENT } from "@/lib/assistantEvents";
 import { coveredPaths, greeting, pageStarters, toolLabel } from "@/components/assistant/assistantUi";
 
 /**
@@ -384,6 +385,17 @@ export function AssistantWidget({ status: initialStatus }: { status: AssistantSt
     dismissTeaser();
     setOpen(true);
   }, [dismissTeaser]);
+
+  // A page asks for the panel (the Support page's "Ask PropShare AI"); marking the event
+  // handled tells it an assistant answered.
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      event.preventDefault();
+      openPanel();
+    };
+    window.addEventListener(OPEN_ASSISTANT_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_ASSISTANT_EVENT, onOpen);
+  }, [openPanel]);
 
   // Restore (or start) this identity's conversation when the panel opens.
   useEffect(() => {
