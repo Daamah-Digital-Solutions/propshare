@@ -46,6 +46,7 @@ import { INSTALLMENT_DURATIONS } from "@/lib/installments";
 import { assetValue as valueOf } from "@/lib/properties";
 import UnitPriceHistory from "@/components/property/UnitPriceHistory";
 import { fundedPct, fundingBar, fundingText } from "@/lib/funding";
+import PropertyGallery from "@/components/property/PropertyGallery";
 
 /**
  * Under-construction property page — the design the client knew (the model page removed on
@@ -366,24 +367,9 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                 </div>
               </div>
 
-              <div className="rounded-2xl overflow-hidden border border-border bg-card">
-                {images.length ? (
-                  <>
-                    <img src={images[0]} alt={detail.title} className="w-full h-72 object-cover" />
-                    {images.length > 1 && (
-                      <div className="grid grid-cols-3 gap-1 p-1">
-                        {images.slice(1, 4).map((g, i) => (
-                          <img key={i} src={g} alt="" className="h-20 w-full object-cover rounded" />
-                        ))}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
-                    Photos will be added soon
-                  </div>
-                )}
-              </div>
+              {/* The same gallery as a ready listing: every photo, arrows, thumbnails, full screen
+                  (it showed the first four as a fixed collage, the rest unreachable). */}
+              <PropertyGallery images={images} title={detail.title} />
             </div>
           </div>
         </section>

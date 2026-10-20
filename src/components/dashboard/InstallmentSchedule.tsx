@@ -48,6 +48,7 @@ import {
   installmentsApi,
   walletApi,
   ApiError,
+  assetUrl,
   type InstallmentPayment,
   type InstallmentPlan,
 } from "@/lib/api";
@@ -231,7 +232,7 @@ function PlanCard({
         <div className="sm:w-44 h-32 sm:h-auto bg-muted shrink-0 flex items-center justify-center">
           {plan.property_image ? (
             <img
-              src={plan.property_image}
+              src={assetUrl(plan.property_image)}
               alt={plan.property_title}
               className="h-full w-full object-cover"
               onError={(e) => {

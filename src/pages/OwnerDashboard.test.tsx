@@ -14,6 +14,7 @@ const listOwnerMock = vi.fn();
 const portfolioStatsMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
+  assetUrl: (url: string) => url,
   propertyApi: { listOwner: (...a: unknown[]) => listOwnerMock(...a) },
   ownerStatsApi: { portfolioStats: (...a: unknown[]) => portfolioStatsMock(...a) },
 }));

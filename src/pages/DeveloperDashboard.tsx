@@ -43,7 +43,7 @@ import { PropertyCreationForm } from "@/components/developer/PropertyCreationFor
 import { MilestonesManager } from "@/components/developer/MilestonesManager";
 import { InvestorCommunications } from "@/components/developer/InvestorCommunications";
 import { useQuery } from "@tanstack/react-query";
-import { ownerStatsApi, propertyApi, type PropertyDetail } from "@/lib/api";
+import { assetUrl, ownerStatsApi, propertyApi, type PropertyDetail } from "@/lib/api";
 import { ownerListingStatus } from "@/lib/propertyStatus";
 import { ListingReviewPanel } from "@/components/dashboard/ListingReviewPanel";
 import { Loader2 } from "lucide-react";
@@ -101,7 +101,7 @@ const toProjectCard = (p: PropertyDetail): ProjectCard => {
     id: p.id,
     name: p.title,
     location: p.location,
-    image: p.image ?? p.images?.[0] ?? "",
+    image: assetUrl(p.image ?? p.images?.[0] ?? ""),
     status,
     // Phase 15b — real construction % computed from milestones (legacy blob fallback).
     constructionProgress: p.construction_progress ?? Number(content.constructionProgress ?? 0),

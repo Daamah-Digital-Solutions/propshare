@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, MapPin, TrendingUp, Clock, Building2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { propertyApi } from "@/lib/api";
+import { assetUrl, propertyApi } from "@/lib/api";
 import { assetValue } from "@/lib/properties";
 import { fundedPct, fundingBar, fundingText } from "@/lib/funding";
 
@@ -130,7 +130,7 @@ const FeaturedProperties = () => {
     id: s.id,
     title: s.title,
     location: s.location,
-    image: s.image ?? "",
+    image: assetUrl(s.image ?? ""),
     price: assetValue(s),
     minInvestment: s.minimum_investment,
     yield: s.expected_yield ?? s.target_yield ?? 0,

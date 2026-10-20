@@ -58,7 +58,7 @@ import { OwnerDocuments } from "@/components/dashboard/OwnerDocuments";
 import { PropertyCreationForm } from "@/components/developer/PropertyCreationForm";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
-import { ownerStatsApi, propertyApi, type PropertyDetail } from "@/lib/api";
+import { assetUrl, ownerStatsApi, propertyApi, type PropertyDetail } from "@/lib/api";
 import { ownerListingStatus, isOnMarket, OWNER_STATUS_BADGE } from "@/lib/propertyStatus";
 import { ListingReviewPanel } from "@/components/dashboard/ListingReviewPanel";
 import {
@@ -83,7 +83,7 @@ const toOwnerPropertyCard = (p: PropertyDetail) => ({
   id: p.id,
   name: p.title,
   location: p.location,
-  image: p.image ?? p.images?.[0] ?? "",
+  image: assetUrl(p.image ?? p.images?.[0] ?? ""),
   // the real lifecycle: a submission under review is never shown as "Funding"
   status: p.status,
   statusView: ownerListingStatus(p),
