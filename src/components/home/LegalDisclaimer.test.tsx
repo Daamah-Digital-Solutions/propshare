@@ -15,8 +15,5 @@ describe("LegalDisclaimer", () => {
     expect(screen.getByText(/possible loss of some or all invested capital/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "User Agreement" })).toHaveAttribute("href", "/terms");
     expect(screen.getByRole("link", { name: "Privacy Policy" })).toHaveAttribute("href", "/privacy");
-    expect(
-      screen.getByText("Copyright © 2026 Capimax Real Estate Technologies LLC. All rights reserved."),
-    ).toBeInTheDocument();
   });
 });

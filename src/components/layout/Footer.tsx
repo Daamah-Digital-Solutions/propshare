@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { Mail, MapPin, Phone } from "lucide-react";
+import LegalDisclaimer, { LEGAL_COPYRIGHT } from "@/components/home/LegalDisclaimer";
 
 const Footer = () => {
   // Every href below resolves to a real route in App.tsx (no 404s). Links that had no
@@ -34,7 +35,8 @@ const Footer = () => {
 
   return (
     <footer className="bg-foreground text-primary-foreground">
-      <div className="container mx-auto px-4 py-16">
+      {/* pb-24 below md: the phone's bottom navigation bar sits over the page's last lines */}
+      <div className="container mx-auto px-4 pt-16 pb-24 md:pb-16">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-8 lg:gap-12">
           {/* Brand Column */}
           <div className="lg:col-span-2">
@@ -137,16 +139,13 @@ const Footer = () => {
           </div>
         </div>
 
-        {/* Bottom Bar */}
-        <div className="border-t border-primary-foreground/10 mt-12 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
-          <p className="text-sm text-primary-foreground/60">
-            © 2024 Capimax PropShare. All rights reserved.
-          </p>
-          <div className="flex items-center gap-6">
-            <span className="text-xs text-primary-foreground/40">
-              Regulated by Financial Services Authority
-            </span>
-          </div>
+        {/* The client's legal disclaimer, in small print (2026-10-20) */}
+        <LegalDisclaimer className="border-t border-primary-foreground/10 mt-12 pt-8 text-primary-foreground/60" />
+
+        {/* Bottom Bar. No regulator line: the disclaimer above states Capimax is not a registered
+            broker-dealer or investment adviser. */}
+        <div className="border-t border-primary-foreground/10 mt-8 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
+          <p className="text-sm text-primary-foreground/60">{LEGAL_COPYRIGHT}</p>
         </div>
       </div>
     </footer>
