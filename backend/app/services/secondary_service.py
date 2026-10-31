@@ -58,6 +58,7 @@ from app.models import (
     SecondaryListing,
     SecondaryTrade,
     SukukCertificate,
+    Transfer,
     Wallet,
 )
 from app.models.base import TransactionType
@@ -110,7 +111,8 @@ async def reservation_breakdown(
     sold: ``listed`` (active secondary listings), ``lp_exit`` (open liquidity-provider exit
     requests), ``family_pending`` (promised to family members not registered yet), ``gift``
     (scheduled gifts), ``installment_plan`` (vested under a plan that is still running) and
-    ``pledged`` (an approved Nova Sukuk certificate's pledge)."""
+    ``pledged`` (an approved Nova Sukuk certificate's pledge) and ``transfer`` (sent to another
+    person and not delivered yet: scheduled, or waiting for the recipient)."""
     secondary = await session.scalar(
         select(func.coalesce(func.sum(SecondaryListing.units_remaining), 0)).where(
             SecondaryListing.seller_id == user_id,
@@ -163,6 +165,16 @@ async def reservation_breakdown(
         )
     )
     nova_pledged = await pledged_units(session, user_id, property_id)
+    # 0040: units sent to another person are held from the moment they are sent until they
+    # are delivered (they leave the ledger then) or come back (cancelled / expired / failed).
+    transfer_held = await session.scalar(
+        select(func.coalesce(func.sum(Transfer.units), 0)).where(
+            Transfer.sender_id == user_id,
+            Transfer.property_id == property_id,
+            Transfer.asset == "units",
+            Transfer.status.in_(("scheduled", "waiting")),
+        )
+    )
     return {
         "listed": int(secondary or 0),
         "lp_exit": int(lp_open or 0),
@@ -170,6 +182,7 @@ async def reservation_breakdown(
         "gift": int(gift_reserved or 0),
         "installment_plan": int(installment_vested or 0),
         "pledged": int(nova_pledged or 0),
+        "transfer": int(transfer_held or 0),
     }
 
 

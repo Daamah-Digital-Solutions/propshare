@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -11,9 +13,23 @@ class ReferralCodeOut(BaseModel):
 
 
 class BrokerDashboardOut(BaseModel):
-    commission_rate: str  # broker_commission_pct, live from platform_settings
+    # the general rate, percent of the investment (a property may have its own)
+    commission_rate: str
     total_referrals: int
     total_commission: str
+
+
+class CommissionRateOut(BaseModel):
+    property_id: uuid.UUID
+    title: str
+    slug: str | None
+    rate: str  # percent of the investment
+    own_rate: bool  # False: the property uses the general rate
+
+
+class CommissionRatesOut(BaseModel):
+    general_rate: str
+    items: list[CommissionRateOut]
 
 
 class ReferralItemOut(BaseModel):

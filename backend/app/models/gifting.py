@@ -75,6 +75,8 @@ class ScheduledGift(Base):
     idempotency_key: Mapped[str | None] = mapped_column(Text)
     executed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     materialized_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    # pending (waiting for the recipient) until then; back to the giver after (alembic/0040)
+    claim_expires_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )

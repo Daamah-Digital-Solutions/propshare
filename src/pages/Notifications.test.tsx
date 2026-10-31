@@ -4,6 +4,7 @@
  */
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import Notifications from "./Notifications";
 
@@ -23,7 +24,9 @@ function renderIt() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <Notifications />
+      <MemoryRouter>
+        <Notifications />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -62,5 +65,21 @@ describe("Notifications page", () => {
     const btn = await screen.findByRole("button", { name: /Mark all read/i });
     fireEvent.click(btn);
     await waitFor(() => expect(markAllMock).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("a message from the team", () => {
+  it("links to the Messages inbox, where it is read", async () => {
+    listMock.mockResolvedValue({
+      items: [
+        { id: "n9", type: "message", title: "New tiers", message: "The pool opens…", read: false, created_at: "2026-10-28T00:00:00Z" },
+      ],
+      total: 1,
+      unread_count: 1,
+    });
+    renderIt();
+    const link = await screen.findByRole("link", { name: /read it in messages/i });
+    expect(link).toHaveAttribute("href", "/messages");
+    expect(screen.getByText("Message")).toBeInTheDocument();
   });
 });

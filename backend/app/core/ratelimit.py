@@ -35,3 +35,8 @@ ATTACHMENT_LIMIT = "20/minute"  # pictures uploaded to the assistant chat, per I
 CRYPTO_MINIMUM_LIMIT = "30/minute"
 # the public claim form (it stores uploaded documents); the service also caps claims per address
 ESTATE_CLAIM_LIMIT = "10/hour"
+# the public certificate check (its QR code); the code is 22 random characters, so this only
+# stops a script from hammering the page
+CERTIFICATE_VERIFY_LIMIT = "30/minute"
+# sending a transfer (each one also invites by email when the recipient is not verified)
+TRANSFER_LIMIT = "20/minute"

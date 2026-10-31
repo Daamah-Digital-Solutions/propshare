@@ -7,7 +7,7 @@ card whose buttons download the files straight away, through the platform's own 
 endpoints (the same files the dashboard gives):
 
   * ``get_my_certificates``         the ownership certificate of each property held (PDF), all
-    of them in one ZIP, the share of the property and the reference to enter at Capimax Verify;
+    of them in one ZIP, the share of the property, its number and the page its QR code opens;
   * ``get_my_installment_schedules`` each installment plan's schedule (PDF and Excel) with what
     is paid, what is left and the next payment.
 
@@ -23,6 +23,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.models import Property
@@ -82,14 +83,16 @@ class CertificateItem(ToolOutput):
     property_slug: str | None
     units: int
     ownership_pct: str  # the share of the whole property, e.g. "0.04762%"
-    certificate_reference: str  # printed on the PDF; the number to enter at Capimax Verify
+    certificate_number: str  # printed on the PDF
+    verification_code: str  # printed beside the QR code
+    verify_path: str  # the certificate's verification page (what its QR code opens)
+    issued_at: str
 
 
 class CertificatesOut(ToolOutput):
     items: list[CertificateItem]
     holdings: int  # how many properties the user holds in all
-    verify_provider: str
-    verify_url: str
+    verify_path: str  # where anyone enters a verification code (the Verification Center)
     note: str
     as_of: str
 
@@ -118,29 +121,40 @@ async def _get_my_certificates(session, ctx: AgentContext, args) -> dict:
             }
         )
     picked = _matching(a.property, rows, what="holding")
-    partner = verification_partners.CERTIFICATES
-    return {
-        "items": [
+    items = []
+    for r in picked[:MAX_ITEMS]:
+        # the certificate stating the units now (issued when they changed), in a short
+        # transaction of its own: the chat's session stays open until the reply ends, and the
+        # certificate's locks must not be held that long (its public page waits on them)
+        async with AsyncSession(session.bind, expire_on_commit=False) as own, own.begin():
+            cert = await certificate_service.current_certificate(
+                own, user_id=ctx.user_id, property_id=uuid.UUID(r["id"])
+            )
+        items.append(
             {
                 "property_id": r["id"],
                 "property_title": r["title"],
                 "property_slug": r["slug"],
-                "units": r["units"],
-                "ownership_pct": certificate_service.ownership_pct(r["units"], r["total_units"]),
-                "certificate_reference": certificate_service.certificate_reference(
-                    r["id"], ctx.user_id
-                ),
+                "units": cert.units,
+                "ownership_pct": cert.ownership,
+                "certificate_number": cert.number,
+                "verification_code": cert.verification_code,
+                "verify_path": certificate_service.verify_path(cert.verification_code),
+                "issued_at": cert.issued_at.date().isoformat(),
             }
-            for r in picked[:MAX_ITEMS]
-        ],
+        )
+    return {
+        "items": items,
         "holdings": len(rows),
-        "verify_provider": partner.provider,
-        "verify_url": partner.url,
+        "verify_path": verification_partners.CERTIFICATES.url,
         "note": (
-            "The card below downloads each certificate (PDF, generated live from the ownership "
-            "ledger) and, with more than one holding, all of them in one ZIP. To verify a "
-            f"certificate, enter its certificate_reference at {partner.provider} "
-            f"({partner.action}); give that link exactly as verify_url."
+            "The card below downloads each certificate (PDF) and, with more than one holding, "
+            "all of them in one ZIP. Each certificate carries a QR code that opens its own "
+            "verification page on Capimax PropShare (verify_path): anyone holding the paper "
+            "scans it to see that it is authentic and current. Without a camera, the "
+            "verification_code is entered on the Verification Center. A certificate states the "
+            "units held when it was issued; when they change, the next one states the new count "
+            "and the old one shows as superseded."
         ),
         "as_of": _now(),
     }

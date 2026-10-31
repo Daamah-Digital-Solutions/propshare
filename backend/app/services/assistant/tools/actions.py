@@ -46,6 +46,7 @@ PREF_KEYS = (
     "email_returns",
     "email_security_alerts",
     "email_new_properties",
+    "email_announcements",
 )
 TICKET_CATEGORIES = (
     "payments",
@@ -117,6 +118,7 @@ class ProposeActionIn(BaseModel):
     email_returns: bool | None = None
     email_security_alerts: bool | None = None
     email_new_properties: bool | None = None
+    email_announcements: bool | None = None
 
 
 class ProposeActionOut(ToolOutput):

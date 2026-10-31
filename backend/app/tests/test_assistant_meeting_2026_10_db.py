@@ -215,8 +215,19 @@ async def test_certificates_come_out_of_the_chat_with_their_share_and_verifier(
     assert out["holdings"] == 2 and len(out["items"]) == 2
     creek_item = next(i for i in out["items"] if i["property_slug"] == "creek")
     assert creek_item["ownership_pct"] == "0.04762%"
-    assert creek_item["certificate_reference"] == ("CMX-" + creek[:4] + uid[:4]).upper()
-    assert out["verify_url"] == "https://www.cimglobalfinancial.com/capimax-verify"
+    await asession.commit()
+    # the certificate stating the 20 units: its number, its code and the page its QR opens
+    number, code = db(
+        "SELECT number, verification_code FROM investment_certificates "
+        "WHERE user_id=:u AND property_id=:p AND status='valid'",
+        u=uid,
+        p=creek,
+    )[0]
+    assert creek_item["certificate_number"] == number
+    assert creek_item["verification_code"] == code
+    assert creek_item["verify_path"] == f"/verify/{code}"
+    assert out["verify_path"] == "/verification-center"
+    assert "cimglobalfinancial" not in str(out)
 
     card = _card_for("get_my_certificates", out, [])
     assert card["kind"] == "document" and card["doc"] == "certificate"
@@ -233,11 +244,11 @@ async def test_certificates_come_out_of_the_chat_with_their_share_and_verifier(
         }
     ]
     assert card["links"] == [
-        {
-            "label": "Verify at CIM Global Financial",
-            "path": "https://www.cimglobalfinancial.com/capimax-verify",
-        }
+        {"label": "Verify: " + i["property_title"], "path": i["verify_path"]} for i in out["items"]
     ]
+    assert ["Verification code", code] in next(
+        s["rows"] for s in card["sections"] if s["heading"] == "Creek Tower Installment Suite"
+    )
     one = await _run(asession, ctx, "get_my_certificates", {"property": "creek tower"})
     assert [i["property_slug"] for i in one["items"]] == ["creek"]
     # the PDF says the same share (it used to round 20 of 42,000 units to 0.05%)
@@ -245,6 +256,9 @@ async def test_certificates_come_out_of_the_chat_with_their_share_and_verifier(
         asession, user_id=uuid.UUID(uid), property_id=uuid.UUID(creek)
     )
     assert b"0.04762%" in pdf
+    await asession.commit()
+    assert number.encode() in pdf  # asking again issues no second certificate
+    assert db("SELECT count(*) FROM investment_certificates WHERE user_id=:u", u=uid)[0][0] == 2
 
     nobody = await _user(client, db, "nocerts@p.io")
     with pytest.raises(AppError) as exc:

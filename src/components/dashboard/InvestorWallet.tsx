@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { AddCardDialog } from "@/components/dashboard/AddCardDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +39,7 @@ import {
   Download,
   Zap,
   Hand,
+  Send,
 } from "lucide-react";
 import { saveBlob } from "@/lib/certificates";
 import { ExitButton } from "@/components/exit/ExitButton";
@@ -895,6 +896,14 @@ export const InvestorWallet = () => {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Transfers (client, 2026-10-28): wallet balance to another person, on the Transfers tab */}
+        <Button asChild variant="outline" className="gap-2">
+          <Link to="/dashboard?tab=transfers&new=balance">
+            <Send className="h-4 w-4" />
+            Transfer
+          </Link>
+        </Button>
 
         <ExitButton variant="outline" label="Exit Position" />
       </div>

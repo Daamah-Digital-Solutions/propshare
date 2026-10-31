@@ -863,6 +863,14 @@ async def _execute(
         session.add(event)
         await session.flush()
 
+    # what the holder sent and nobody received yet (transfers, gifts) comes back first, so it
+    # is divided with the rest instead of leaving after the account is settled
+    from app.services import gift_service, transfer_service
+
+    settled = "The account holder's estate is being settled."
+    await transfer_service.close_open_for(session, user_id=subject_user_id, reason=settled)
+    await gift_service.close_open_for(session, giver_id=subject_user_id, reason=settled)
+
     bens = [b for b in await list_beneficiaries(session, subject_user_id) if b.allocation_pct > 0]
     moves: list[dict] = []
     received: dict[uuid.UUID, list[tuple[str, int]]] = {}

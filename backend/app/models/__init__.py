@@ -182,6 +182,9 @@ class Property(Base):
     # NULL = the unit price has never changed, so the launch price is the current one
     launch_price: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
     spv_name: Mapped[str | None] = mapped_column(Text)
+    # the broker's commission on this property, percent of the investment; None = the
+    # general rate (alembic/0041)
+    broker_commission_pct: Mapped[decimal.Decimal | None] = mapped_column(Numeric(6, 3))
     spv_registration: Mapped[str | None] = mapped_column(Text)
     legal_structure: Mapped[str | None] = mapped_column(Text)
     expected_completion: Mapped[datetime.date | None] = mapped_column(Date)
@@ -553,6 +556,7 @@ from app.models.broker import (  # noqa: E402
     BrokerLead,
     BrokerReferral,
 )
+from app.models.certificates import InvestmentCertificate  # noqa: E402
 from app.models.compliance import AuditLog, KycWebhookEvent  # noqa: E402
 from app.models.developer_updates import (  # noqa: E402
     DeveloperUpdate,
@@ -579,6 +583,11 @@ from app.models.installments import InstallmentPayment, InstallmentPlan  # noqa:
 from app.models.investments import OwnershipLedger, PlatformSetting  # noqa: E402
 from app.models.kb import KbArticle  # noqa: E402
 from app.models.liquidity import LpExitRequest, LpPoolTier, LpPosition  # noqa: E402
+from app.models.messages import (  # noqa: E402
+    MessageBroadcast,
+    MessageTemplate,
+    PlatformMessage,
+)
 from app.models.mfa import UserMfa, UserRecoveryCode  # noqa: E402
 from app.models.milestones import PropertyMilestone  # noqa: E402
 from app.models.notifications import EmailOutbox, NotificationPreference  # noqa: E402
@@ -592,6 +601,7 @@ from app.models.payout_methods import (  # noqa: E402
 from app.models.prices import PropertyPrice  # noqa: E402
 from app.models.secondary import SecondaryTrade  # noqa: E402
 from app.models.support import SupportTicket, SupportTicketMessage  # noqa: E402
+from app.models.transfers import Transfer  # noqa: E402
 from app.models.withdrawals import ConnectAccount, PayoutEvent, Withdrawal  # noqa: E402
 
 __all__ = [
@@ -674,6 +684,13 @@ __all__ = [
     # installment plans (Group 6)
     "InstallmentPlan",
     "InstallmentPayment",
+    "InvestmentCertificate",
+    # messages from the platform team (client, 2026-10-28)
+    "MessageTemplate",
+    "MessageBroadcast",
+    "PlatformMessage",
+    # transfers of units or balance to another person (client, 2026-10-28)
+    "Transfer",
     # AI assistant (plan Phase 1)
     "AssistantConversation",
     "AssistantMessage",

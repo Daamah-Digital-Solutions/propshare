@@ -53,6 +53,8 @@ TYPE_LABELS = {
     "lp_yield": "Liquidity pool yield",
     "family_allocation": "Family allocation",
     "gift": "Gift",
+    "estate_transfer": "Beneficiary transfer",
+    "transfer": "Transfer",
 }
 STATUS_LABELS = {
     "completed": "Completed",

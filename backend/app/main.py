@@ -21,6 +21,7 @@ from app.api.routes import (
     assistant,
     auth,
     broker,
+    certificates,
     developer_updates,
     documents,
     estate,
@@ -31,6 +32,7 @@ from app.api.routes import (
     investments,
     kyc,
     liquidity,
+    messages,
     milestones,
     notifications,
     owner_stats,
@@ -41,6 +43,7 @@ from app.api.routes import (
     properties,
     secondary,
     tickets,
+    transfers,
     wallet,
     withdrawals,
 )
@@ -135,12 +138,15 @@ def create_app() -> FastAPI:
     app.include_router(wallet.router)
     app.include_router(payments.router)
     app.include_router(investments.router)
+    app.include_router(certificates.router)
     app.include_router(withdrawals.router)
     app.include_router(secondary.router)
     app.include_router(liquidity.router)
     app.include_router(family.router)
     app.include_router(broker.router)
     app.include_router(notifications.router)
+    app.include_router(messages.router)
+    app.include_router(transfers.router)
     app.include_router(owner_stats.router)
     app.include_router(milestones.router)
     app.include_router(developer_updates.router)

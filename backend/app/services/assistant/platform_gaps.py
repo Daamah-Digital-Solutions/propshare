@@ -62,15 +62,13 @@ NOT_BUILT: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(
-            r"holder register|certificate (reference|verification)|verify (a |my |the )?"
-            r"certificate|\bcpv\b|capimax pro\b",
+            r"holder register|\bcpv\b|capimax pro\b",
             _I,
         ),
-        "Certificates and documents are not checked on the platform itself: each kind is "
-        "verified on its partner's site (an investment certificate at CIM Global Financial's "
-        "Capimax Verify, with the reference printed on it); get_verification_services gives "
-        "every service and its link. There is no holder register separate from the platform "
-        "ledger yet.",
+        "There is no holder register separate from the platform ledger yet. An investment "
+        "certificate is verified on PropShare by the QR code printed on it (or its "
+        "verification code on the Verification Center); other documents at the partner for "
+        "their kind (get_verification_services).",
     ),
     (
         re.compile(r"liquidity.provider|\blps?\b|lp (quote|route)|time.limited quote", _I),

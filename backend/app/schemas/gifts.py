@@ -65,3 +65,7 @@ class GiftRunOut(BaseModel):
     executed: int
     pending: int
     failed: int
+    # pending gifts nobody received within 30 days, returned to the giver
+    expired: int = 0
+    # transfers (0040) run in the same job: delivered / waiting / failed / expired
+    transfers: dict[str, int] = {}

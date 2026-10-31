@@ -48,6 +48,10 @@ from app.services import (
 
 _CENTS = decimal.Decimal("0.01")
 _HUNDRED = decimal.Decimal(100)
+# A gift whose recipient has not verified (``pending``) waits this long, then goes back to the
+# giver (client, 2026-10-28, as transfers do; before, it waited for ever and could not be
+# cancelled).
+CLAIM_DAYS = 30
 
 
 def _utcnow() -> dt.datetime:
@@ -226,21 +230,13 @@ async def cancel_gift(session: AsyncSession, *, giver_id: uuid.UUID, gift_id: uu
     ).scalar_one_or_none()
     if gift is None or gift.giver_id != giver_id:
         raise AppError("NOT_FOUND", "Gift not found", status_code=404)
-    if gift.status != "scheduled":
-        raise AppError("INVALID_STATE", "Only a scheduled gift can be cancelled.", status_code=409)
-    gift.status = "cancelled"
-    gift.updated_at = _utcnow()
-    if gift.asset_type == "wallet" and gift.amount is not None:
-        # Refund the escrow (property reservation releases automatically via the status).
-        await wallet_service.credit(
-            session,
-            user_id=giver_id,
-            amount=gift.amount,
-            reference_id=gift.id,
-            tx_type=TransactionType.gift,
-            description="Gift cancelled — escrow refunded",
-            actor_id=giver_id,
+    if gift.status not in ("scheduled", "pending"):
+        raise AppError(
+            "INVALID_STATE",
+            "Only a gift that has not been received yet can be cancelled.",
+            status_code=409,
         )
+    await _give_back(session, gift, "cancelled", "Cancelled by you.", actor_id=giver_id)
     await write_audit(
         session,
         action="gift.cancelled",
@@ -249,6 +245,59 @@ async def cancel_gift(session: AsyncSession, *, giver_id: uuid.UUID, gift_id: uu
         actor_id=giver_id,
     )
     return serialize(gift)
+
+
+async def close_open_for(session: AsyncSession, *, giver_id: uuid.UUID, reason: str) -> int:
+    """Close every gift this member gave that has not been received (their estate is being
+    settled): reserved units are released and escrowed cash comes back to the wallet first."""
+    rows = (
+        (
+            await session.execute(
+                select(ScheduledGift)
+                .where(
+                    ScheduledGift.giver_id == giver_id,
+                    ScheduledGift.status.in_(("scheduled", "pending")),
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for g in rows:
+        await _give_back(session, g, "cancelled", reason, actor_id=None)
+        g.failure_reason = reason
+    return len(rows)
+
+
+async def _give_back(
+    session: AsyncSession,
+    gift: ScheduledGift,
+    status: str,
+    reason: str,
+    *,
+    actor_id: uuid.UUID | None,
+) -> None:
+    """Close a gift not received yet (scheduled, or pending its recipient) and give back what it
+    holds: the escrowed cash is refunded; reserved units are released by the status itself.
+    The caller holds the gift row FOR UPDATE and has checked its status."""
+    gift.status = status
+    gift.failure_reason = None if status == "cancelled" else reason
+    gift.updated_at = _utcnow()
+    if gift.asset_type == "wallet" and gift.amount is not None:
+        await wallet_service.credit(
+            session,
+            user_id=gift.giver_id,
+            amount=gift.amount,
+            reference_id=gift.id,
+            tx_type=TransactionType.gift,
+            description=(
+                "Gift cancelled — escrow refunded"
+                if status == "cancelled"
+                else "Gift not received — escrow refunded"
+            ),
+            actor_id=actor_id,
+        )
 
 
 async def list_gifts(session: AsyncSession, giver_id: uuid.UUID) -> list[ScheduledGift]:
@@ -327,7 +376,50 @@ async def run_due(session: AsyncSession, *, now: dt.datetime | None = None) -> d
         else:
             failed += 1
 
-    return {"reminders_sent": reminders, "executed": executed, "pending": pending, "failed": failed}
+    # Pass 3 — a pending gift whose recipient has not verified within CLAIM_DAYS of its date
+    # goes back to the giver (units released, cash refunded), once.
+    stale = (
+        (
+            await session.execute(
+                select(ScheduledGift)
+                .where(
+                    ScheduledGift.status == "pending",
+                    ScheduledGift.claim_expires_at < now,
+                )
+                .with_for_update(skip_locked=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    expired = 0
+    for g in stale:
+        reason = f"Not received within {CLAIM_DAYS} days, so it was returned to you."
+        await _give_back(session, g, "expired", reason, actor_id=None)
+        await notification_service.notify(
+            session,
+            user_id=g.giver_id,
+            type="gift",
+            title="Gift returned to you",
+            message=f"Your gift to {g.recipient_name}: {reason}",
+            email_category="investment_updates",
+        )
+        await write_audit(
+            session,
+            action="gift.expired",
+            entity_type="scheduled_gift",
+            entity_id=str(g.id),
+            after={"reason": reason},
+        )
+        expired += 1
+
+    return {
+        "reminders_sent": reminders,
+        "executed": executed,
+        "pending": pending,
+        "failed": failed,
+        "expired": expired,
+    }
 
 
 async def _fail(session: AsyncSession, g: ScheduledGift, reason: str) -> str:
@@ -422,6 +514,7 @@ async def _execute_one(
         # Non-user recipient: units stay reserved; materialize on their KYC.
         g.status = "pending"
         g.executed_at = now
+        g.claim_expires_at = now + dt.timedelta(days=CLAIM_DAYS)
         await _notify_pending(session, g)
         await _audit_executed(session, g, real=False)
         await _reenqueue(session, g, now=now)
@@ -450,6 +543,7 @@ async def _execute_one(
     # Non-user recipient: escrow stays held; credited on their KYC.
     g.status = "pending"
     g.executed_at = now
+    g.claim_expires_at = now + dt.timedelta(days=CLAIM_DAYS)
     await _notify_pending(session, g)
     await _audit_executed(session, g, real=False)
     await _reenqueue(session, g, now=now)
@@ -628,7 +722,8 @@ async def _notify_pending(session: AsyncSession, g: ScheduledGift) -> None:
         title="Gift awaiting recipient verification",
         message=(
             f"Your gift to {g.recipient_name} is reserved and will be delivered once they "
-            "register and verify their identity."
+            f"register and verify their identity. If they do not within {CLAIM_DAYS} days, it "
+            "comes back to you; you can cancel it before then."
         ),
     )
 

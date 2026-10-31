@@ -1,22 +1,25 @@
-"""Broker referrals & commissions (Phase 11).
+"""Broker referrals & commissions (Phase 11; rate reworked with the client, 2026-10-28).
 
 A broker shares a code; a client who signs up with it is linked to the broker ONCE, at
-signup only. The broker then earns a commission = ``broker_commission_pct`` × the
-**platform revenue attributable to that client** (purchase platform fee + rental mgmt
-fee) — NEVER a percent of the investment amount.
+signup only. When that client invests, the broker earns a commission = a percentage of the
+investment: the property's own rate (``properties.broker_commission_pct``, Listing Editor), or
+the general rate (``broker_commission_investment_pct``, Platform Settings) when it has none. On
+an installment plan it is earned on each payment's principal, as it is paid. It is paid by the
+platform: the client pays nothing more for having a broker. Commissions on management fees
+stopped with this rework (existing rows stay as they were).
 
 Design guarantees encoded here:
   * **Signup-only link** — :func:`resolve_signup_referral` is the ONLY writer of
     ``broker_referrals``. A client who signed up without a broker code can never be
     adopted later (no retroactive linking).
-  * **Revenue-based, capped** — :func:`accrue_commission` is the single accrual engine.
-    Commission = rate × actual platform revenue; the ``commission_amount <=
-    revenue_amount`` DB CHECK makes overpayment structurally impossible.
-  * **Idempotent** — one platform-revenue event (an ``investments.id`` or a
-    ``distribution_items.id``) yields at most one accrual: SELECT-first guard inside the
-    atomic tx + UNIQUE(revenue_event_type, revenue_event_id) backstop.
-  * **Rate snapshot** — each accrual stores the rate it used, so an admin rate change
-    never rewrites history.
+  * **Capped** — :func:`accrue_commission` is the single accrual engine. Commission = rate ×
+    the amount invested; the ``commission_amount <= revenue_amount`` DB CHECK (that column now
+    holds the amount the commission was computed on) makes overpayment impossible.
+  * **Idempotent** — one event (an ``investments.id`` or an ``installment_payments.id``) yields
+    at most one accrual: SELECT-first guard inside the atomic tx +
+    UNIQUE(revenue_event_type, revenue_event_id) backstop.
+  * **Rate snapshot** — each accrual stores the rate it used, so a later rate change never
+    rewrites history.
   * **No commission on the generic path** — only ``broker_referrals`` (broker→client)
     accrues; the raw ``users.referred_by`` user→user attribution never does.
 """
@@ -30,17 +33,34 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import BrokerCode, BrokerCommission, BrokerReferral, Transaction, User
-from app.models.base import TransactionType
+from app.models import (
+    BrokerCode,
+    BrokerCommission,
+    BrokerReferral,
+    Property,
+    Transaction,
+    User,
+)
+from app.models.base import PropertyStatus, TransactionType
 from app.services import notification_service, settings_service, wallet_service
 
 _CENTS = decimal.Decimal("0.01")
+
+
+def _pct(rate: decimal.Decimal) -> str:
+    """A rate as people read it: 1.5, 10 (never 1.500 or 1E+1)."""
+    return format(rate.normalize(), "f")
+
+
 # Unambiguous alphabet (no 0/O/1/I) for human-friendly shareable codes.
 _ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _CODE_LEN = 8
 
-REVENUE_PLATFORM_FEE = "investment_platform_fee"  # Phase 5 — one-time at confirmation
-REVENUE_MGMT_FEE = "distribution_mgmt_fee"  # Phase 6 — recurring while holding
+REVENUE_INVESTMENT = "investment"  # a purchase, on its amount, when confirmed
+REVENUE_INSTALLMENT = "installment_payment"  # a plan payment, on its principal, when paid
+# on rows from before 2026-10-28: 10% of the platform fee / of a management fee
+REVENUE_PLATFORM_FEE = "investment_platform_fee"
+REVENUE_MGMT_FEE = "distribution_mgmt_fee"
 
 
 def _q(value: decimal.Decimal) -> decimal.Decimal:
@@ -100,6 +120,22 @@ async def referring_broker(session: AsyncSession, client_id: uuid.UUID) -> uuid.
 
 
 # --- accrual engine -------------------------------------------------------- #
+async def rate_for_property(
+    session: AsyncSession, property_id: uuid.UUID | None
+) -> decimal.Decimal:
+    """The broker's commission on this property: its own rate, or the general one."""
+    own = (
+        await session.scalar(
+            select(Property.broker_commission_pct).where(Property.id == property_id)
+        )
+        if property_id is not None
+        else None
+    )
+    if own is not None:
+        return decimal.Decimal(own)
+    return await settings_service.get_broker_commission_pct(session)
+
+
 async def accrue_commission(
     session: AsyncSession,
     *,
@@ -107,10 +143,11 @@ async def accrue_commission(
     revenue_event_type: str,
     revenue_event_id: uuid.UUID,
     revenue_amount: decimal.Decimal,
+    property_id: uuid.UUID | None = None,
 ) -> BrokerCommission | None:
-    """Accrue + credit a broker commission for ONE platform-revenue event from a
-    referred client. No-op (returns None) when the client isn't broker-referred, the
-    commission rounds to zero, or this exact revenue event already accrued.
+    """Accrue + credit a broker commission for ONE investment event of a referred client:
+    ``revenue_amount`` is the amount invested. No-op (returns None) when the client isn't
+    broker-referred, the commission rounds to zero, or this event already accrued.
 
     The caller MUST have locked the broker's wallet as part of its sorted-order union
     lock (``wallet_service.lock_wallets``) before invoking this, so the broker credit
@@ -122,20 +159,18 @@ async def accrue_commission(
     if referral is None:
         return None  # not broker-referred (or generic/self-referral) — no commission
 
-    # Idempotency: one revenue event -> at most one accrual (UNIQUE is the backstop).
+    # Idempotency: one event -> at most one accrual, under ANY type (an investment accrued
+    # before 2026-10-28 has the old type); UNIQUE is the backstop.
     if await session.scalar(
-        select(BrokerCommission.id).where(
-            BrokerCommission.revenue_event_type == revenue_event_type,
-            BrokerCommission.revenue_event_id == revenue_event_id,
-        )
+        select(BrokerCommission.id).where(BrokerCommission.revenue_event_id == revenue_event_id)
     ):
         return None
 
-    rate = await settings_service.get_broker_commission_pct(session)
+    rate = await rate_for_property(session, property_id)
     commission = _q(revenue_amount * rate / decimal.Decimal(100))
     if commission <= 0:
         return None
-    # Defensive cap (the DB CHECK is the hard guarantee): never exceed the revenue.
+    # Defensive cap (the DB CHECK is the hard guarantee): never exceed the amount invested.
     if commission > revenue_amount:
         commission = _q(revenue_amount)
 
@@ -145,7 +180,11 @@ async def accrue_commission(
         amount=commission,
         reference_id=revenue_event_id,
         tx_type=TransactionType.referral_commission,
-        description=f"Referral commission ({revenue_event_type})",
+        description=(
+            "Referral commission (installment)"
+            if revenue_event_type == REVENUE_INSTALLMENT
+            else "Referral commission (investment)"
+        ),
     )
     await session.flush()
     txn_id = await session.scalar(
@@ -182,6 +221,31 @@ async def accrue_commission(
 
 
 # --- reads (broker dashboard) ---------------------------------------------- #
+async def commission_rates(session: AsyncSession) -> dict:
+    """What the broker earns on each property open for investment, and the general rate."""
+    general = await settings_service.get_broker_commission_pct(session)
+    rows = (
+        await session.execute(
+            select(Property.id, Property.title, Property.slug, Property.broker_commission_pct)
+            .where(Property.status == PropertyStatus.active)
+            .order_by(Property.title)
+        )
+    ).all()
+    return {
+        "general_rate": _pct(general),
+        "items": [
+            {
+                "property_id": pid,
+                "title": title,
+                "slug": slug,
+                "rate": _pct(decimal.Decimal(own) if own is not None else general),
+                "own_rate": own is not None,
+            }
+            for pid, title, slug, own in rows
+        ],
+    }
+
+
 async def dashboard(session: AsyncSession, broker_id: uuid.UUID) -> dict:
     rate = await settings_service.get_broker_commission_pct(session)
     total_referrals = (
@@ -199,7 +263,7 @@ async def dashboard(session: AsyncSession, broker_id: uuid.UUID) -> dict:
         )
     ) or decimal.Decimal(0)
     return {
-        "commission_rate": str(rate),
+        "commission_rate": _pct(rate),
         "total_referrals": int(total_referrals),
         "total_commission": str(_q(decimal.Decimal(total_commission))),
     }

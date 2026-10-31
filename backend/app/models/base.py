@@ -83,3 +83,5 @@ class TransactionType(enum.StrEnum):
     gift = "gift"  # Group 5 — inter-vivos wallet-gift escrow/credit/refund
     # 0036 — a beneficiary's share of a holder's wallet balance, out of one and into the other
     estate_transfer = "estate_transfer"
+    # 0040 — a transfer of wallet balance to another person (held, delivered or returned)
+    transfer = "transfer"

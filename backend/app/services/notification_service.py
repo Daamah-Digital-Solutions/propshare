@@ -28,6 +28,7 @@ _CATEGORY_PREF: dict[str, str] = {
     "returns": "email_returns",
     "security": "email_security_alerts",
     "new_properties": "email_new_properties",
+    "announcements": "email_announcements",
 }
 
 
@@ -215,17 +216,19 @@ async def get_preferences(session: AsyncSession, user_id: uuid.UUID) -> dict:
             "email_returns": True,
             "email_security_alerts": True,
             "email_new_properties": True,
+            "email_announcements": True,
         }
     return {
         "email_investment_updates": prefs.email_investment_updates,
         "email_returns": prefs.email_returns,
         "email_security_alerts": prefs.email_security_alerts,
         "email_new_properties": prefs.email_new_properties,
+        "email_announcements": prefs.email_announcements,
     }
 
 
 async def update_preferences(session: AsyncSession, user_id: uuid.UUID, **updates: bool) -> dict:
-    """Upsert the caller's EMAIL preferences. Only the four email keys are accepted;
+    """Upsert the caller's EMAIL preferences. Only the five email keys are accepted;
     any other key (e.g. a stray sms/push flag) is ignored — those channels don't exist."""
     prefs = (
         await session.execute(

@@ -88,16 +88,17 @@ describe("assistant UI helpers", () => {
         title: "Your ownership certificate",
         sections: [],
         files: [],
-        links: [{ label: "Verify", path: "https://www.cimglobalfinancial.com/capimax-verify" }],
+        links: [{ label: "Verify: Creek Tower", path: "/verify/Xq3vN8bKp2LmR5tY7wZa1c" }],
         path: "/dashboard?tab=certificates",
         footnote: null,
       }),
-    ).toEqual(["/dashboard?tab=certificates", "https://www.cimglobalfinancial.com/capimax-verify"]);
+    ).toEqual(["/dashboard?tab=certificates", "/verify/Xq3vN8bKp2LmR5tY7wZa1c"]);
   });
 
   it("helps verify a document on the verification pages, a partner's site gets a badge", () => {
     expect(linkIcon("https://www.proofanchor.io/verify")).toBe(BadgeCheck);
     expect(linkIcon("/verification-center")).toBe(BadgeCheck);
+    expect(linkIcon("/verify/Xq3vN8bKp2LmR5tY7wZa1c")).toBe(BadgeCheck);
     expect(toolLabel("get_verification_services", "running")).toBe("Finding where to verify it…");
     const visitor = pageStarters("/verification-center", "", false);
     expect(visitor?.en[0]).toBe("How do I verify an investment certificate?");

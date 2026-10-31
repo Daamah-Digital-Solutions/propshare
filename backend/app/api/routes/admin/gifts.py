@@ -4,7 +4,10 @@ POST /admin/gifts/run-due  send due 7-day reminders, then execute due gifts on t
                            (real atomic transfer / wallet credit; non-user recipient → pending
                            materializing on KYC; recurring → re-enqueue next occurrence).
                            Cron target (admin OR X-Cron-Secret); idempotent (SKIP LOCKED +
-                           UNIQUE(series_id, scheduled_for)).
+                           UNIQUE(series_id, scheduled_for)). Pending gifts nobody
+                           received within 30 days go back to the giver. Transfers run in
+                           the same job (transfer_service.run_due): due ones are delivered,
+                           unclaimed ones returned.
 """
 
 from __future__ import annotations
@@ -13,11 +16,12 @@ from fastapi import APIRouter
 
 from app.api.deps import AdminOrCronDep, SessionDep
 from app.schemas.gifts import GiftRunOut
-from app.services import gift_service
+from app.services import gift_service, transfer_service
 
 router = APIRouter(prefix="/api/v1/admin/gifts", tags=["admin"])
 
 
 @router.post("/run-due", response_model=GiftRunOut)
 async def run_due(session: SessionDep, caller: AdminOrCronDep) -> GiftRunOut:
-    return GiftRunOut(**await gift_service.run_due(session))
+    gifts = await gift_service.run_due(session)
+    return GiftRunOut(**gifts, transfers=await transfer_service.run_due(session))

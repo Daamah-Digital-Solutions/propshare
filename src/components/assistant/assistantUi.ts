@@ -12,6 +12,7 @@ import {
   LifeBuoy,
   LogIn,
   type LucideIcon,
+  Mail,
   Receipt,
   Scale,
   ShieldCheck,
@@ -85,8 +86,14 @@ export function toolLabel(name: string, status: "running" | "ok" | "error"): str
 
 /** Icon for a page button, from the allow-listed path the server sent. */
 export function linkIcon(path: string): LucideIcon {
-  // the only outside links the server lets through are the verification partners' sites
-  if (path.startsWith("https://") || path.startsWith("/verification-center")) return BadgeCheck;
+  // the only outside links the server lets through are the verification partners' sites;
+  // /verify/{code} is a certificate's own verification page
+  if (
+    path.startsWith("https://") ||
+    path.startsWith("/verification-center") ||
+    path.startsWith("/verify/")
+  )
+    return BadgeCheck;
   if (path.startsWith("/auth?tab=register")) return UserPlus;
   if (path.startsWith("/auth")) return LogIn;
   if (path.startsWith("/dashboard?tab=wallet")) return Wallet;
@@ -100,6 +107,7 @@ export function linkIcon(path: string): LucideIcon {
     return Building2;
   if (path.startsWith("/kyc") || path.startsWith("/settings")) return ShieldCheck;
   if (path.startsWith("/support")) return LifeBuoy;
+  if (path.startsWith("/messages")) return Mail;
   if (path.startsWith("/fees")) return Receipt;
   if (path.startsWith("/faq")) return HelpCircle;
   if (path.startsWith("/how-it-works")) return BookOpen;
@@ -172,7 +180,11 @@ export function pageStarters(pathname: string, search: string, member: boolean):
         };
   }
   const tab = new URLSearchParams(search).get("tab");
-  if (pathname === "/verification-center" || (member && pathname === "/dashboard" && tab === "verification")) {
+  if (
+    pathname === "/verification-center" ||
+    pathname.startsWith("/verify/") ||
+    (member && pathname === "/dashboard" && tab === "verification")
+  ) {
     return {
       title: { en: "Verifying a document", ar: "للتحقق من مستند" },
       en: [

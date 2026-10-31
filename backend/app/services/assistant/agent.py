@@ -37,7 +37,7 @@ from app.core import crypto
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import AssistantConversation, AssistantMessage
-from app.services import kb_service, settings_service, verification_partners
+from app.services import kb_service, settings_service
 from app.services.assistant import attachments, guard, prompts
 from app.services.assistant.context import AgentContext
 from app.services.assistant.tools import REGISTRY, llm_tools
@@ -423,7 +423,7 @@ def _usd(value: str | None) -> str:
 
 def _certificates_card(result: dict[str, Any]) -> dict[str, Any]:
     """The holder's certificates: one section per property with its download, all of them as
-    one ZIP when they hold more than one, and the partner that verifies them."""
+    one ZIP when they hold more than one, and the link to each one's verification page."""
     sections = []
     for it in result["items"]:
         name = it.get("property_slug") or it["property_id"]
@@ -433,7 +433,8 @@ def _certificates_card(result: dict[str, Any]) -> dict[str, Any]:
                 "rows": [
                     ["Units", str(it["units"])],
                     ["Share of the property", it["ownership_pct"]],
-                    ["Certificate number", it["certificate_reference"]],
+                    ["Certificate number", it["certificate_number"]],
+                    ["Verification code", it["verification_code"]],
                 ],
                 "files": [
                     {
@@ -455,22 +456,23 @@ def _certificates_card(result: dict[str, Any]) -> dict[str, Any]:
                 "format": "zip",
             }
         )
-    url = result.get("verify_url")
     return {
         "kind": "document",
         "doc": "certificate",
         "title": "Your ownership certificate" + ("s" if len(sections) > 1 else ""),
         "sections": sections,
         "files": files,
-        "links": (
-            [{"label": f"Verify at {result['verify_provider']}", "path": url}]
-            if url in verification_partners.URLS
-            else []
-        ),
+        "links": [
+            {
+                "label": "Verify: " + (it.get("property_title") or "certificate"),
+                "path": guard.make_link("certificate_verify", it["verification_code"])["path"],
+            }
+            for it in result["items"]
+        ],
         "path": guard.make_link("certificates")["path"],
         "footnote": (
-            "Generated live from the ownership ledger. To confirm a certificate, enter its "
-            "certificate number at Capimax Verify."
+            "Each certificate's QR code opens its verification page on Capimax PropShare. "
+            "Anyone can also enter its verification code on the Verification Center."
         ),
     }
 

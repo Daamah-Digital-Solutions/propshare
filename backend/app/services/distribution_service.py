@@ -43,7 +43,7 @@ from app.models import (
 )
 from app.models.base import TransactionType
 from app.models.investments import OwnershipLedger
-from app.services import broker_service, notification_service, wallet_service
+from app.services import notification_service, wallet_service
 
 _CENTS = decimal.Decimal("0.01")
 _VALID_KINDS = {"rental", "appreciation", "other"}
@@ -356,17 +356,8 @@ async def run_distribution(
     total_fee = decimal.Decimal("0")
     units_by_user = dict(owners)
 
-    # Phase-11 hook: a rental mgmt fee withheld on a referred client's units is platform
-    # revenue → the referring broker is credited in THIS tx. Pre-lock the union of owner
-    # wallets + their referring brokers in the GLOBAL sorted order so the extra broker
-    # credits can't violate the lock hierarchy (no deadlock across concurrent runs).
-    broker_ids: list[uuid.UUID] = []
-    if kind == "rental":
-        for uid, _u in owners:
-            b = await broker_service.referring_broker(session, uid)
-            if b is not None:
-                broker_ids.append(b)
-    await wallet_service.lock_wallets(session, [uid for uid, _u in owners] + broker_ids)
+    # the owners' wallets in the global sorted order (no deadlock across concurrent runs)
+    await wallet_service.lock_wallets(session, [uid for uid, _u in owners])
 
     for uid, units, gross, fee, net in lines:  # sorted by user_id -> wallet lock order
 
@@ -394,17 +385,6 @@ async def run_distribution(
         session.add(item)
         if net > 0:
             await _allocate_family(session, distribution.id, uid, net, property_id, units)
-        if fee > 0:
-            # The withheld mgmt fee is the platform-revenue event; accrue the broker's
-            # commission against THIS item (idempotent on item.id; no-op if not referred).
-            await session.flush()  # assign item.id
-            await broker_service.accrue_commission(
-                session,
-                client_id=uid,
-                revenue_event_type=broker_service.REVENUE_MGMT_FEE,
-                revenue_event_id=item.id,
-                revenue_amount=fee,
-            )
         total_net += net
         total_fee += fee
 

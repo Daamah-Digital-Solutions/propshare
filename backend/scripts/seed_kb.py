@@ -300,8 +300,11 @@ requested from Account Settings or from the assistant, and setting a new passwor
 "Forgot password" confirms the address too.
 The assistant shows your group and its members' allocations (never their identity documents).
 Brokers: an approved broker has a referral code;
-investors who sign up with it are linked to the broker, who earns a share of the platform's
-fees on their activity (never a share of the investment itself). The broker dashboard's
+investors who sign up with it are linked to the broker. When such a client invests, the broker
+earns a percentage of the investment, paid by the platform (the client pays nothing extra):
+each property can have its own rate, otherwise the general rate applies, and on an installment
+plan it is earned on each payment. The broker's Commissions tab lists the rate of each property
+and every commission earned (get_my_broker_activity has the figures). The broker dashboard's
 "Listings & Referrals" tab lists everything the broker brought, with its status: "Add client"
 emails the person the broker's link (they are linked only if they sign up through it), and
 "Add property" / "Add project" introduces a property or an off-plan project with the owner or
@@ -399,18 +402,21 @@ never turns it on or off and never asks you for a code or password.""",
         """Each property page names its developer; View Profile opens the developer's public page
 with what the platform has recorded about them (about, website, track record, verifications)
 and their listings that are open on the platform. Investment certificates are downloaded from
-the Certificates tab; each one carries a reference, and the Verification tab of the investor
-dashboard lists the reference of every certificate you hold.
+the Certificates tab; each one carries a number, a verification code and a QR code, and the
+Verification tab of the investor dashboard lists them for every certificate you hold.
 
-PropShare verifies nothing itself: the Verification Center page links to the ecosystem's
-designated verification partners, each for one kind of record.
-- Capimax documents and investment certificates: CIM Global Financial's Capimax Verify
-  (https://www.cimglobalfinancial.com/capimax-verify). Enter the verification, record or
-  certificate number (for a PropShare certificate, the reference printed on it), or scan the
-  QR code, to confirm authenticity and the current status.
+The Verification Center page says where each kind of record is verified.
+- Capimax PropShare investment certificates are verified on PropShare itself: scan the QR code
+  printed on the certificate with your phone's camera and it opens the certificate's
+  verification page, which shows whether it is authentic and its current status (valid,
+  superseded by a newer certificate, or revoked) with what it states. Can't scan it? Enter the
+  verification code printed beside the QR code on the Verification Center. A certificate
+  states the units you held when it was issued: when they change, your next certificate states
+  the new count and the old one shows as superseded.
 - Valuation and financial documents (valuation reports, investment studies, financial
-  analyses, accounting and financial reports, due diligence reports): CIM Global Financial,
-  same link. Enter the document number or verification ID.
+  analyses, accounting and financial reports, due diligence reports): CIM Global Financial
+  (https://www.cimglobalfinancial.com/capimax-verify). Enter the document number or
+  verification ID.
 - Insurance certificates: CoverTech Insurance
   (https://www.covertechinsurance.com/capimax-ecosystem), to confirm authenticity, coverage
   and current status.
@@ -443,6 +449,40 @@ studies and valuation (CIM Global Financial), legal (LexCrest Global Legal), ins
 Global, Verdea Estates, Aethera Development, Elevate Properties, Prime Stone Global) and
 operators (Priminn Hotels, Elite Gate Properties, Crown Facilities). Details, what each one does
 and official links are in the reference library.""",
+    ),
+    (
+        "transfers-and-messages",
+        "Transfers to another person, and messages from the team",
+        "payments",
+        135,
+        """Transfers: an investor can send units of a property they hold, or an amount from their
+wallet, to anyone by email: Dashboard -> Transfers (Transfer units / Transfer balance), or the
+Transfer button in the wallet. Sending needs a confirmed email address and a verified identity.
+The form takes the recipient's email (and name, optional), what to send, a delivery date (today,
+or up to a year ahead) and an optional message; the review step shows what will be sent, its
+value, the transfer fee (none unless the platform sets one) and what leaves the wallet now, and
+nothing is sent before Confirm. Each transfer gets a number, TR- and ten characters.
+What is sent is held at once: units are set aside from the holding (they cannot be listed,
+offered to a liquidity provider or sent twice), an amount and the fee leave the wallet. Only
+free units can be sent: units already listed for sale, reserved for something else, pledged or
+on a running installment plan cannot. If the recipient's email is confirmed and their identity
+verified, the transfer reaches them straight away (or on the chosen date): units appear in
+their holdings, an amount in their wallet, and both sides are notified and emailed. If not,
+the recipient is emailed an invitation and receives it as soon as they sign up with that email,
+confirm it and verify their identity; if they do not within 30 days, everything comes back to
+the sender, fee included. The sender can cancel a transfer that has not been delivered yet on
+the Transfers tab, and everything comes back. A delivered transfer cannot be taken back.
+The Transfers tab lists every transfer sent and received with its number, status (Scheduled,
+Waiting for the recipient, Delivered, Cancelled / Expired / Failed - returned) and dates;
+the wallet statement and receipts, and the unit movements, show the same TR- number.
+Gifts work the same way now: a gift waiting for its recipient can be cancelled, and comes back
+to the giver if it is not received within 30 days.
+Messages: the Capimax PropShare team writes to members from the admin panel, to one member or
+to everyone holding a role (investors, property owners and developers, brokers, liquidity
+providers, or everyone). They arrive in Messages (in the menu, /messages), as a notification
+and by email. Emails of messages sent to everyone can be turned off in Account Settings ->
+Notifications -> Announcements; they still arrive in Messages, and a message written to one
+member alone is always emailed.""",
     ),
 ]
 
@@ -679,8 +719,10 @@ statement" تنزّل للفترة التي تختارها، بصيغة PDF أو
 يؤكّده الحساب. رابط التأكيد يُرسل بالبريد عند التسجيل ويعمل من داخل الحساب (سجّل الدخول أولًا ثم
 افتحه)، ويمكن طلب رابط جديد من إعدادات الحساب أو من المساعد، وتعيين كلمة مرور جديدة عبر "نسيت كلمة
 المرور" يؤكّد البريد أيضًا. يعرض المساعد مجموعتك وتخصيصات أعضائها (ولا يعرض وثائق هوياتهم أبدًا).
-الوسطاء: للوسيط المعتمد كود إحالة؛ المستثمرون الذين يسجلون به يُربطون بالوسيط الذي يحصل على نسبة
-من رسوم المنصة على نشاطهم (وليس من الاستثمار نفسه أبدًا). في لوحة الوسيط تبويب "الإدراجات
+الوسطاء: للوسيط المعتمد كود إحالة؛ المستثمرون الذين يسجلون به يُربطون بالوسيط. عندما يستثمر هذا العميل
+يحصل الوسيط على نسبة من مبلغ الاستثمار تدفعها المنصة (ولا يدفع العميل شيئًا إضافيًا): لكل عقار أن تكون له
+نسبته، وإلا تُطبَّق النسبة العامة، وفي خطة الأقساط تُحتسب على كل دفعة. يعرض تبويب العمولات لدى الوسيط نسبة
+كل عقار وكل عمولة حصل عليها. في لوحة الوسيط تبويب "الإدراجات
 والإحالات" يعرض كل ما قدّمه الوسيط وحالته: "إضافة عميل" يرسل للشخص رابط الوسيط بالبريد (ولا يُربط به
 إلا إذا سجّل من الرابط)، و"إضافة عقار" / "إضافة مشروع" لتقديم عقار أو مشروع على الخريطة مع بيانات
 المالك أو المطوّر ومستنداته ليراجعه الفريق (يتواصل معه ويدرجه أو يوضح السبب، والتقديم وحده لا
@@ -762,18 +804,18 @@ statement" تنزّل للفترة التي تختارها، بصيغة PDF أو
         160,
         """تذكر كل صفحة عقار اسم المطوّر؛ وزر "عرض الملف" يفتح صفحة المطوّر العامة بما سجّلته المنصة
 عنه (نبذة، الموقع الإلكتروني، سجل الأعمال، التحققات) وعقاراته المعروضة حاليًا على المنصة. تُنزَّل
-شهادات الاستثمار من تبويب الشهادات، ولكل شهادة رقم مرجعي، ويعرض تبويب "مركز التحقق" في لوحة
-المستثمر الرقم المرجعي لكل شهادة لديك.
+شهادات الاستثمار من تبويب الشهادات، ولكل شهادة رقم ورمز تحقق ورمز QR، ويعرضها تبويب "مركز
+التحقق" في لوحة المستثمر لكل شهادة لديك.
 
-لا تتحقق بروبشير من أي مستند بنفسها: صفحة مركز التحقق تربطك بشركاء التحقق المعتمدين في المنظومة،
-ولكل نوع من السجلات جهة:
-- مستندات Capimax وشهادات الاستثمار: Capimax Verify من CIM Global Financial
-  (https://www.cimglobalfinancial.com/capimax-verify). أدخل رقم التحقق أو رقم السجل أو رقم
-  الشهادة (لشهادة بروبشير: الرقم المرجعي المطبوع عليها)، أو امسح رمز QR، لتأكيد صحتها وحالتها
-  الحالية.
+توضّح صفحة مركز التحقق أين يُتحقق من كل نوع من السجلات:
+- شهادات الاستثمار من Capimax PropShare يُتحقق منها على بروبشير نفسها: امسح رمز QR المطبوع على
+  الشهادة بكاميرا هاتفك فتفتح صفحة التحقق الخاصة بها، وتعرض هل هي أصلية وحالتها الحالية (سارية، أو
+  حلّت محلها شهادة أحدث، أو ملغاة) مع ما تثبته. لا يمكنك المسح؟ أدخل رمز التحقق المطبوع بجانب رمز
+  QR في مركز التحقق. تثبت الشهادة الوحدات التي كانت لديك يوم إصدارها: إذا تغيّرت، تثبت شهادتك
+  التالية العدد الجديد وتظهر القديمة على أن شهادة أحدث حلّت محلها.
 - مستندات التقييم والمستندات المالية (تقارير تقييم العقارات والوحدات، دراسات الاستثمار، التحليلات
-  المالية، السجلات المحاسبية والتقارير المالية، تقارير العناية الواجبة): CIM Global Financial على
-  الرابط نفسه. أدخل رقم المستند أو معرّف التحقق.
+  المالية، السجلات المحاسبية والتقارير المالية، تقارير العناية الواجبة): CIM Global Financial
+  (https://www.cimglobalfinancial.com/capimax-verify). أدخل رقم المستند أو معرّف التحقق.
 - شهادات التأمين: CoverTech Insurance (https://www.covertechinsurance.com/capimax-ecosystem)
   لتأكيد صحة الشهادة وبيانات التغطية وحالتها الحالية.
 - المستندات القانونية والاتفاقيات: مركز مستندات LexCrest Global
@@ -802,6 +844,34 @@ Financial)، القانوني (LexCrest Global Legal)، التأمين (CoverTec
 Capital Estates وCrestmark Global وValora Estates Global وVerdea Estates وAethera Development
 وElevate Properties وPrime Stone Global)، والتشغيل (Priminn Hotels وElite Gate Properties وCrown
 Facilities). التفاصيل ودور كل جهة والروابط الرسمية في مكتبة المراجع.""",
+    ),
+    (
+        "transfers-and-messages",
+        "التحويل لشخص آخر، ورسائل فريق المنصة",
+        "payments",
+        135,
+        """التحويلات: يستطيع المستثمر أن يرسل وحدات من عقار يملكه أو مبلغًا من محفظته لأي شخص ببريده
+الإلكتروني: من لوحة التحكم ← التحويلات (تحويل وحدات / تحويل رصيد)، أو زر "تحويل" في المحفظة. يتطلب
+الإرسال بريدًا مؤكّدًا وهوية موثّقة. يطلب النموذج بريد المستلم (واسمه اختياريًا) وما يُرسل وتاريخ
+التسليم (اليوم أو حتى سنة قادمة) ورسالة اختيارية؛ وتعرض خطوة المراجعة ما سيُرسل وقيمته ورسوم التحويل
+(صفر ما لم تحددها المنصة) وما سيُخصم من المحفظة الآن، ولا يُرسل شيء قبل الضغط على "تأكيد وإرسال".
+لكل تحويل رقم يبدأ بـ TR- يليه عشرة أحرف.
+يُحجز ما يُرسل فورًا: تُجنّب الوحدات من الملكية (فلا تُعرض للبيع ولا لمزوّد السيولة ولا تُرسل مرتين)،
+ويُخصم المبلغ والرسوم من المحفظة. لا يُرسل إلا الوحدات الحرة: الوحدات المعروضة للبيع أو المحجوزة لغرض
+آخر أو المرهونة أو المرتبطة بخطة تقسيط جارية لا يمكن إرسالها. إذا كان بريد المستلم مؤكّدًا وهويته
+موثّقة يصله التحويل فورًا (أو في التاريخ المختار): تظهر الوحدات في ملكيته والمبلغ في محفظته، ويصل
+الطرفين إشعار وبريد. وإن لم يكن، يصله بريد دعوة ويستلم التحويل فور تسجيله بنفس البريد وتأكيده وتوثيق
+هويته؛ وإن لم يفعل خلال 30 يومًا يعود كل شيء للمرسل ومعه الرسوم. يستطيع المرسل إلغاء تحويل لم يُسلَّم
+بعد من تبويب التحويلات فيعود إليه كل شيء، أما التحويل المُسلَّم فلا يمكن استرجاعه.
+يعرض تبويب التحويلات كل تحويل مرسل ومستلم برقمه وحالته (مجدول، بانتظار المستلم، تم التسليم، أُلغي /
+انتهت المهلة / تعذّر التسليم - أُعيد) وتواريخه، ويظهر نفس رقم TR- في كشف المحفظة وإيصالاتها وفي حركات
+الوحدات. والهدايا تعمل بنفس الطريقة الآن: الهدية التي تنتظر مستلمها يمكن إلغاؤها، وتعود للمُهدي إن لم
+تُستلم خلال 30 يومًا.
+الرسائل: يكتب فريق Capimax PropShare للأعضاء من لوحة الإدارة، لعضو واحد أو لكل من يحمل دورًا معينًا
+(المستثمرون، ملاك العقارات والمطوّرون، الوسطاء، مزوّدو السيولة، أو الجميع). تصل في صفحة "الرسائل" (في
+القائمة، /messages) وكإشعار وبالبريد. يمكن إيقاف بريد الرسائل الموجّهة للجميع من إعدادات الحساب ←
+الإشعارات ← الإعلانات، وتظل تصل في صفحة الرسائل، أما الرسالة الموجّهة لعضو بعينه فتصله
+بالبريد دائمًا.""",
     ),
 ]
 

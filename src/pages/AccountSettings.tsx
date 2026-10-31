@@ -52,6 +52,7 @@ interface NotificationPreferences {
   emailReturns: boolean;
   emailNewProperties: boolean;
   emailSecurityAlerts: boolean;
+  emailAnnouncements: boolean;
   pushEnabled: boolean;
   pushInvestmentUpdates: boolean;
   pushReturns: boolean;
@@ -95,6 +96,7 @@ const AccountSettings = () => {
     emailReturns: true,
     emailNewProperties: true,
     emailSecurityAlerts: true,
+    emailAnnouncements: true,
     pushEnabled: true,
     pushInvestmentUpdates: true,
     pushReturns: true,
@@ -136,6 +138,7 @@ const AccountSettings = () => {
         emailReturns: prefs.email_returns,
         emailNewProperties: prefs.email_new_properties,
         emailSecurityAlerts: prefs.email_security_alerts,
+        emailAnnouncements: prefs.email_announcements ?? true,
       }));
     } catch (error) {
       console.error("Error fetching notification preferences:", error);
@@ -150,6 +153,7 @@ const AccountSettings = () => {
       emailReturns: "email_returns",
       emailNewProperties: "email_new_properties",
       emailSecurityAlerts: "email_security_alerts",
+      emailAnnouncements: "email_announcements",
     };
 
   const handleAvatarChange = () => {
@@ -618,6 +622,26 @@ const AccountSettings = () => {
                 <Switch
                   checked={notifications.emailSecurityAlerts}
                   onCheckedChange={(v) => handleNotificationChange("emailSecurityAlerts", v)}
+                />
+              </div>
+
+              <Separator />
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Mail className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <p className="font-medium text-foreground">Announcements</p>
+                    <p className="text-sm text-muted-foreground">
+                      Messages the Capimax PropShare team sends to all members. They always reach
+                      your Messages inbox; a message written to you alone is always emailed.
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  aria-label="Email me announcements"
+                  checked={notifications.emailAnnouncements}
+                  onCheckedChange={(v) => handleNotificationChange("emailAnnouncements", v)}
                 />
               </div>
             </CardContent>

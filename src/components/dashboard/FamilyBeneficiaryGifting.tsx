@@ -89,6 +89,8 @@ const giftStatusMeta: Record<string, { label: string; variant: "default" | "seco
   pending: { label: "Awaiting recipient", variant: "secondary" },
   executed: { label: "Delivered", variant: "default" },
   cancelled: { label: "Cancelled", variant: "outline" },
+  // not received within 30 days: returned to the giver (client, 2026-10-28)
+  expired: { label: "Expired — returned", variant: "outline" },
   failed: { label: "Failed", variant: "destructive" },
 };
 
@@ -447,8 +449,17 @@ export const FamilyGifting = () => {
                     {g.status === "failed" && g.failure_reason && (
                       <p className="text-xs text-destructive">{g.failure_reason}</p>
                     )}
+                    {g.status === "expired" && g.failure_reason && (
+                      <p className="text-xs text-muted-foreground">{g.failure_reason}</p>
+                    )}
+                    {g.status === "pending" && (
+                      <p className="text-xs text-muted-foreground">
+                        Waiting for the recipient to verify their identity. If they do not within
+                        30 days, it comes back to you; you can cancel it before then.
+                      </p>
+                    )}
 
-                    {g.status === "scheduled" && (
+                    {(g.status === "scheduled" || g.status === "pending") && (
                       <div className="flex justify-end gap-2 pt-1">
                         <Button
                           size="sm"

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, CheckCheck } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Bell, Check, CheckCheck, Mail, Send } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +24,8 @@ const TYPE_LABEL: Record<string, string> = {
   listing_review: "Listing review",
   account: "Account",
   ops_case: "Operations",
+  message: "Message",
+  transfer: "Transfer",
 };
 
 const Notifications = () => {
@@ -92,6 +95,22 @@ const Notifications = () => {
                       {!n.read && <span className="h-2 w-2 rounded-full bg-primary" />}
                     </div>
                     <p className="text-sm text-muted-foreground mt-1">{n.message}</p>
+                    {n.type === "transfer" && (
+                      <Link
+                        to="/dashboard?tab=transfers"
+                        className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-primary underline underline-offset-4"
+                      >
+                        <Send className="h-3.5 w-3.5" /> Open Transfers
+                      </Link>
+                    )}
+                    {n.type === "message" && (
+                      <Link
+                        to="/messages"
+                        className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-primary underline underline-offset-4"
+                      >
+                        <Mail className="h-3.5 w-3.5" /> Read it in Messages
+                      </Link>
+                    )}
                     <p className="text-xs text-muted-foreground mt-1">
                       {n.created_at ? new Date(n.created_at).toLocaleString() : ""}
                     </p>

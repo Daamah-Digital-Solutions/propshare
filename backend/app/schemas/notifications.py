@@ -37,6 +37,7 @@ class PreferencesOut(BaseModel):
     email_returns: bool
     email_security_alerts: bool
     email_new_properties: bool
+    email_announcements: bool
 
 
 class PreferencesIn(BaseModel):
@@ -46,6 +47,7 @@ class PreferencesIn(BaseModel):
     email_returns: bool | None = None
     email_security_alerts: bool | None = None
     email_new_properties: bool | None = None
+    email_announcements: bool | None = None
 
 
 class DispatchOut(BaseModel):

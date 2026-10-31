@@ -387,6 +387,15 @@ CORE_FIELDS: tuple[FieldSpec, ...] = (
         group=GROUP_OFFERING,
     ),
     FieldSpec(
+        "broker_commission_pct",
+        "Broker commission (%)",
+        "What a broker earns when a client they referred invests in this property, as a "
+        "percentage of the investment. Leave blank to use the general rate in Platform Settings.",
+        "1.5",
+        kind="percent",
+        group=GROUP_OFFERING,
+    ),
+    FieldSpec(
         "offplan_payment",
         "How investors pay",
         "Installment plan: a down payment, then monthly installments. Paid in full: for a "

@@ -31,9 +31,13 @@ import {
 } from "recharts";
 
 const EVENT_LABEL: Record<string, string> = {
+  investment: "Client investment",
+  installment_payment: "Client installment payment",
   investment_platform_fee: "Purchase fee",
   distribution_mgmt_fee: "Management fee",
 };
+// rows from before 2026-10-28 were a share of the platform's fee, not of the investment
+const ON_FEE = new Set(["investment_platform_fee", "distribution_mgmt_fee"]);
 
 const BrokerDashboard = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -42,6 +46,10 @@ const BrokerDashboard = () => {
 
   const { data: dashboard } = useQuery({ queryKey: ["broker", "dashboard"], queryFn: brokerApi.dashboard });
   const { data: code } = useQuery({ queryKey: ["broker", "code"], queryFn: brokerApi.referralCode });
+  const { data: rates } = useQuery({
+    queryKey: ["broker", "commission-rates"],
+    queryFn: brokerApi.commissionRates,
+  });
   const { data: commissions } = useQuery({
     queryKey: ["broker", "commissions"],
     queryFn: brokerApi.commissions,
@@ -144,9 +152,10 @@ const BrokerDashboard = () => {
                     </Button>
                   </div>
                   <p className="text-sm text-muted-foreground mt-2">
-                    Clients who sign up with your code are linked to you. You earn{" "}
-                    {dashboard ? `${dashboard.commission_rate}%` : "a share"} of the platform
-                    revenue from their investments — never a cut of their capital.
+                    Clients who sign up with your code are linked to you. When they invest, you
+                    earn a percentage of the investment: {dashboard ? `${dashboard.commission_rate}%` : "the general rate"}
+                    {" "}unless the property has its own rate (see Commissions). It is paid by the
+                    platform: your clients pay nothing extra.
                   </p>
                 </CardContent>
               </Card>
@@ -178,7 +187,7 @@ const BrokerDashboard = () => {
                 <CardContent>
                   {monthly.length === 0 ? (
                     <p className="text-sm text-muted-foreground py-12 text-center">
-                      No commissions yet. They accrue as your referred clients invest and earn.
+                      No commissions yet. They accrue as your referred clients invest.
                     </p>
                   ) : (
                     <div className="h-[300px]">
@@ -234,6 +243,32 @@ const BrokerDashboard = () => {
                 </Card>
               </div>
 
+              <Card className="bg-card border-border" data-testid="commission-rates">
+                <CardHeader>
+                  <CardTitle>Commission by Property</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    What you earn when a client you referred invests in each property, as a percentage
+                    of their investment. On an installment plan it is earned on each payment.
+                  </p>
+                  {(rates?.items.length ?? 0) === 0 ? (
+                    <p className="text-sm text-muted-foreground py-6 text-center">
+                      No property is open for investment right now.
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-border">
+                      {rates?.items.map((r) => (
+                        <div key={r.property_id} className="flex items-center justify-between gap-3 py-3">
+                          <span className="min-w-0 truncate text-sm font-medium">{r.title}</span>
+                          <span className="shrink-0 font-semibold text-accent">{r.rate}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
               <Card className="bg-card border-border">
                 <CardHeader>
                   <CardTitle>Commission Ledger</CardTitle>
@@ -256,7 +291,8 @@ const BrokerDashboard = () => {
                             </p>
                             <p className="text-xs text-muted-foreground">
                               {new Date(c.created_at).toLocaleDateString()} · {c.commission_rate}% of $
-                              {Number(c.revenue_amount).toLocaleString()} platform revenue
+                              {Number(c.revenue_amount).toLocaleString()}{" "}
+                              {ON_FEE.has(c.revenue_event_type) ? "platform revenue" : "invested"}
                             </p>
                           </div>
                           <p className="font-semibold text-accent">

@@ -133,7 +133,7 @@ class HoldingOut(BaseModel):
     sellable_units: int
     unit_price: str
     # why units cannot be listed: listed | lp_exit | family_pending | gift |
-    # installment_plan | pledged -> units
+    # installment_plan | pledged | transfer -> units
     held_back: dict[str, int] = {}
     # vested under a running installment plan: sold with the plan as a position
     plan_units: int = 0

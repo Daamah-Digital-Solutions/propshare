@@ -1137,7 +1137,56 @@ export const documentsApi = {
   },
 };
 
+/** A holder's current certificate for one property (its QR code opens verify_path). */
+export interface MyCertificate {
+  id: string;
+  property_id: string;
+  property_title: string;
+  number: string;
+  verification_code: string;
+  verify_path: string;
+  verify_url: string;
+  units: number;
+  ownership: string;
+  spv_name: string | null;
+  location: string | null;
+  status: "valid" | "superseded" | "revoked";
+  issued_at: string;
+}
+
+/** What the public verification page shows for a certificate's code. */
+export interface CertificateVerification {
+  number: string;
+  status: "valid" | "superseded" | "revoked";
+  issued_at: string;
+  superseded_at: string | null;
+  revoked_at: string | null;
+  revocation_reason: string | null;
+  holder_name: string;
+  holder_ref: string;
+  property_title: string;
+  location: string | null;
+  spv_name: string | null;
+  jurisdiction: string | null;
+  units: number;
+  ownership: string;
+  unit_price: string;
+  value: string;
+  verification_code: string;
+  signature: string;
+  issuer: string;
+  verified_at: string;
+}
+
 export const certificateApi = {
+  /** The caller's current certificate for every property they hold (number, code, page). */
+  mine(): Promise<{ items: MyCertificate[] }> {
+    return apiRequest("/api/v1/investments/certificates");
+  },
+  /** Anyone: what a certificate states and whether it is still valid (no account needed). */
+  verify(code: string): Promise<CertificateVerification> {
+    return apiRequest(`/api/v1/certificates/verify/${encodeURIComponent(code)}`, { auth: false });
+  },
   /** Download a PDF certificate of the caller's current holding in a property. */
   download(propertyId: string): Promise<Blob> {
     return fetchBlob(`/api/v1/investments/certificate/${propertyId}`);
@@ -1365,6 +1414,108 @@ export const giftsApi = {
   },
   cancel(id: string): Promise<ScheduledGift> {
     return apiRequest<ScheduledGift>(`/api/v1/gifts/${id}/cancel`, { method: "POST" });
+  },
+};
+
+// --- Transfers: units or wallet balance to another person (client, 2026-10-28) -- //
+export type TransferStatus = "scheduled" | "waiting" | "delivered" | "cancelled" | "expired" | "failed";
+
+export type TransferOccasion = "birthday" | "graduation" | "wedding" | "new_baby" | "holiday" | "other";
+
+export interface TransferInput {
+  asset: "units" | "balance";
+  recipient_email: string;
+  recipient_name?: string;
+  property_id?: string;
+  units?: number;
+  amount?: string;
+  /** ISO date; today when left out */
+  deliver_on?: string;
+  message?: string;
+  occasion?: TransferOccasion;
+  /** what the review step said leaves the wallet: the send is refused if it changed */
+  expected_charged?: string;
+}
+
+export interface TransferOptions {
+  positions: {
+    property_id: string;
+    property_title: string;
+    units: number;
+    free_units: number;
+    unit_price: string;
+  }[];
+  balance: string;
+  fee_pct: string;
+  claim_days: number;
+  max_days_ahead: number;
+}
+
+export interface TransferQuote {
+  asset: "units" | "balance";
+  recipient_email: string;
+  recipient_name: string | null;
+  property_id: string | null;
+  property_title: string | null;
+  units: number | null;
+  unit_price: string | null;
+  amount: string;
+  fee: string;
+  fee_pct: string;
+  /** what leaves the wallet now: the amount and the fee, or only the fee for units */
+  charged: string;
+  deliver_on: string;
+  message: string | null;
+  occasion: TransferOccasion | null;
+  claim_days: number;
+}
+
+export interface TransferRow {
+  id: string;
+  reference: string;
+  direction: "sent" | "received";
+  counterparty: string;
+  recipient_email: string | null;
+  asset: "units" | "balance";
+  property_id: string | null;
+  property_title: string | null;
+  units: number | null;
+  unit_price: string | null;
+  amount: string;
+  fee: string;
+  message: string | null;
+  occasion: TransferOccasion | null;
+  deliver_on: string;
+  status: TransferStatus;
+  status_label: string;
+  expires_at: string | null;
+  delivered_at: string | null;
+  closed_reason: string | null;
+  created_at: string;
+  can_cancel: boolean;
+}
+
+export const transfersApi = {
+  list(): Promise<{ items: TransferRow[] }> {
+    return apiRequest("/api/v1/transfers");
+  },
+  options(): Promise<TransferOptions> {
+    return apiRequest("/api/v1/transfers/options");
+  },
+  /** The review step: what will be held and sent, and the fee. Writes nothing. */
+  quote(payload: TransferInput): Promise<TransferQuote> {
+    return apiRequest("/api/v1/transfers/quote", { method: "POST", body: payload });
+  },
+  /** `key` is made once per confirmation, so a second click never sends twice. */
+  send(payload: TransferInput, key: string): Promise<TransferRow> {
+    return apiRequest("/api/v1/transfers", {
+      method: "POST",
+      body: payload,
+      headers: { "Idempotency-Key": key },
+    });
+  },
+  cancel(id: string): Promise<TransferRow> {
+    return apiRequest(`/api/v1/transfers/${encodeURIComponent(id)}/cancel`, { method: "POST" });
   },
 };
 
@@ -2266,7 +2417,7 @@ export interface BrokerReferralCode {
 }
 
 export interface BrokerDashboard {
-  commission_rate: string; // broker_commission_pct, live from platform_settings
+  commission_rate: string; // the general rate, percent of the investment
   total_referrals: number;
   total_commission: string;
 }
@@ -2280,14 +2431,25 @@ export interface BrokerReferralItem {
 
 export interface BrokerCommissionItem {
   id: string;
-  revenue_event_type: string; // investment_platform_fee | distribution_mgmt_fee
+  // investment | installment_payment; before 2026-10-28: investment_platform_fee |
+  // distribution_mgmt_fee (a share of the fee, not of the investment)
+  revenue_event_type: string;
   revenue_amount: string;
   commission_rate: string;
   commission_amount: string;
   created_at: string;
 }
 
+/** What a broker earns on each property open for investment (client, 2026-10-28). */
+export interface BrokerCommissionRates {
+  general_rate: string;
+  items: { property_id: string; title: string; slug: string | null; rate: string; own_rate: boolean }[];
+}
+
 export const brokerApi = {
+  commissionRates(): Promise<BrokerCommissionRates> {
+    return apiRequest<BrokerCommissionRates>("/api/v1/broker/commission-rates");
+  },
   referralCode(): Promise<BrokerReferralCode> {
     return apiRequest<BrokerReferralCode>("/api/v1/broker/referral-code");
   },
@@ -2356,6 +2518,8 @@ export interface NotificationPreferences {
   email_returns: boolean;
   email_security_alerts: boolean;
   email_new_properties: boolean;
+  /** Emails of messages the platform team sends to a whole group (a direct message is always emailed). */
+  email_announcements: boolean;
 }
 
 export const notificationApi = {
@@ -2379,5 +2543,28 @@ export const notificationApi = {
       method: "PUT",
       body: prefs,
     });
+  },
+};
+
+/** A message from the platform team, written in the admin panel (client, 2026-10-28). */
+export interface InboxMessage {
+  id: string;
+  subject: string;
+  preview: string;
+  read: boolean;
+  created_at: string;
+  body?: string | null;
+}
+
+export const messagesApi = {
+  list(): Promise<{ items: InboxMessage[]; unread: number }> {
+    return apiRequest("/api/v1/messages");
+  },
+  /** One of the caller's messages; opening it marks it read. */
+  get(id: string): Promise<InboxMessage> {
+    return apiRequest(`/api/v1/messages/${encodeURIComponent(id)}`);
+  },
+  readAll(): Promise<{ marked: number }> {
+    return apiRequest("/api/v1/messages/read-all", { method: "POST" });
   },
 };

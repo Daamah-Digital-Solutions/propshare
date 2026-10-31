@@ -31,6 +31,7 @@ from app.models import (
     FamilyTransfer,
     OwnershipLedger,
     Property,
+    Transfer,
 )
 from app.models.identity import User
 
@@ -46,6 +47,8 @@ LABELS: dict[str, str] = {
     "gift_transfer_out": "Gift sent",
     "estate_transfer_in": "Received as a designated beneficiary",
     "estate_transfer_out": "Transferred to a designated beneficiary",
+    "transfer_in": "Transfer received",
+    "transfer_out": "Transfer sent",
     "secondary_purchase": "Bought on the secondary market",
     "secondary_sale": "Sold on the secondary market",
     "lp_buyback": "Sold to a liquidity provider",
@@ -108,6 +111,19 @@ async def _titles(
     return {pid: (title, slug) for pid, title, slug in res.all()}
 
 
+async def _transfer_numbers(
+    session: AsyncSession, rows: Sequence[OwnershipLedger]
+) -> dict[uuid.UUID, str]:
+    """The TR- number of each transfer a row belongs to, by ``ref_id``."""
+    refs = {r.ref_id for r in rows if r.ref_id and r.reason in ("transfer_in", "transfer_out")}
+    if not refs:
+        return {}
+    res = await session.execute(
+        select(Transfer.id, Transfer.reference).where(Transfer.id.in_(refs))
+    )
+    return dict(res.all())
+
+
 async def _counterparties(
     session: AsyncSession, user_id: uuid.UUID, rows: Sequence[OwnershipLedger]
 ) -> dict[uuid.UUID, str]:
@@ -149,6 +165,29 @@ async def _counterparties(
                 # received: the sender's account name, never their email address
                 name = accounts.get(src.user_id, "") if src and src.user_id else ""
                 other[t.id] = name or "a family member"
+
+    transfer_refs = {
+        r.ref_id for r in rows if r.ref_id and r.reason in ("transfer_in", "transfer_out")
+    }
+    if transfer_refs:
+        found = (
+            await session.execute(
+                select(
+                    Transfer.id,
+                    Transfer.sender_id,
+                    Transfer.recipient_name,
+                    Transfer.recipient_email,
+                ).where(Transfer.id.in_(transfer_refs))
+            )
+        ).all()
+        senders = await _account_names(session, {sender for _i, sender, _n, _e in found})
+        for transfer_id, sender, name, email in found:
+            if sender == user_id:
+                # sent by the caller: whom they wrote to, as they typed it
+                other[transfer_id] = name or email
+            else:
+                # received: the sender's account name, never their email address
+                other[transfer_id] = senders.get(sender, "") or "a Capimax PropShare member"
 
     estate_refs = {r.ref_id for r in rows if r.ref_id and r.reason.startswith("estate_transfer")}
     if estate_refs:
@@ -270,6 +309,7 @@ async def build_statement(
     }
     titles = await _titles(session, {r.property_id for r in rows} | set(opening))
     other = await _counterparties(session, user_id, rows)
+    numbers = await _transfer_numbers(session, rows)
 
     running = dict(opening)
     moved_in: dict[uuid.UUID, int] = {}
@@ -290,7 +330,7 @@ async def build_statement(
                 counterparty=(english(name) or "a named person") if name else "",
                 units=r.units,
                 balance=running[r.property_id],
-                reference=str(r.ref_id or r.id)[:8].upper(),
+                reference=numbers.get(r.ref_id) or str(r.ref_id or r.id)[:8].upper(),
             )
         )
     # every property held at the start or moved in the period (one held all along included)

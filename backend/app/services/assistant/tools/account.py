@@ -595,6 +595,7 @@ class HeldBackOut(ToolOutput):
     gift: int
     installment_plan: int
     pledged: int
+    transfer: int
 
 
 class HoldingOut(ToolOutput):
@@ -613,8 +614,10 @@ class HoldingOut(ToolOutput):
     price_change_pct: str | None  # unit_price against the launch price
     price_updated_at: str | None  # when the platform last gave the property a new price
     average_cost: str | None  # what these units cost the user per unit, on average
-    # printed on the investment certificate; the number to enter at Capimax Verify
-    certificate_reference: str
+    # the number of the investment certificate stating these units (its QR code is checked
+    # on PropShare: get_my_certificates gives the code and the page); None until one is
+    # issued for the current units (downloading it, or get_my_certificates, issues it)
+    certificate_number: str | None
 
 
 class PositionOut(ToolOutput):
@@ -660,7 +663,8 @@ _HELD_BACK_NOTE = (
     "position to its holding (for the total value use get_my_portfolio). cost counts the "
     "principal paid, not the installment fees, which are not returned by a sale; "
     "pledged = pledged to Nova "
-    "Finance for a Nova Sukuk certificate until staff release the pledge. lockup_until = the "
+    "Finance for a Nova Sukuk certificate until staff release the pledge; transfer = sent to "
+    "another person in a transfer not delivered yet (get_my_transfers). lockup_until = the "
     "resale lock-up ends then. unit_price is the price now: the platform gives a property under "
     "construction a new price as it is revalued (price_change_pct is the move since launch); "
     "the gain on a holding is (unit_price - average_cost) x units."
@@ -688,8 +692,11 @@ async def _get_my_holdings(session: AsyncSession, ctx: AgentContext, args) -> di
                 "price_change_pct": r.get("price_change_pct"),
                 "price_updated_at": _iso(r.get("price_updated_at")),
                 "average_cost": r.get("average_cost"),
-                "certificate_reference": certificate_service.certificate_reference(
-                    r["property_id"], uid
+                "certificate_number": await certificate_service.issued_number(
+                    session,
+                    user_id=uid,
+                    property_id=uuid.UUID(r["property_id"]),
+                    units=int(r["units"]),
                 ),
             }
         )

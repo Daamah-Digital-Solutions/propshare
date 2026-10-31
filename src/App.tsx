@@ -32,6 +32,7 @@ const PropertyTypes = lazy(() => import("./pages/PropertyTypes"));
 const ConstructionModelPage = lazy(() => import("./pages/ConstructionModelPage"));
 const BrokerDashboard = lazy(() => import("./pages/BrokerDashboard"));
 const Notifications = lazy(() => import("./pages/Notifications"));
+const Messages = lazy(() => import("./pages/Messages"));
 const Partners = lazy(() => import("./pages/Partners"));
 const HowItWorks = lazy(() => import("./pages/HowItWorks"));
 const SPVModel = lazy(() => import("./pages/SPVModel"));
@@ -53,6 +54,7 @@ const Reports = lazy(() => import("./pages/Reports"));
 const LpReports = lazy(() => import("./pages/LpReports"));
 const FAQ = lazy(() => import("./pages/FAQ"));
 const VerificationCenter = lazy(() => import("./pages/VerificationCenter"));
+const VerifyCertificate = lazy(() => import("./pages/VerifyCertificate"));
 const DeveloperProfile = lazy(() => import("./pages/DeveloperProfile"));
 const EstateClaim = lazy(() => import("./pages/EstateClaim"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
@@ -141,6 +143,14 @@ const App = () => (
                       </ProtectedRoute>
                     }
                   />
+                  <Route
+                    path="/messages"
+                    element={
+                      <ProtectedRoute>
+                        <Messages />
+                      </ProtectedRoute>
+                    }
+                  />
                   <Route path="/partners" element={<Partners />} />
                   <Route path="/how-it-works" element={<HowItWorks />} />
                   <Route path="/spv-model" element={<SPVModel />} />
@@ -218,6 +228,8 @@ const App = () => (
                   <Route path="/about-capimax-propshare" element={<AboutCapimaxPropShare />} />
                   <Route path="/faq" element={<FAQ />} />
                   <Route path="/verification-center" element={<VerificationCenter />} />
+                  {/* public: the page an investment certificate's QR code opens */}
+                  <Route path="/verify/:code" element={<VerifyCertificate />} />
                   <Route path="/developers/:slug" element={<DeveloperProfile />} />
                   {/* public: a person an account holder named reports a death and claims */}
                   <Route path="/estate-claim" element={<EstateClaim />} />

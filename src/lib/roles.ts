@@ -84,7 +84,7 @@ export const ROLE_APPLICATIONS: Record<string, RoleApplicationSpec> = {
     role: "broker",
     title: "Become a Broker",
     intro:
-      "Refer investors and earn commission on the platform fees they generate. Submit your details below — our team reviews every broker application before activation.",
+      "Refer investors and earn a percentage of what they invest. Submit your details below — our team reviews every broker application before activation.",
     fields: [
       { name: "full_name", label: "Full / company name", type: "text", required: true },
       {

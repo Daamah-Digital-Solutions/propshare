@@ -124,7 +124,7 @@ const full: PropertyDetail = {
   },
 } as PropertyDetail;
 
-function mount(detail: PropertyDetail, preview?: string) {
+function mount(detail: PropertyDetail, preview?: string, brokerRate?: string) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -133,6 +133,7 @@ function mount(detail: PropertyDetail, preview?: string) {
           detail={detail}
           fees={FEES}
           preview={preview}
+          brokerRate={brokerRate}
           investPanel={<div data-testid="invest-calc" />}
           documentsPanel={<div data-testid="real-docs" />}
         />
@@ -314,6 +315,18 @@ describe("UnderConstructionView", () => {
     expect(price).not.toHaveTextContent("Unchanged since launch");
     expect(within(price).queryByTestId("unit-price-history")).toBeNull();
     expect(screen.getAllByText("$1,100,000").length).toBeGreaterThan(0);
+  });
+
+  it("shows a broker their commission on this property, and nobody else", () => {
+    docs.mockReturnValue([]);
+    const { unmount } = mount(base);
+    openTab(/financials/i);
+    expect(screen.getByTestId("fee-structure")).not.toHaveTextContent(/commission/i);
+    unmount();
+
+    mount(base, undefined, "2.25");
+    openTab(/financials/i);
+    expect(screen.getByTestId("fee-structure")).toHaveTextContent("Your Commission as a Broker2.25% of the investment");
   });
 
   it("names a listing by how it is bought", async () => {

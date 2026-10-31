@@ -14,6 +14,7 @@ import { ProShareCards } from "@/components/dashboard/ProShareCards";
 import { ReinvestReturns } from "@/components/dashboard/ReinvestReturns";
 import { FamilyInvestment } from "@/components/dashboard/FamilyInvestment";
 import { VerificationTab } from "@/components/dashboard/VerificationTab";
+import { TransfersTab } from "@/components/dashboard/TransfersTab";
 import {
   LayoutDashboard,
   Building2,
@@ -31,13 +32,14 @@ import {
   Home,
   Plus,
   FolderOpen,
-  ShieldCheck
+  ShieldCheck,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExitRequestsPanel } from "@/components/exit/ExitRequestsPanel";
 import { ExitButton } from "@/components/exit/ExitButton";
 
-const validTabs = ["overview", "investments", "returns", "installments", "wallet", "cards", "market", "reinvest", "family", "certificates", "documents", "verification", "exits"];
+const validTabs = ["overview", "investments", "returns", "installments", "wallet", "transfers", "cards", "market", "reinvest", "family", "certificates", "documents", "verification", "exits"];
 
 const InvestorDashboard = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -157,6 +159,13 @@ const InvestorDashboard = () => {
                   <Wallet className="h-4 w-4" />
                   Wallet
                 </TabsTrigger>
+                <TabsTrigger
+                  value="transfers"
+                  className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                >
+                  <Send className="h-4 w-4" />
+                  Transfers
+                </TabsTrigger>
                 <TabsTrigger 
                   value="cards"
                   className="flex items-center gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
@@ -240,6 +249,10 @@ const InvestorDashboard = () => {
 
               <TabsContent value="wallet" className="space-y-6">
                 <InvestorWallet />
+              </TabsContent>
+
+              <TabsContent value="transfers" className="space-y-6">
+                <TransfersTab />
               </TabsContent>
 
               <TabsContent value="cards" className="space-y-6">

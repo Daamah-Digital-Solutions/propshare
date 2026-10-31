@@ -3,6 +3,13 @@
 Generates a REAL, elegantly branded one-page PDF certificate from the caller's CURRENT net
 holding in a property (read from the append-only ``ownership_ledger`` — never fabricated).
 
+Every certificate issued is kept (``investment_certificates``, client 2026-10-28, as on Capimax
+BRX): it has a unique number and a secret verification code, and its QR code opens
+``/verify/{code}`` on PropShare, where anyone holding the paper can confirm it is authentic and
+current. A certificate states the holder's units at the time it was issued; when they change,
+the next certificate states the new count and the old one is shown as superseded, so a paper
+that no longer matches the ledger never reads as valid. See ``current_certificate``.
+
 Rendered with reportlab (classic certificate styling: ornate green/gold border with corner
 flourishes, serif typography, cream ground, a faint monogram watermark, and a gold-gradient
 seal with a ribbon). The content stream is left uncompressed so the real values appear
@@ -14,22 +21,27 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
+import hashlib
+import hmac
 import io
 import math
 import pathlib
+import secrets
 import uuid
 import zipfile
 
+import segno
 from reportlab.lib.colors import Color, HexColor
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.audit import write_audit
+from app.core.config import get_settings
 from app.core.errors import AppError
-from app.models import OwnershipLedger, Property
+from app.models import InvestmentCertificate, OwnershipLedger, Property
 from app.models.identity import User
-from app.services import verification_partners
 
 _W, _H = 595.0, 842.0  # A4 points
 _CX = _W / 2
@@ -234,6 +246,31 @@ def _seal(
     c.restoreState()
 
 
+def draw_qr(c: canvas.Canvas, x: float, y: float, side: float, url: str) -> None:
+    """``url`` as a QR code, drawn as vector squares on a white pad (no image, no extra
+    library): sharp at any zoom and when printed. Used by the beneficiary certificate too."""
+    matrix = segno.make(url, error="m").matrix
+    n = len(matrix)
+    cell = side / n
+    c.saveState()
+    c.setFillColor(HexColor("#FFFFFF"))
+    c.rect(x - 4, y - 4, side + 8, side + 8, stroke=0, fill=1)
+    c.setFillColor(_INK)
+    for row_no, row in enumerate(matrix):
+        for col_no, dark in enumerate(row):
+            if dark:
+                # a hair of overlap so no viewer shows seams between the squares
+                c.rect(
+                    x + col_no * cell,
+                    y + side - (row_no + 1) * cell,
+                    cell + 0.2,
+                    cell + 0.2,
+                    stroke=0,
+                    fill=1,
+                )
+    c.restoreState()
+
+
 def _draw_brand(c: canvas.Canvas, cx: float) -> None:
     """Centre the official Capimax PropShare logo in the header. Falls back to the vector
     emblem + wordmark if the logo asset — or its image backend (Pillow) — is unavailable, so a
@@ -272,8 +309,12 @@ def render_certificate_pdf(
     jurisdiction: str,
     cert_ref: str,
     issued: str,
+    verification_code: str,
+    verify_url: str,
 ) -> bytes:
-    """Draw the branded Capimax PropShare certificate (A4, classic styling)."""
+    """Draw the branded Capimax PropShare certificate (A4, classic styling). ``cert_ref`` is
+    the certificate's number; its QR code opens ``verify_url``, where ``verification_code`` is
+    checked."""
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=(_W, _H), pageCompression=0)
     c.setTitle("Capimax PropShare — Certificate of Ownership")
@@ -348,7 +389,7 @@ def render_certificate_pdf(
         ("OWNERSHIP STAKE", ownership),
         ("ISSUING SPV", spv),
         ("JURISDICTION", jurisdiction),
-        ("CERTIFICATE REFERENCE", cert_ref),
+        ("CERTIFICATE NUMBER", cert_ref),
         ("ISSUED", issued),
     ]
     for i, (label, val) in enumerate(fields):
@@ -362,7 +403,16 @@ def render_certificate_pdf(
         c.setFont("Times-Roman", 12.5)
         c.drawString(x, y - 16, _clip(str(val), "Times-Roman", 12.5, pw / 2 - 44))
 
-    # Seal (bottom-right) + signature (bottom-left) share a band well above the footer.
+    # Signature (bottom-left), the QR code (centre) and the seal (bottom-right) share a band
+    # well above the footer. The QR opens the certificate's verification page (client,
+    # 2026-10-28, as on Capimax BRX).
+    qr_side = 70.0
+    qr_x, qr_y = _CX - qr_side / 2 + 8, 196.0
+    draw_qr(c, qr_x, qr_y, qr_side, verify_url)
+    c.linkURL(verify_url, (qr_x, qr_y, qr_x + qr_side, qr_y + qr_side), relative=0)
+    c.setFillColor(_MUTED)
+    c.setFont("Helvetica", 6.8)
+    c.drawCentredString(qr_x + qr_side / 2, qr_y - 13, "SCAN TO VERIFY")
     _seal(c, 458, 232, 48)
     c.setStrokeColor(_INK)
     c.setLineWidth(0.8)
@@ -379,32 +429,33 @@ def render_certificate_pdf(
     c.setFont("Times-Roman", 8.5)
     footer_text = (
         "This certificate reflects the fractional units recorded in the Capimax PropShare "
-        "ownership ledger as of the issue date. It is generated from live data and is not a "
-        "transferable security or a substitute for the offering documents and SPV agreements "
-        "governing this property."
+        "ownership ledger on its issue date; scan its QR code to confirm it is authentic and "
+        "still current. It is not a transferable security or a substitute for the offering "
+        "documents and SPV agreements governing this property."
     )
     # NB: the title's letter-spacing stays in the PDF text state, so every later line is drawn
     # wider than stringWidth() says (~1.3x at this size): keep the wrap width well under the
     # ~500pt safe area.
     fy = 128
-    for ln in _wrap(footer_text, "Times-Roman", 8.5, 290):
+    for ln in _wrap(footer_text, "Times-Roman", 8.5, 270):
         c.drawCentredString(_CX, fy, ln)
         fy -= 12.5
-    c.setFillColor(_GOLD)
-    c.setFont("Helvetica", 8)
-    ref_line = f"{cert_ref}   •   capimaxpropshare.com"
-    c.drawCentredString(_CX, 74, ref_line)
-    # Under the reference, where it is verified (client, 2026-10-01): the partner's page,
-    # written out for a printed copy and a link in the file. The letter-spacing (NB above)
-    # widens a line by its length, so this longer one is placed by its drawn width to sit
-    # centred under the reference; drawCentredString would run it into the frame.
-    partner = verification_partners.CERTIFICATES
-    verify_line = f"Verify at {partner.provider}   •   {partner.url.removeprefix('https://')}"
-    drawn = stringWidth(verify_line, "Helvetica", 8) + _TRACKING * (len(verify_line) - 1)
-    left = _CX + _TRACKING * (len(ref_line) - 1) / 2 - drawn / 2
-    c.setFillColor(_GREEN_D)
-    c.drawString(left, 61, verify_line)
-    c.linkURL(partner.url, (left, 57, left + drawn, 69), relative=0)
+
+    # The number, then where it is verified: the code and the page, written out for a printed
+    # copy (and a link in the file). The title's letter-spacing (NB above) widens a line by its
+    # length, so each line is placed by its drawn width to sit centred.
+    def _centred_tracked(text: str, y: float, color: HexColor, size: float) -> tuple[float, float]:
+        drawn = stringWidth(text, "Helvetica", size) + _TRACKING * (len(text) - 1)
+        left = _CX - drawn / 2
+        c.setFillColor(color)
+        c.setFont("Helvetica", size)
+        c.drawString(left, y, text)
+        return left, drawn
+
+    _centred_tracked(f"{cert_ref}   •   Verification code {verification_code}", 74, _GOLD, 7.2)
+    shown = verify_url.split("://", 1)[-1]
+    left, drawn = _centred_tracked(f"Verify at {shown}", 61, _GREEN_D, 7.2)
+    c.linkURL(verify_url, (left, 57, left + drawn, 69), relative=0)
 
     c.showPage()
     c.save()
@@ -442,12 +493,338 @@ def ownership_pct(units: int, total_units: int) -> str:
     return f"{format(pct.quantize(step).normalize(), 'f')}%"
 
 
-def certificate_reference(property_id: uuid.UUID | str, user_id: uuid.UUID | str) -> str:
-    """The reference printed on a holder's certificate for one property: derived from the
-    property and the holder, so it is stable and never random. The investor's Verification tab
-    shows the same value (src/lib/certificates.ts), and it is the certificate number they
-    enter at Capimax Verify."""
-    return ("CMX-" + str(property_id)[:4] + str(user_id)[:4]).upper()
+# Certificate numbers: no 0/O or 1/I, so a number reads back over the phone.
+_NUMBER_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def verify_path(code: str) -> str:
+    """The certificate's public verification page, on the site."""
+    return f"/verify/{code}"
+
+
+def verify_url(code: str) -> str:
+    return get_settings().app_base_url.rstrip("/") + verify_path(code)
+
+
+def _holder_name(user: User | None) -> str:
+    """The name the certificate states. It is public (the verification page), so an account
+    without a name is never named by its email address."""
+    return ((user.full_name or "").strip() if user else "") or "Capimax PropShare investor"
+
+
+def _holder_ref(user_id: uuid.UUID) -> str:
+    """The holder's account, shown on the verification page without revealing it."""
+    return "****" + user_id.hex[-6:].upper()
+
+
+def _signature(c: InvestmentCertificate) -> str:
+    """A keyed digest of what the certificate states: printed on the verification page, it
+    changes if any value is altered, and cannot be made up without the platform's key."""
+    payload = "|".join(
+        str(v)
+        for v in (
+            c.number,
+            c.verification_code,
+            c.holder_name,
+            c.holder_ref,
+            c.property_id,
+            c.property_title,
+            c.units,
+            c.ownership,
+            c.unit_price,
+            c.value,
+            c.issued_at.isoformat(),
+        )
+    )
+    key = ("investment-certificate|" + get_settings().jwt_secret).encode()
+    return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+
+
+async def _new_number(session: AsyncSession, year: int) -> str:
+    for _ in range(5):
+        number = f"PSC-{year}-" + "".join(secrets.choice(_NUMBER_ALPHABET) for _ in range(8))
+        taken = await session.scalar(
+            select(InvestmentCertificate.id).where(InvestmentCertificate.number == number)
+        )
+        if taken is None:
+            return number
+    raise AppError("NUMBER_UNAVAILABLE", "Please try again.", status_code=503)
+
+
+async def _lock_holding(session: AsyncSession, user_id: uuid.UUID, property_id: uuid.UUID) -> None:
+    """One issuer at a time per holder and property (two downloads at once must not both
+    issue): a transaction-scoped advisory lock."""
+    await session.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(f"certificate:{user_id}:{property_id}")))
+    )
+
+
+async def _valid_certificate(
+    session: AsyncSession, user_id: uuid.UUID, property_id: uuid.UUID
+) -> InvestmentCertificate | None:
+    return (
+        await session.execute(
+            select(InvestmentCertificate)
+            .where(
+                InvestmentCertificate.user_id == user_id,
+                InvestmentCertificate.property_id == property_id,
+                InvestmentCertificate.status == "valid",
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+
+
+def _supersede(cert: InvestmentCertificate, now: dt.datetime, by: uuid.UUID | None = None) -> None:
+    cert.status = "superseded"
+    cert.superseded_at = now
+    cert.superseded_by = by
+
+
+async def issued_number(
+    session: AsyncSession, *, user_id: uuid.UUID, property_id: uuid.UUID, units: int
+) -> str | None:
+    """The number of the valid certificate that still states ``units``, or None; issues
+    nothing and locks nothing, for read-only answers (the holdings list)."""
+    return await session.scalar(
+        select(InvestmentCertificate.number).where(
+            InvestmentCertificate.user_id == user_id,
+            InvestmentCertificate.property_id == property_id,
+            InvestmentCertificate.status == "valid",
+            InvestmentCertificate.units == units,
+        )
+    )
+
+
+async def current_certificate(
+    session: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    property_id: uuid.UUID,
+    now: dt.datetime | None = None,
+) -> InvestmentCertificate:
+    """The holder's valid certificate for their CURRENT units in the property: the one already
+    issued while it still states them, else a new one (the old one superseded by it).
+    NO_HOLDING when they hold none."""
+    now = now or dt.datetime.now(dt.UTC)
+    await _lock_holding(session, user_id, property_id)
+    units = await _net_units(session, user_id, property_id)
+    current = await _valid_certificate(session, user_id, property_id)
+    user = await session.get(User, user_id)
+    holder = _holder_name(user)
+    if units <= 0:
+        # Nothing to certify. A certificate they had keeps its row as it is: its verification
+        # page compares it with the ledger and shows it superseded (``verify``).
+        raise AppError("NO_HOLDING", "You do not hold any units in this property.", status_code=404)
+    if current is not None and current.units == units and current.holder_name == holder:
+        return current
+    prop = await session.get(Property, property_id)
+    if prop is None:
+        raise AppError("PROPERTY_NOT_FOUND", "Property not found.", status_code=404)
+    if current is not None:  # the old one goes first: one valid certificate at a time
+        _supersede(current, now)
+        await session.flush()
+    unit_price = decimal.Decimal(str(prop.unit_price or 0)).quantize(decimal.Decimal("0.01"))
+    cert = InvestmentCertificate(
+        id=uuid.uuid4(),
+        number=await _new_number(session, now.year),
+        verification_code=secrets.token_urlsafe(16),
+        user_id=user_id,
+        property_id=property_id,
+        status="valid",
+        holder_name=holder,
+        holder_ref=_holder_ref(user_id),
+        property_title=prop.title,
+        location=prop.location or None,
+        # the listing's registered SPV; never a name made up from the title
+        spv_name=(prop.spv_name or "").strip() or None,
+        jurisdiction=prop.country or getattr(prop, "city", None) or prop.location or None,
+        units=units,
+        total_units=int(prop.total_units or 0) or None,
+        ownership=ownership_pct(units, int(prop.total_units or 0)),
+        unit_price=unit_price,
+        value=(unit_price * units).quantize(decimal.Decimal("0.01")),
+        signature="",
+        issued_at=now,
+    )
+    cert.signature = _signature(cert)
+    session.add(cert)
+    await session.flush()
+    # every earlier certificate of this holding left without a successor (superseded when it
+    # was checked, or when the units ran out) now points at this one
+    await session.execute(
+        update(InvestmentCertificate)
+        .where(
+            InvestmentCertificate.user_id == user_id,
+            InvestmentCertificate.property_id == property_id,
+            InvestmentCertificate.status == "superseded",
+            InvestmentCertificate.superseded_by.is_(None),
+            InvestmentCertificate.id != cert.id,
+        )
+        .values(superseded_by=cert.id)
+    )
+    await write_audit(
+        session,
+        action="certificate.issued",
+        entity_type="investment_certificate",
+        entity_id=str(cert.id),
+        actor_id=user_id,
+        after={
+            "number": cert.number,
+            "property_id": str(property_id),
+            "units": units,
+            "supersedes": current.number if current is not None else None,
+        },
+    )
+    return cert
+
+
+async def certificates_for(
+    session: AsyncSession, user_id: uuid.UUID, *, now: dt.datetime | None = None
+) -> list[InvestmentCertificate]:
+    """The holder's current certificate for every property they hold units in (issued now
+    where needed), in property-title order."""
+    # one lock per holding, always taken in the same order (two lists at once never deadlock)
+    certs = [
+        await current_certificate(session, user_id=user_id, property_id=pid, now=now)
+        for pid in sorted(await _held_property_ids(session, user_id))
+    ]
+    return sorted(certs, key=lambda c: c.property_title.lower())
+
+
+def certificate_dict(c: InvestmentCertificate) -> dict:
+    """What the holder sees of their own certificate."""
+    return {
+        "id": c.id,
+        "property_id": c.property_id,
+        "number": c.number,
+        "verification_code": c.verification_code,
+        "verify_path": verify_path(c.verification_code),
+        "verify_url": verify_url(c.verification_code),
+        "units": c.units,
+        "ownership": c.ownership,
+        "spv_name": c.spv_name,
+        "location": c.location,
+        "status": c.status,
+        "issued_at": c.issued_at,
+    }
+
+
+async def verify(session: AsyncSession, code: str, *, now: dt.datetime | None = None) -> dict:
+    """What the public verification page shows for a certificate's code (no account needed).
+    A valid certificate whose units no longer match the ledger is superseded here and then,
+    so a paper the holder has outgrown never reads as valid. NOT_FOUND for an unknown code."""
+    now = now or dt.datetime.now(dt.UTC)
+    code = (code or "").strip()
+    cert = None
+    if 10 <= len(code) <= 64:
+        cert = (
+            await session.execute(
+                select(InvestmentCertificate)
+                .where(InvestmentCertificate.verification_code == code)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+    if cert is None:
+        raise AppError(
+            "CERTIFICATE_NOT_FOUND",
+            "No certificate matches this verification code.",
+            status_code=404,
+        )
+    if cert.status == "valid":
+        units = await _net_units(session, cert.user_id, cert.property_id)
+        if units != cert.units:
+            _supersede(cert, now)
+            await write_audit(
+                session,
+                action="certificate.superseded",
+                entity_type="investment_certificate",
+                entity_id=str(cert.id),
+                after={"number": cert.number, "reason": "units changed", "units_now": units},
+            )
+    cert.verification_count = (cert.verification_count or 0) + 1
+    cert.last_verified_at = now
+    return {
+        "number": cert.number,
+        "status": cert.status,
+        "issued_at": cert.issued_at,
+        "superseded_at": cert.superseded_at,
+        "revoked_at": cert.revoked_at,
+        "revocation_reason": cert.revocation_reason,
+        "holder_name": cert.holder_name,
+        "holder_ref": cert.holder_ref,
+        "property_title": cert.property_title,
+        "location": cert.location,
+        "spv_name": cert.spv_name,
+        "jurisdiction": cert.jurisdiction,
+        "units": cert.units,
+        "ownership": cert.ownership,
+        "unit_price": str(cert.unit_price),
+        "value": str(cert.value),
+        "verification_code": cert.verification_code,
+        "signature": cert.signature,
+        "issuer": "Capimax PropShare",
+        "verified_at": now,
+    }
+
+
+async def revoke(
+    session: AsyncSession,
+    *,
+    certificate_id: uuid.UUID,
+    actor_id: uuid.UUID | None,
+    reason: str,
+    now: dt.datetime | None = None,
+) -> InvestmentCertificate:
+    """The platform withdraws a certificate: its page shows it revoked, with the reason. The
+    holding is untouched; the holder's next download is a new certificate."""
+    reason = (reason or "").strip()
+    if len(reason) < 3:
+        raise AppError("REASON_REQUIRED", "Say why the certificate is revoked.", status_code=422)
+    cert = (
+        await session.execute(
+            select(InvestmentCertificate)
+            .where(InvestmentCertificate.id == certificate_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if cert is None:
+        raise AppError("NOT_FOUND", "Certificate not found.", status_code=404)
+    if cert.status == "revoked":
+        return cert
+    before = cert.status
+    cert.status = "revoked"
+    cert.revoked_at = now or dt.datetime.now(dt.UTC)
+    cert.revoked_by = actor_id
+    cert.revocation_reason = reason[:300]
+    await write_audit(
+        session,
+        action="certificate.revoked",
+        entity_type="investment_certificate",
+        entity_id=str(cert.id),
+        actor_id=actor_id,
+        before={"status": before},
+        after={"status": "revoked", "reason": cert.revocation_reason},
+    )
+    return cert
+
+
+def render_for(cert: InvestmentCertificate) -> bytes:
+    """The PDF of a stored certificate: exactly what it stated when issued."""
+    return render_certificate_pdf(
+        holder=cert.holder_name,
+        property_title=cert.property_title,
+        location=cert.location or "-",
+        units=cert.units,
+        ownership=cert.ownership,
+        value=f"${cert.value:,.2f}",
+        spv=cert.spv_name or "-",
+        jurisdiction=cert.jurisdiction or "-",
+        cert_ref=cert.number,
+        issued=cert.issued_at.strftime("%b %d, %Y"),
+        verification_code=cert.verification_code,
+        verify_url=verify_url(cert.verification_code),
+    )
 
 
 async def build_for_holding(
@@ -460,39 +837,12 @@ async def build_for_holding(
     """Return (filename, pdf_bytes) for the caller's net holding; 404 if they hold none.
 
     All values are REAL: units from the ledger; ownership %, value, SPV reference and
-    jurisdiction derived from the property record; the certificate reference is a stable,
-    deterministic id (property + holder), never random."""
-    units = await _net_units(session, user_id, property_id)
-    if units <= 0:
-        raise AppError("NO_HOLDING", "You do not hold any units in this property.", status_code=404)
+    jurisdiction from the property record, as stored on the certificate when it was issued
+    (``current_certificate``)."""
+    cert = await current_certificate(session, user_id=user_id, property_id=property_id, now=now)
     prop = await session.get(Property, property_id)
-    if prop is None:
-        raise AppError("PROPERTY_NOT_FOUND", "Property not found.", status_code=404)
-    user = await session.get(User, user_id)
-    holder = (user.full_name if user and user.full_name else (user.email if user else "")) or "-"
-
-    unit_price = decimal.Decimal(str(prop.unit_price or 0))
-    value = (unit_price * units).quantize(decimal.Decimal("0.01"))
-    ownership = ownership_pct(units, int(prop.total_units or 0))
-    jurisdiction = prop.country or getattr(prop, "city", None) or prop.location or "-"
-    cert_ref = certificate_reference(property_id, user_id)
-    issued = (now or dt.datetime.now(dt.UTC)).strftime("%b %d, %Y")
-
-    pdf = render_certificate_pdf(
-        holder=holder,
-        property_title=prop.title,
-        location=prop.location or "-",
-        units=units,
-        ownership=ownership,
-        value=f"${value:,.2f}",
-        # the listing's registered SPV; never a name made up from the title
-        spv=(prop.spv_name or "").strip() or "-",
-        jurisdiction=jurisdiction,
-        cert_ref=cert_ref,
-        issued=issued,
-    )
-    slug = prop.slug or str(prop.id)
-    return f"certificate-{slug}.pdf", pdf
+    slug = (prop.slug if prop else None) or str(property_id)
+    return f"certificate-{slug}.pdf", render_for(cert)
 
 
 async def build_all_zip(

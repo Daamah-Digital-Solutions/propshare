@@ -45,8 +45,9 @@ _SETTING_SPECS: dict[str, str] = {
     "family_reinvest_discount_pct": "pct",
     "family_transfer_fee_pct": "pct",
     "gift_fee_pct": "pct",
+    "transfer_fee_pct": "pct",
     "installment_fee_pct": "pct",
-    "broker_commission_pct": "pct",
+    "broker_commission_investment_pct": "pct",
     "reinvest_discount_pct": "pct",
     "pronova_discount_pct": "pct",
     "secondary_price_min_pct": "pct_open",
@@ -179,6 +180,9 @@ DEFAULTS: dict[str, str] = {
     # Inter-vivos gifting (Group 5). Default 0 — a gift isn't a sale (mirrors the family
     # transfer fee); charged to the giver at execution when > 0.
     "gift_fee_pct": "0",
+    # Transfers (client, 2026-10-28): units or balance to another person; default 0, paid by
+    # the sender when it is sent (returned with the transfer if it never arrives).
+    "transfer_fee_pct": "0",
     # Installment plans (Group 6). Fee applied to the down payment + each installment on the
     # under-construction path (owner-accepted; admin-configurable). Snapshotted onto a plan at
     # creation. Server-applied — the client never computes it.
@@ -191,10 +195,9 @@ DEFAULTS: dict[str, str] = {
     # FULL units, and the property books the FULL subtotal — the 5% is a platform-funded promo
     # subsidy (recorded per-investment). Server-applied; the client never computes it.
     "pronova_discount_pct": "5.0",
-    # Broker commissions (Phase 11). Percent of the PLATFORM REVENUE attributable to a
-    # referred client (purchase platform fee + rental mgmt fee), NEVER of the investment
-    # amount. Admin-editable live; each accrual snapshots the rate so history is immutable.
-    "broker_commission_pct": "10.0",
+    # Broker commission (client, 2026-10-28): percent of the INVESTMENT, for a property with
+    # no rate of its own (properties.broker_commission_pct).
+    "broker_commission_investment_pct": "1.5",
     # Manual, admin-settled withdrawals (Task 3). When true a withdrawal holds funds and waits
     # in the admin queue for mark-paid/reject (no Stripe Connect / NOWPayments payout call).
     "manual_payouts_enabled": "true",
@@ -301,12 +304,12 @@ async def get_family_settings(session: AsyncSession) -> dict[str, Decimal]:
 
 
 async def get_broker_commission_pct(session: AsyncSession) -> Decimal:
-    """Broker commission rate (percent of platform revenue from a referred client).
-    Single source of truth for the accrual calc + every display surface — no literals."""
+    """The general broker commission: percent of the investment, for a property with no rate of
+    its own. Server-authoritative."""
     try:
-        return Decimal(await get_setting(session, "broker_commission_pct"))
+        return Decimal(await get_setting(session, "broker_commission_investment_pct"))
     except (ArithmeticError, ValueError):
-        return Decimal("10.0")
+        return Decimal("0")
 
 
 async def get_reinvest_discount_pct(session: AsyncSession) -> Decimal:
@@ -333,6 +336,14 @@ async def get_gift_fee_pct(session: AsyncSession) -> Decimal:
     default 0 — a gift isn't a sale."""
     try:
         return Decimal(await get_setting(session, "gift_fee_pct"))
+    except (ArithmeticError, ValueError):
+        return Decimal("0")
+
+
+async def get_transfer_fee_pct(session: AsyncSession) -> Decimal:
+    """Transfer fee rate (percent of what is transferred), paid by the sender. Default 0."""
+    try:
+        return Decimal(await get_setting(session, "transfer_fee_pct"))
     except (ArithmeticError, ValueError):
         return Decimal("0")
 

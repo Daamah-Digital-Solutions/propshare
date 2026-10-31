@@ -27,6 +27,7 @@ from app.schemas.broker import (
     ClientInviteIn,
     CommissionItemOut,
     CommissionListOut,
+    CommissionRatesOut,
     ReferralCodeOut,
     ReferralItemOut,
     ReferralListOut,
@@ -48,6 +49,12 @@ async def referral_code(session: SessionDep, principal: BrokerRoleDep):
 @router.get("/dashboard", response_model=BrokerDashboardOut)
 async def dashboard(session: SessionDep, principal: BrokerRoleDep):
     return BrokerDashboardOut(**await broker_service.dashboard(session, principal.user_id))
+
+
+@router.get("/commission-rates", response_model=CommissionRatesOut)
+async def commission_rates(session: SessionDep, principal: BrokerRoleDep):
+    """What the broker earns on each property open for investment."""
+    return CommissionRatesOut(**await broker_service.commission_rates(session))
 
 
 @router.get("/referrals", response_model=ReferralListOut)

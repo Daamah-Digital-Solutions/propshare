@@ -29,6 +29,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.ratelimit import STATEMENT_LIMIT, limiter
 from app.models import Investment
+from app.schemas.certificates import MyCertificateOut, MyCertificatesOut
 from app.schemas.distribution import MyReturnsOut
 from app.schemas.investment import (
     InvestmentCreateIn,
@@ -232,6 +233,20 @@ async def my_returns(principal: PrincipalDep, session: SessionDep):
     return MyReturnsOut(**await distribution_service.my_returns(session, principal.user_id))
 
 
+@router.get("/certificates", response_model=MyCertificatesOut)
+async def my_certificates(principal: PrincipalDep, session: SessionDep):
+    """The caller's current certificate for every property they hold units in: its number,
+    verification code and the page its QR code opens (issued now where the units changed)."""
+    items = []
+    for cert in await certificate_service.certificates_for(session, principal.user_id):
+        items.append(
+            MyCertificateOut(
+                **certificate_service.certificate_dict(cert), property_title=cert.property_title
+            )
+        )
+    return MyCertificatesOut(items=items)
+
+
 @router.get("/certificates.zip")
 async def my_certificates_zip(principal: PrincipalDep, session: SessionDep):
     """A single .zip of the caller's certificates — one PDF per property they currently hold
@@ -247,7 +262,8 @@ async def my_certificates_zip(principal: PrincipalDep, session: SessionDep):
 @router.get("/certificate/{property_id}")
 async def my_certificate(property_id: uuid.UUID, principal: PrincipalDep, session: SessionDep):
     """A PDF certificate of the caller's CURRENT net holding in a property (live from the
-    ownership ledger; 404 if they hold none). Generated on demand — always current."""
+    ownership ledger; 404 if they hold none): the certificate stating their units now, with the
+    QR code of its verification page."""
     filename, pdf = await certificate_service.build_for_holding(
         session, user_id=principal.user_id, property_id=property_id
     )

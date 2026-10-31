@@ -70,6 +70,8 @@ DEEP_LINKS: dict[str, tuple[str, str]] = {
     "marketplace": ("/marketplace", "Browse properties"),
     "property": ("/property/{slug}", "Open the property page"),
     "developer": ("/developers/{slug}", "Open the developer's profile"),
+    # a certificate's verification page: the "slug" is its verification code
+    "certificate_verify": ("/verify/{slug}", "Verify this certificate"),
     "dashboard": ("/dashboard", "Open your dashboard"),
     "wallet": ("/dashboard?tab=wallet", "Open your wallet"),
     "deposit": ("/dashboard?tab=wallet", "Add funds from your wallet"),
@@ -96,6 +98,8 @@ DEEP_LINKS: dict[str, tuple[str, str]] = {
     "liquidity_market": ("/liquidity-market", "Liquidity provider market"),
     "exit": ("/exit-mechanisms", "How to exit an investment"),
     "notifications": ("/notifications", "Your notifications"),
+    "messages": ("/messages", "Your messages from the team"),
+    "transfers": ("/dashboard?tab=transfers", "Your transfers"),
     "support": ("/support", "Contact support"),
     "tickets": ("/support/tickets", "Your support tickets"),
     "fees": ("/fees", "Fees"),
@@ -110,7 +114,13 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,120}$")
 _DEV_SLUG_RE = re.compile(r"^[^\W_][\w-]{0,120}$")
 
 
+# a certificate's verification code (secrets.token_urlsafe(16): 22 characters)
+_CERT_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+
 def _slug_ok(route_id: str, slug: str) -> bool:
+    if route_id == "certificate_verify":
+        return bool(_CERT_CODE_RE.match(slug))
     pattern = _DEV_SLUG_RE if route_id == "developer" else _SLUG_RE
     return bool(pattern.match(slug))
 

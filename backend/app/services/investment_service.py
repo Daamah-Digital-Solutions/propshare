@@ -341,18 +341,16 @@ async def create_investment(
 
 
 async def _accrue_broker_commission(session: AsyncSession, inv: Investment) -> None:
-    """Phase-11 hook: the buyer's one-time platform fee is platform revenue. If the buyer
-    is a broker-referred client, accrue the broker's commission on it (idempotent on
-    inv.id; no-op when there's no referring broker). Safe to call unconditionally."""
-    fee = inv.platform_fee_amount
-    if fee is None or fee <= 0:
-        return
+    """If the buyer is a broker-referred client, accrue the broker's commission: a percentage
+    of the amount invested, at the property's rate (idempotent on inv.id; no-op when there's no
+    referring broker). Safe to call unconditionally."""
     await broker_service.accrue_commission(
         session,
         client_id=inv.user_id,
-        revenue_event_type=broker_service.REVENUE_PLATFORM_FEE,
+        revenue_event_type=broker_service.REVENUE_INVESTMENT,
         revenue_event_id=inv.id,
-        revenue_amount=fee,
+        revenue_amount=inv.amount,
+        property_id=inv.property_id,
     )
 
 

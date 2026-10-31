@@ -22,7 +22,7 @@ import uuid
 
 import pytest
 
-from app.services import distribution_service, email_service, notification_service
+from app.services import email_service, notification_service
 
 PW = "Passw0rd!23"
 _P_START = dt.date(2025, 1, 1)
@@ -314,17 +314,14 @@ async def test_broker_commission_notifies(client, db, asession):
     code = (await client.get("/api/v1/broker/referral-code", headers=_hdr(btoken))).json()["code"]
     await _register(client, "bkclient1@capimax.com", ref=code)
     cuid = uuid.UUID(str(_uid(db, "bkclient1@capimax.com")))
-    pid = _seed_property(db)
-    _grant_units(db, str(cuid), pid, 100)
-    await distribution_service.run_distribution(
+    from app.services import broker_service
+
+    await broker_service.accrue_commission(
         asession,
-        property_id=uuid.UUID(pid),
-        kind="rental",
-        period_key="2025",
-        period_start=_P_START,
-        period_end=_P_END,
-        gross_pool=decimal.Decimal("1000"),
-        created_by=None,
+        client_id=cuid,
+        revenue_event_type=broker_service.REVENUE_INVESTMENT,
+        revenue_event_id=uuid.uuid4(),
+        revenue_amount=decimal.Decimal("1000"),
     )
     await asession.commit()
     # broker got an in-app "Commission earned" + an email outbox row (was silent before)
@@ -407,6 +404,7 @@ async def test_preferences_default_and_update(client, db):
         "email_returns": True,
         "email_security_alerts": True,
         "email_new_properties": True,
+        "email_announcements": True,
     }
     # update one email pref + send a stray sms/push key that must be IGNORED
     up = await client.put(

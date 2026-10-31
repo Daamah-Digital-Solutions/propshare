@@ -54,7 +54,7 @@ async def release_waiting(session: AsyncSession, user_id: uuid.UUID) -> None:
     what is already tied to it. Called when the identity is verified and when the address
     is confirmed, whichever comes last; each part checks both and repeats nothing."""
     # imported here: these services reach back to this module
-    from app.services import estate_service, family_service, gift_service
+    from app.services import estate_service, family_service, gift_service, transfer_service
 
     closed = await session.scalar(select(User.closed_at).where(User.id == user_id))
     if closed is not None:
@@ -62,6 +62,7 @@ async def release_waiting(session: AsyncSession, user_id: uuid.UUID) -> None:
     await family_service.materialize_for_user(session, user_id=user_id)
     await estate_service.materialize_for_user(session, user_id=user_id)
     await gift_service.materialize_for_user(session, user_id=user_id)
+    await transfer_service.release_for_user(session, user_id=user_id)
 
 
 async def release_after_confirmation(session: AsyncSession, user_id: uuid.UUID) -> None:

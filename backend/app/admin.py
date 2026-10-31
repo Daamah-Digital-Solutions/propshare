@@ -33,10 +33,12 @@ from app.admin_distribution import DISTRIBUTION_VIEWS
 from app.admin_estate import ESTATE_VIEWS
 from app.admin_leads import BROKER_LEAD_VIEWS
 from app.admin_listing import ListingEditorView, is_full_admin
+from app.admin_messages import MESSAGE_VIEWS
 from app.admin_owner import OWNER_VIEWS, platform_listing_filter
 from app.admin_pages import PW_PAGE, TWO_FACTOR_PAGE
 from app.admin_pricing import PRICING_VIEWS
 from app.admin_sukuk import SUKUK_VIEWS
+from app.admin_transfers import TRANSFER_VIEWS
 from app.admin_withdrawals import WITHDRAWAL_VIEWS
 from app.core.audit import write_audit
 from app.core.config import get_settings
@@ -62,6 +64,7 @@ from app.models import (
     InstallmentPayment,
     InstallmentPlan,
     Investment,
+    InvestmentCertificate,
     KycVerification,
     LpExitRequest,
     LpPoolTier,
@@ -89,6 +92,7 @@ from app.models.identity import RoleGrantRequest, User
 from app.services import (
     account_service,
     auth_service,
+    certificate_service,
     distribution_service,
     document_service,
     kyc_service,
@@ -957,6 +961,61 @@ class DistributionItemAdmin(AdminOnlyModelView, model=DistributionItem):
     can_delete = False  # audit of who got paid what — read-only
 
 
+class InvestmentCertificateAdmin(AdminOnlyModelView, model=InvestmentCertificate):
+    name = "Investment Certificate"
+    name_plural = "Investment Certificates"
+    icon = "fa-solid fa-certificate"
+    # Every certificate issued (client, 2026-10-28): its QR code opens /verify/{code} on the
+    # site. Issued by the service when a holder downloads one; never typed in here.
+    column_list = [
+        InvestmentCertificate.number,
+        InvestmentCertificate.holder_name,
+        InvestmentCertificate.property_title,
+        InvestmentCertificate.units,
+        InvestmentCertificate.status,
+        InvestmentCertificate.issued_at,
+        InvestmentCertificate.verification_count,
+        InvestmentCertificate.last_verified_at,
+    ]
+    column_details_exclude_list = [InvestmentCertificate.signature]
+    column_searchable_list = [InvestmentCertificate.number, InvestmentCertificate.holder_name]
+    column_sortable_list = [InvestmentCertificate.issued_at, InvestmentCertificate.status]
+    column_default_sort = [(InvestmentCertificate.issued_at, True)]
+    column_labels = {
+        InvestmentCertificate.number: "Number",
+        InvestmentCertificate.holder_name: "Holder",
+        InvestmentCertificate.property_title: "Property",
+        InvestmentCertificate.verification_count: "Times verified",
+    }
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+    @action(
+        name="revoke_certificate",
+        label="Revoke (its page shows it revoked)",
+        confirmation_message=(
+            "Revoke the selected certificate(s)? Their verification page will say they were "
+            "revoked by Capimax PropShare. The holding is not touched: the holder's next "
+            "download is a new certificate."
+        ),
+        add_in_detail=True,
+        add_in_list=True,
+    )
+    async def revoke_certificate(self, request: Request) -> RedirectResponse:
+        pks = [p for p in request.query_params.get("pks", "").split(",") if p]
+        actor = request.session.get("admin_id")
+        async with session_scope() as session:
+            for pk in pks:
+                await certificate_service.revoke(
+                    session,
+                    certificate_id=uuid.UUID(pk),
+                    actor_id=uuid.UUID(actor) if actor else None,
+                    reason="Withdrawn; the holder's current certificate replaces it",
+                )
+        return _back(request)
+
+
 class WithdrawalAdmin(AdminOnlyModelView, model=Withdrawal):
     name = "Withdrawal"
     icon = "fa-solid fa-money-bill-transfer"
@@ -1455,6 +1514,7 @@ class NotificationPreferenceAdmin(AdminOnlyModelView, model=NotificationPreferen
         NotificationPreference.email_returns,
         NotificationPreference.email_security_alerts,
         NotificationPreference.email_new_properties,
+        NotificationPreference.email_announcements,
     ]
     can_create = False
     can_edit = False
@@ -2059,6 +2119,7 @@ def setup_admin(app) -> Admin:
         DistributionAdmin,
         DistributionItemAdmin,
         WithdrawalAdmin,
+        InvestmentCertificateAdmin,
         PlatformBankAccountAdmin,
         BankDepositClaimAdmin,
         UserBankAccountAdmin,
@@ -2095,6 +2156,8 @@ def setup_admin(app) -> Admin:
         *ESTATE_VIEWS,
         *DISTRIBUTION_VIEWS,
         *WITHDRAWAL_VIEWS,
+        *MESSAGE_VIEWS,
+        *TRANSFER_VIEWS,
         *SUKUK_VIEWS,
         *PRICING_VIEWS,
         PasswordChangeView,

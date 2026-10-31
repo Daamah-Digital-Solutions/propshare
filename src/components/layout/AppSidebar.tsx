@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { chooseLanguage, currentLanguage, LANGUAGES, type Language } from "@/lib/i18n/language";
 import {
   Home,
   Store,
@@ -57,6 +58,8 @@ import {
   BarChart3,
   FolderOpen,
   Bell,
+  Mail,
+  Send,
   Settings,
   LogOut,
   Calendar,
@@ -173,6 +176,7 @@ const investorNavigation: NavSection[] = [
       { title: "Documents Center", url: "/dashboard?tab=documents", icon: FolderOpen },
       { title: "Verification Center", url: "/dashboard?tab=verification", icon: ShieldCheck },
       { title: "Wallet", url: "/dashboard?tab=wallet", icon: Wallet },
+      { title: "Transfers", url: "/dashboard?tab=transfers", icon: Send },
       { title: "Property Types", url: "/property-types", icon: Layers },
       { title: "Secondary Market", url: "/secondary-market", icon: ArrowLeftRight },
       { title: "Liquidity Provider Market", url: "/liquidity-market", icon: Droplets },
@@ -183,6 +187,7 @@ const investorNavigation: NavSection[] = [
     label: "Account",
     items: [
       { title: "KYC Verification", url: "/kyc", icon: UserCheck },
+      { title: "Messages", url: "/messages", icon: Mail },
       { title: "Notifications", url: "/notifications", icon: Bell },
       { title: "Support", url: "/support", icon: HeadphonesIcon },
       { title: "Report a Death / Claim", url: "/estate-claim", icon: ScrollText },
@@ -213,6 +218,7 @@ const ownerNavigation: NavSection[] = [
     label: "Account",
     items: [
       { title: "KYC Verification", url: "/kyc", icon: UserCheck },
+      { title: "Messages", url: "/messages", icon: Mail },
       { title: "Notifications", url: "/notifications", icon: Bell },
       { title: "Account Settings", url: "/settings", icon: Settings },
     ],
@@ -241,6 +247,7 @@ const liquidityProviderNavigation: NavSection[] = [
     label: "Account",
     items: [
       { title: "KYC Verification", url: "/kyc", icon: UserCheck },
+      { title: "Messages", url: "/messages", icon: Mail },
       { title: "Notifications", url: "/notifications", icon: Bell },
       { title: "Account Settings", url: "/settings", icon: Settings },
     ],
@@ -266,6 +273,7 @@ const brokerNavigation: NavSection[] = [
     label: "Account",
     items: [
       { title: "KYC Verification", url: "/kyc", icon: UserCheck },
+      { title: "Messages", url: "/messages", icon: Mail },
       { title: "Notifications", url: "/notifications", icon: Bell },
       { title: "Account Settings", url: "/settings", icon: Settings },
     ],
@@ -292,6 +300,7 @@ const developerNavigation: NavSection[] = [
     label: "Account",
     items: [
       { title: "KYC Verification", url: "/kyc", icon: UserCheck },
+      { title: "Messages", url: "/messages", icon: Mail },
       { title: "Notifications", url: "/notifications", icon: Bell },
       { title: "Account Settings", url: "/settings", icon: Settings },
     ],
@@ -596,13 +605,16 @@ export function AppSidebar() {
               <Globe className="h-4 w-4" />
               <span>Language</span>
             </div>
-            <Select defaultValue="en">
-              <SelectTrigger className="w-20 h-8 text-xs">
+            <Select value={currentLanguage()} onValueChange={(v) => chooseLanguage(v as Language)}>
+              <SelectTrigger className="w-20 h-8 text-xs" aria-label="Language" translate="no">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="en">EN</SelectItem>
-                <SelectItem value="ar">AR</SelectItem>
+              <SelectContent translate="no">
+                {LANGUAGES.map((l) => (
+                  <SelectItem key={l.code} value={l.code} aria-label={l.name}>
+                    {l.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

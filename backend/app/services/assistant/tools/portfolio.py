@@ -50,6 +50,7 @@ _HELD_BACK_WHY = {
         "over the remaining installments)"
     ),
     "pledged": "pledged to Nova Finance for a Nova Sukuk certificate",
+    "transfer": "sent to another person in a transfer that has not been delivered yet",
 }
 
 

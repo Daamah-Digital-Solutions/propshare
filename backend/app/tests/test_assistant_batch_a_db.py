@@ -185,6 +185,7 @@ async def test_role_tools_refuse_other_roles_and_leak_nothing(client, db, asessi
         "email_returns": True,
         "email_security_alerts": True,
         "email_new_properties": True,
+        "email_announcements": True,
     }
     broker_out = await _run(asession, bctx, "get_my_broker_activity")
     assert broker_out == {"referrals": [], "commissions": [], "commissions_total_count": 0}
@@ -308,6 +309,7 @@ async def test_update_notification_preferences_changes_only_the_given_keys(
         "email_returns": False,
         "email_security_alerts": True,
         "email_new_properties": False,
+        "email_announcements": True,
     }
 
 

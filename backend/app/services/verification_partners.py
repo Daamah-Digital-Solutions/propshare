@@ -1,13 +1,16 @@
-"""Where each kind of Capimax record is verified: the ecosystem's designated partners.
+"""Where each kind of Capimax record is verified.
 
-PropShare verifies nothing itself. The client named five services (2026-10-01), each for one
-kind of record; the Verification Center page lists them and the assistant sends a user to the
-one that matches what they hold, with what to enter there and the link. The wording is the
-client's own.
+The client named five services (2026-10-01), each for one kind of record; the Verification
+Center page lists them and the assistant sends a user to the one that matches what they hold,
+with what to enter there and the link. The wording is the client's own.
+
+The first is PropShare's own (client, 2026-10-28, as on Capimax BRX): an investment certificate
+carries a QR code that opens its verification page here, ``/verify/{code}``; CIM Global
+Financial is no longer the way to verify a certificate. The other four are partners' sites.
 
 The SPA keeps the same five in ``src/lib/verificationPartners.ts`` (test_verification_services
-keeps the two in step), and these URLs are the only links outside the platform the assistant
-may hand out.
+keeps the two in step), and the partners' URLs are the only links outside the platform the
+assistant may hand out.
 """
 
 from __future__ import annotations
@@ -27,24 +30,28 @@ class VerificationService:
     url: str
     # what the partner's page looks like today, for the assistant only (never on the page)
     tip: str | None = None
+    # checked on PropShare itself: ``url`` is a path of the site, not a partner's link
+    internal: bool = False
 
 
 SERVICES: tuple[VerificationService, ...] = (
     VerificationService(
-        key="capimax_documents",
-        title="Capimax Documents & Investment Certificates",
-        provider="CIM Global Financial",
+        key="capimax_certificates",
+        title="Capimax PropShare Investment Certificates",
+        provider="Capimax PropShare",
         verifies=(
-            "Capimax-issued documents, investment certificates, official records and other "
-            "ecosystem documents."
+            "Investment certificates issued on Capimax PropShare: whether a certificate is "
+            "authentic and its current status."
         ),
         how_to_verify=(
-            "Enter the Verification Number, Record Number, Certificate Number, or scan the QR "
-            "Code to confirm authenticity and current verification status."
+            "Scan the QR code printed on the certificate with your phone's camera: it opens the "
+            "certificate's verification page on Capimax PropShare. Can't scan it? Enter the "
+            "verification code shown beside the QR code on the Verification Center."
         ),
-        action="Verify Document / Certificate",
-        link_label="Open Capimax Verify — CIM Global Financial",
-        url="https://www.cimglobalfinancial.com/capimax-verify",
+        action="Verify Certificate",
+        link_label="Verify a certificate",
+        url="/verification-center",
+        internal=True,
     ),
     VerificationService(
         key="valuation_financial",
@@ -115,9 +122,9 @@ SERVICES: tuple[VerificationService, ...] = (
     ),
 )
 
-# url -> the label of the first service using it (two services share CIM's Capimax Verify)
-LINK_LABELS: dict[str, str] = {s.url: s.link_label for s in reversed(SERVICES)}
+# a partner's url -> its label (the partners' sites only: the certificate check is ours)
+LINK_LABELS: dict[str, str] = {s.url: s.link_label for s in reversed(SERVICES) if not s.internal}
 URLS: frozenset[str] = frozenset(LINK_LABELS)
 BY_KEY: dict[str, VerificationService] = {s.key: s for s in SERVICES}
-# where a holder verifies the investment certificate PropShare issues (by its reference)
-CERTIFICATES: VerificationService = BY_KEY["capimax_documents"]
+# how a PropShare investment certificate is verified: its QR code / verification code, here
+CERTIFICATES: VerificationService = BY_KEY["capimax_certificates"]

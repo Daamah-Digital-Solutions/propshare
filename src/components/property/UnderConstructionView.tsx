@@ -194,9 +194,11 @@ interface Props {
   sidebarExtra?: ReactNode;
   preview?: string | null;
   fees: { platformFee: number; managementFee: number; installmentFee: number; performanceFee: number | null; exitFee: number | null };
+  /** A broker sees what they earn on this property; nobody else gets one. */
+  brokerRate?: string;
 }
 
-export default function UnderConstructionView({ detail, investPanel, documentsPanel, sidebarExtra, preview, fees }: Props) {
+export default function UnderConstructionView({ detail, investPanel, documentsPanel, sidebarExtra, preview, fees, brokerRate }: Props) {
   const c = obj(detail.content);
   const dev = obj(c.developer);
   const spv = obj(c.spv);
@@ -730,6 +732,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                     {offersPlan && <Row label="Installment Fee (per payment)" value={`${fees.installmentFee}%`} />}
                     {fees.performanceFee != null && <Row label="Performance Fee (on profits)" value={`${fees.performanceFee}%`} />}
                     {fees.exitFee != null && <Row label="Exit Fee (on secondary sales)" value={`${fees.exitFee}%`} />}
+                    {brokerRate && <Row label="Your Commission as a Broker" value={`${brokerRate}% of the investment`} />}
                   </div>
                 </SectionCard>
 

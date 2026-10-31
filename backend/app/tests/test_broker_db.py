@@ -1,7 +1,7 @@
 """Phase 11 — DB-backed broker referrals & commissions tests (the money gates).
 
 Acceptance bar:
-  1.  commission = pct × ACTUAL platform revenue (platform fee + mgmt fee), never the
+  1.  commission = the property's rate (or the general one) × the amount invested, never the
       investment amount.
   2.  no accrual at signup (link only).
   3.  accrual on each revenue event (purchase + each rental period).
@@ -140,57 +140,108 @@ async def _run_rental(asession, pid: str, *, period_key: str, gross="1000") -> d
 
 
 # =========================================================================== #
-# 1. commission = pct × ACTUAL platform revenue, never the investment amount
+# 1. commission = the property's rate, or the general one, x the amount invested
 # =========================================================================== #
 @pytest.mark.asyncio
-async def test_commission_is_pct_of_platform_revenue_not_investment(client, db, asession):
+async def test_commission_is_a_percentage_of_the_investment(client, db, asession):
     btoken, buid = await _make_broker(client, db, "broker1@capimax.com")
     code = await _broker_code(client, btoken)
     ctoken = await _register(client, "client1@capimax.com", ref=code)
     cuid = _uid(db, "client1@capimax.com")
     _verify_kyc(db, cuid)
-    pid = _seed_property(db)
+    general, own = _seed_property(db), _seed_property(db)
+    db("UPDATE properties SET broker_commission_pct=4 WHERE id=:p", p=own)
     _fund_wallet(db, cuid, 5000)
 
-    # Buy $1000 of units: subtotal 1000, platform fee 2.5% = 25.00.
-    r = await client.post(
-        "/api/v1/investments",
-        json={"property_id": pid, "amount": 1000, "method": "wallet"},
-        headers=_hdr(ctoken, "auto"),
-    )
-    assert r.status_code == 200, r.text
+    for pid in (general, own):
+        r = await client.post(
+            "/api/v1/investments",
+            json={"property_id": pid, "amount": 1000, "method": "wallet"},
+            headers=_hdr(ctoken, "auto"),
+        )
+        assert r.status_code == 200, r.text
 
     rows = db(
         "SELECT revenue_event_type, revenue_amount, commission_rate, commission_amount "
-        "FROM broker_commissions WHERE broker_id=:b",
+        "FROM broker_commissions WHERE broker_id=:b ORDER BY commission_amount",
         b=buid,
     )
-    assert len(rows) == 1
-    ev_type, revenue, rate, commission = rows[0]
-    assert ev_type == "investment_platform_fee"
-    assert decimal.Decimal(revenue) == decimal.Decimal("25.00")  # the platform fee
-    assert decimal.Decimal(rate) == decimal.Decimal("10.0")
-    assert decimal.Decimal(commission) == decimal.Decimal("2.50")  # 10% × 25 platform fee
-    # NEVER a percent of the investment amount (10% × 1000 would be 100).
-    assert decimal.Decimal(commission) != decimal.Decimal("100.00")
+    assert [(r[0], str(r[1]), str(r[3])) for r in rows] == [
+        ("investment", "1000.00", "15.00"),  # the general 1.5%
+        ("investment", "1000.00", "40.00"),  # this property's own 4%
+    ]
+    assert decimal.Decimal(rows[0][2]) == decimal.Decimal("1.5")
+    assert decimal.Decimal(rows[1][2]) == decimal.Decimal("4")
+    assert db("SELECT balance FROM wallets WHERE user_id=:b", b=buid)[0][0] == decimal.Decimal(
+        "55.00"
+    )
+    # the client pays nothing more for having a broker: 2,000 + the 2.5% platform fee
+    assert db("SELECT balance FROM wallets WHERE user_id=:c", c=cuid)[0][0] == decimal.Decimal(
+        "2950.00"
+    )
+    # a rate of 0 on a property: no commission
+    zero = _seed_property(db)
+    db("UPDATE properties SET broker_commission_pct=0 WHERE id=:p", p=zero)
+    r = await client.post(
+        "/api/v1/investments",
+        json={"property_id": zero, "amount": 500, "method": "wallet"},
+        headers=_hdr(ctoken, "auto"),
+    )
+    assert (
+        r.status_code == 200
+        and len(db("SELECT 1 FROM broker_commissions WHERE broker_id=:b", b=buid)) == 2
+    )
 
-    # And the recurring mgmt-fee event is also pct × the withheld fee, not units value.
-    res = await _run_rental(asession, pid, period_key="2025")
-    mgmt_fee = db(
-        "SELECT management_fee FROM distribution_items WHERE user_id=:u AND distribution_id=:d",
-        u=cuid,
-        d=res["distribution_id"],
-    )[0][0]
-    mrow = db(
-        "SELECT commission_amount FROM broker_commissions "
-        "WHERE broker_id=:b AND revenue_event_type='distribution_mgmt_fee'",
+    # the broker sees what they earn on each property
+    rates = (await client.get("/api/v1/broker/commission-rates", headers=_hdr(btoken))).json()
+    assert rates["general_rate"] == "1.5"
+    by_id = {i["property_id"]: i for i in rates["items"]}
+    assert (by_id[general]["rate"], by_id[general]["own_rate"]) == ("1.5", False)
+    assert (by_id[own]["rate"], by_id[own]["own_rate"]) == ("4", True)
+    dash = (await client.get("/api/v1/broker/dashboard", headers=_hdr(btoken))).json()
+    assert dash["commission_rate"] == "1.5"
+
+
+@pytest.mark.asyncio
+async def test_commission_on_an_installment_plan_follows_each_payment(client, db, asession):
+    _btoken, buid = await _make_broker(client, db, "broker1p@capimax.com")
+    code = await _broker_code(client, _btoken)
+    ctoken = await _register(client, "client1p@capimax.com", ref=code)
+    cuid = _uid(db, "client1p@capimax.com")
+    _verify_kyc(db, cuid)
+    pid = _seed_property(db)
+    db("UPDATE properties SET model='installment', broker_commission_pct=2 WHERE id=:p", p=pid)
+    _fund_wallet(db, cuid, 5000)
+    plan = await client.post(
+        "/api/v1/installments",
+        json={"property_id": pid, "amount": 1000, "duration_months": 6, "method": "wallet"},
+        headers=_hdr(ctoken, "auto"),
+    )
+    assert plan.status_code == 201, plan.text
+    rows = db(
+        "SELECT revenue_event_type, revenue_amount, commission_amount FROM broker_commissions "
+        "WHERE broker_id=:b",
         b=buid,
     )
-    assert len(mrow) == 1
-    expected = (
-        decimal.Decimal(mgmt_fee) * decimal.Decimal("10") / decimal.Decimal("100")
-    ).quantize(decimal.Decimal("0.01"))
-    assert decimal.Decimal(mrow[0][0]) == expected
+    pays = db(
+        "SELECT id, base_amount FROM installment_payments WHERE plan_id=:p ORDER BY seq",
+        p=plan.json()["id"],
+    )
+    cent = decimal.Decimal("0.01")
+    assert [(r[0], r[1]) for r in rows] == [("installment_payment", pays[0][1])]
+    assert rows[0][2] == (pays[0][1] * decimal.Decimal("0.02")).quantize(cent)
+
+    # each later payment earns on its own principal, once
+    r = await client.post(
+        f"/api/v1/installments/payments/{pays[1][0]}/pay", headers=_hdr(ctoken, "auto2")
+    )
+    assert r.status_code in (200, 201), r.text
+    assert len(db("SELECT 1 FROM broker_commissions WHERE broker_id=:b", b=buid)) == 2
+    bal = db("SELECT balance FROM wallets WHERE user_id=:b", b=buid)[0][0]
+    led = db("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE user_id=:b", b=buid)[0][0]
+    assert bal == led and bal == ((pays[0][1] + pays[1][1]) * decimal.Decimal("0.02")).quantize(
+        cent
+    )
 
 
 # =========================================================================== #
@@ -211,10 +262,10 @@ async def test_no_accrual_at_signup(client, db):
 
 
 # =========================================================================== #
-# 3. accrual on each revenue event (purchase + each rental period)
+# 3. one accrual per purchase; a distribution pays the broker nothing (2026-10-28)
 # =========================================================================== #
 @pytest.mark.asyncio
-async def test_accrual_on_each_revenue_event(client, db, asession):
+async def test_accrual_on_each_purchase_and_none_on_distributions(client, db, asession):
     btoken, buid = await _make_broker(client, db, "broker3@capimax.com")
     code = await _broker_code(client, btoken)
     ctoken = await _register(client, "client3@capimax.com", ref=code)
@@ -223,11 +274,12 @@ async def test_accrual_on_each_revenue_event(client, db, asession):
     pid = _seed_property(db)
     _fund_wallet(db, cuid, 5000)
 
-    await client.post(
-        "/api/v1/investments",
-        json={"property_id": pid, "amount": 1000, "method": "wallet"},
-        headers=_hdr(ctoken, "auto"),
-    )
+    for _ in range(2):
+        await client.post(
+            "/api/v1/investments",
+            json={"property_id": pid, "amount": 1000, "method": "wallet"},
+            headers=_hdr(ctoken, "auto"),
+        )
     await _run_rental(asession, pid, period_key="2025-Q1")
     await _run_rental(asession, pid, period_key="2025-Q2")
 
@@ -235,69 +287,36 @@ async def test_accrual_on_each_revenue_event(client, db, asession):
         "SELECT revenue_event_type, revenue_event_id FROM broker_commissions WHERE broker_id=:b",
         b=buid,
     )
-    # 1 purchase platform-fee + 2 rental mgmt-fee = 3 distinct revenue events.
-    assert len(rows) == 3
-    assert {t for t, _ in rows} == {"investment_platform_fee", "distribution_mgmt_fee"}
-    assert len({eid for _, eid in rows}) == 3
+    assert len(rows) == 2 and {t for t, _ in rows} == {"investment"}
+    assert len({eid for _, eid in rows}) == 2
 
 
 # =========================================================================== #
-# 4 & 5. stops on full exit; no clawback
+# 4 & 5. a full exit claws nothing back
 # =========================================================================== #
 @pytest.mark.asyncio
-async def test_stops_on_exit_and_no_clawback(client, db, asession):
+async def test_no_clawback_on_exit(client, db, asession):
     btoken, buid = await _make_broker(client, db, "broker4@capimax.com")
     code = await _broker_code(client, btoken)
-    await _register(client, "client4@capimax.com", ref=code)
+    ctoken = await _register(client, "client4@capimax.com", ref=code)
     cuid = _uid(db, "client4@capimax.com")
-    # A non-referred bystander co-owner keeps the property distributable after the client
-    # exits (so the second run is a clean "no commission", not a NO_OWNERS error).
-    await _register(client, "bystander4@capimax.com")
-    byid = _uid(db, "bystander4@capimax.com")
+    _verify_kyc(db, cuid)
     pid = _seed_property(db)
-    _grant_units(db, cuid, pid, 100)
-    _grant_units(db, byid, pid, 100)
-
-    await _run_rental(asession, pid, period_key="2025")  # accrues on the mgmt fee
-    before = db("SELECT COUNT(*) FROM broker_commissions WHERE broker_id=:b", b=buid)[0][0]
-    bal_before = decimal.Decimal(db("SELECT balance FROM wallets WHERE user_id=:b", b=buid)[0][0])
-    assert before == 1
-    assert bal_before > 0
-
-    # Full exit: net ownership goes to zero (a -100 secondary_sale row conserves nothing held).
-    _grant_units(db, cuid, pid, -100, reason="secondary_sale")
-    assert (
-        db("SELECT COALESCE(SUM(units),0) FROM ownership_ledger WHERE user_id=:u", u=cuid)[0][0]
-        == 0
+    _fund_wallet(db, cuid, 5000)
+    await client.post(
+        "/api/v1/investments",
+        json={"property_id": pid, "amount": 1000, "method": "wallet"},
+        headers=_hdr(ctoken, "auto"),
     )
-
-    await _run_rental(asession, pid, period_key="2026")  # no units -> no fee -> no commission
-    after = db("SELECT COUNT(*) FROM broker_commissions WHERE broker_id=:b", b=buid)[0][0]
-    bal_after = decimal.Decimal(db("SELECT balance FROM wallets WHERE user_id=:b", b=buid)[0][0])
-    assert after == 1  # stopped — no new accrual
-    assert bal_after == bal_before  # no clawback — prior commission stays
+    bal_before = db("SELECT balance FROM wallets WHERE user_id=:b", b=buid)[0][0]
+    assert bal_before == decimal.Decimal("15.00")
+    _grant_units(db, cuid, pid, -10, reason="secondary_sale")
+    assert db("SELECT balance FROM wallets WHERE user_id=:b", b=buid)[0][0] == bal_before
 
 
 # =========================================================================== #
 # 6. idempotent — one revenue event → one accrual
 # =========================================================================== #
-@pytest.mark.asyncio
-async def test_idempotent_distribution_rerun(client, db, asession):
-    btoken, buid = await _make_broker(client, db, "broker6@capimax.com")
-    code = await _broker_code(client, btoken)
-    await _register(client, "client6@capimax.com", ref=code)
-    cuid = _uid(db, "client6@capimax.com")
-    pid = _seed_property(db)
-    _grant_units(db, cuid, pid, 100)
-
-    await _run_rental(asession, pid, period_key="2025")
-    from app.core.errors import AppError
-
-    with pytest.raises(AppError):  # re-running the SAME period is refused (409)
-        await _run_rental(asession, pid, period_key="2025")
-    assert db("SELECT COUNT(*) FROM broker_commissions WHERE broker_id=:b", b=buid)[0][0] == 1
-
-
 @pytest.mark.asyncio
 async def test_accrue_is_idempotent_on_same_event(client, db, asession):
     btoken, buid = await _make_broker(client, db, "broker6b@capimax.com")
@@ -309,7 +328,7 @@ async def test_accrue_is_idempotent_on_same_event(client, db, asession):
     await broker_service.accrue_commission(
         asession,
         client_id=cuid,
-        revenue_event_type="distribution_mgmt_fee",
+        revenue_event_type="investment",
         revenue_event_id=event,
         revenue_amount=decimal.Decimal("100"),
     )
@@ -317,7 +336,7 @@ async def test_accrue_is_idempotent_on_same_event(client, db, asession):
     second = await broker_service.accrue_commission(
         asession,
         client_id=cuid,
-        revenue_event_type="distribution_mgmt_fee",
+        revenue_event_type="investment",
         revenue_event_id=event,  # SAME event
         revenue_amount=decimal.Decimal("100"),
     )
@@ -327,7 +346,7 @@ async def test_accrue_is_idempotent_on_same_event(client, db, asession):
     # broker credited exactly once
     assert decimal.Decimal(
         db("SELECT balance FROM wallets WHERE user_id=:b", b=buid)[0][0]
-    ) == decimal.Decimal("10.00")
+    ) == decimal.Decimal("1.50")
 
 
 # =========================================================================== #
@@ -337,25 +356,25 @@ async def test_accrue_is_idempotent_on_same_event(client, db, asession):
 async def test_admin_rate_change_snapshot(client, db, asession):
     btoken, buid = await _make_broker(client, db, "broker7@capimax.com")
     code = await _broker_code(client, btoken)
-    await _register(client, "client7@capimax.com", ref=code)
+    ctoken = await _register(client, "client7@capimax.com", ref=code)
     cuid = _uid(db, "client7@capimax.com")
+    _verify_kyc(db, cuid)
     pid = _seed_property(db)
-    _grant_units(db, cuid, pid, 100)
+    _fund_wallet(db, cuid, 5000)
 
-    _set_setting(db, "broker_commission_pct", "10.0")
-    await _run_rental(asession, pid, period_key="2025-P1")
-    _set_setting(db, "broker_commission_pct", "20.0")
-    await _run_rental(asession, pid, period_key="2025-P2")
-
-    rates = {
-        eid: decimal.Decimal(rate)
-        for eid, rate in db(
-            "SELECT revenue_event_id, commission_rate FROM broker_commissions WHERE broker_id=:b",
-            b=buid,
+    for rate in ("1.5", "3"):
+        _set_setting(db, "broker_commission_investment_pct", rate)
+        await client.post(
+            "/api/v1/investments",
+            json={"property_id": pid, "amount": 100, "method": "wallet"},
+            headers=_hdr(ctoken, "auto"),
         )
-    }
-    assert sorted(rates.values()) == [decimal.Decimal("10.0"), decimal.Decimal("20.0")]
-    # The first row keeps its 10.0 snapshot — the rate change is NOT retroactive.
+    rates = sorted(
+        decimal.Decimal(r[0])
+        for r in db("SELECT commission_rate FROM broker_commissions WHERE broker_id=:b", b=buid)
+    )
+    # The first row keeps its 1.5 snapshot — the rate change is NOT retroactive.
+    assert rates == [decimal.Decimal("1.5"), decimal.Decimal("3")]
 
 
 # =========================================================================== #
@@ -423,27 +442,6 @@ async def test_structural_cap_check(client, db):
 # 10. atomicity (accrual inside the distribution tx) + balance == SUM(ledger)
 # =========================================================================== #
 @pytest.mark.asyncio
-async def test_distribution_rolls_back_if_accrual_fails(client, db, asession, monkeypatch):
-    btoken, buid = await _make_broker(client, db, "broker10@capimax.com")
-    code = await _broker_code(client, btoken)
-    await _register(client, "client10@capimax.com", ref=code)
-    cuid = _uid(db, "client10@capimax.com")
-    pid = _seed_property(db)
-    _grant_units(db, cuid, pid, 100)
-
-    async def _boom(*a, **k):
-        raise RuntimeError("injected accrual failure")
-
-    monkeypatch.setattr(broker_service, "accrue_commission", _boom)
-    with pytest.raises(RuntimeError):
-        await _run_rental(asession, pid, period_key="2025")
-    await asession.rollback()
-    # Whole run rolled back: no distribution, no items, no credits.
-    assert db("SELECT COUNT(*) FROM distributions WHERE property_id=:p", p=pid)[0][0] == 0
-    assert db("SELECT COUNT(*) FROM broker_commissions WHERE broker_id=:b", b=buid)[0][0] == 0
-
-
-@pytest.mark.asyncio
 async def test_broker_balance_equals_ledger(client, db, asession):
     btoken, buid = await _make_broker(client, db, "broker10b@capimax.com")
     code = await _broker_code(client, btoken)
@@ -457,7 +455,6 @@ async def test_broker_balance_equals_ledger(client, db, asession):
         json={"property_id": pid, "amount": 1000, "method": "wallet"},
         headers=_hdr(ctoken, "auto"),
     )
-    await _run_rental(asession, pid, period_key="2025")
     bal = decimal.Decimal(db("SELECT balance FROM wallets WHERE user_id=:b", b=buid)[0][0])
     ledger = decimal.Decimal(
         db("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE user_id=:b", b=buid)[0][0]
@@ -513,8 +510,9 @@ async def test_no_deadlock_concurrent_shared_broker(client, db, _test_db):
     finally:
         await engine.dispose()
 
-    # Both runs completed; the broker earned a mgmt-fee commission on the client in each.
-    assert db("SELECT COUNT(*) FROM broker_commissions WHERE broker_id=:b", b=buid)[0][0] == 2
+    # Both runs completed; a distribution pays the broker no commission.
+    assert db("SELECT COUNT(*) FROM distributions")[0][0] == 2
+    assert db("SELECT COUNT(*) FROM broker_commissions WHERE broker_id=:b", b=buid)[0][0] == 0
 
 
 # =========================================================================== #

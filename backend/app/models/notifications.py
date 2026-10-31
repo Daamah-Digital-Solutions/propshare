@@ -40,6 +40,10 @@ class NotificationPreference(Base):
     email_new_properties: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="true"
     )
+    # messages the platform team sends to a whole group (alembic/0039)
+    email_announcements: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )

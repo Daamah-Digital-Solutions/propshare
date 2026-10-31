@@ -1,9 +1,11 @@
 /**
- * The Capimax ecosystem's designated verification partners (client text, 2026-10-01), shown on
- * the Verification Center page and in the dashboard's Verification tab. PropShare verifies
- * nothing itself: each kind of record is checked on its partner's own site.
+ * Where each kind of Capimax record is verified (client text, 2026-10-01), shown on the
+ * Verification Center page and in the dashboard's Verification tab. The first is PropShare's
+ * own (client, 2026-10-28, as on Capimax BRX): an investment certificate's QR code opens its
+ * verification page here, /verify/{code}; it is no longer checked at CIM Global Financial. The
+ * other four are partners' sites.
  *
- * The backend keeps the same five for the assistant, which may link exactly these URLs
+ * The backend keeps the same five for the assistant, which may link exactly the partners' URLs
  * (backend/app/services/verification_partners.py); test_verification_services.py keeps the
  * two lists in step. The blockchain wording of the fifth entry is about the ecosystem's
  * blockchain-enabled platforms (Capimax BRX, Capimax RT), never about PropShare units.
@@ -20,6 +22,8 @@ export interface VerificationPartner {
   action: string;
   linkLabel: string;
   url: string;
+  /** Checked on PropShare itself (url is a page of the site, not a partner's link). */
+  internal?: boolean;
 }
 
 export const VERIFY_INTRO = {
@@ -40,19 +44,21 @@ export const INDEPENDENT_VERIFICATION = {
 
 export const VERIFICATION_PARTNERS: VerificationPartner[] = [
   {
-    key: "capimax_documents",
-    title: "Capimax Documents & Investment Certificates",
-    provider: "CIM Global Financial",
-    providerLine: "Powered by CIM Global Financial",
+    key: "capimax_certificates",
+    title: "Capimax PropShare Investment Certificates",
+    provider: "Capimax PropShare",
+    providerLine: "Verified on Capimax PropShare by QR code",
     description:
-      "Verify Capimax-issued documents, investment certificates, official records and other " +
-      "ecosystem documents.",
+      "Every investment certificate issued on Capimax PropShare carries its own QR code. " +
+      "Scanning it opens the certificate's verification page here on the platform, showing " +
+      "whether it is authentic and its current status.",
     howTo:
-      "Enter the Verification Number, Record Number, Certificate Number, or scan the QR Code to " +
-      "confirm authenticity and current verification status.",
-    action: "Verify Document / Certificate",
-    linkLabel: "Open Capimax Verify — CIM Global Financial",
-    url: "https://www.cimglobalfinancial.com/capimax-verify",
+      "Scan the QR code printed on the certificate with your phone's camera. Can't scan it? " +
+      "Enter the verification code shown beside the QR code below.",
+    action: "Verify Certificate",
+    linkLabel: "Verify a certificate",
+    url: "/verification-center",
+    internal: true,
   },
   {
     key: "valuation_financial",
@@ -117,7 +123,7 @@ export const VERIFICATION_PARTNERS: VerificationPartner[] = [
   },
 ];
 
-/** Where a holder verifies the investment certificate PropShare issues, by its reference
+/** How an investment certificate PropShare issues is verified: its QR code, here
  * (the backend's verification_partners.CERTIFICATES). */
 export const CERTIFICATE_PARTNER = VERIFICATION_PARTNERS[0];
 

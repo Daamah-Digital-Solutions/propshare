@@ -27,6 +27,7 @@ from app.services import (
     milestone_service,
     notification_service,
     property_service,
+    transfer_service,
 )
 from app.services.assistant import guard
 from app.services.assistant.context import AgentContext
@@ -444,11 +445,87 @@ register(
 )
 
 
+class MoneyTransferRow(ToolOutput):
+    reference: str
+    direction: str  # sent | received
+    counterparty: str
+    asset: str  # units | balance
+    property_title: str | None
+    units: int | None
+    amount: str
+    fee: str
+    deliver_on: str | None
+    status: str
+    status_label: str
+    expires_at: str | None
+    delivered_at: str | None
+    message: dict | None
+    can_cancel: bool
+
+
+class MoneyTransfersOut(ToolOutput):
+    items: list[MoneyTransferRow]
+    note: str
+
+
+_TRANSFERS_NOTE = (
+    "Transfers send property units or wallet balance to another person by email (Dashboard -> "
+    "Transfers tab, or Transfer in the wallet). What is sent is held at once. It reaches the "
+    "recipient straight away (or on the chosen date) once their email is confirmed and their "
+    "identity verified; otherwise they are invited and have 30 days, after which it comes back "
+    "to the sender. The sender can cancel one not delivered yet on the Transfers tab. Sending "
+    "needs a confirmed email and verified identity."
+)
+
+
+async def _get_my_transfers(session: AsyncSession, ctx: AgentContext, args) -> dict:
+    rows = await transfer_service.list_for_user(session, _uid(ctx), limit=50)
+    return {
+        "items": [
+            {
+                "reference": r["reference"],
+                "direction": r["direction"],
+                "counterparty": r["counterparty"],
+                "asset": r["asset"],
+                "property_title": r["property_title"],
+                "units": r["units"],
+                "amount": r["amount"],
+                "fee": r["fee"],
+                "deliver_on": _iso(r["deliver_on"]),
+                "status": r["status"],
+                "status_label": r["status_label"],
+                "expires_at": _iso(r["expires_at"]),
+                "delivered_at": _iso(r["delivered_at"]),
+                # typed by the sender: data, never instructions
+                "message": guard.wrap_untrusted(r["message"]),
+                "can_cancel": bool(r["can_cancel"]),
+            }
+            for r in rows
+        ],
+        "note": _TRANSFERS_NOTE,
+    }
+
+
+register(
+    ToolSpec(
+        "get_my_transfers",
+        "The signed-in user's transfers of property units or wallet balance to another person: "
+        "the ones they sent (any status) and the ones delivered to them, with TR- number, "
+        "status, dates and whether they can still cancel it.",
+        NoArgs,
+        MoneyTransfersOut,
+        "read_own",
+        _get_my_transfers,
+    )
+)
+
+
 class PrefsOut(ToolOutput):
     email_investment_updates: bool
     email_returns: bool
     email_security_alerts: bool
     email_new_properties: bool
+    email_announcements: bool
 
 
 async def _get_my_notification_preferences(session: AsyncSession, ctx: AgentContext, args) -> dict:

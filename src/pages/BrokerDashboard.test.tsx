@@ -15,6 +15,7 @@ const dashboardMock = vi.fn();
 const codeMock = vi.fn();
 const referralsMock = vi.fn();
 const commissionsMock = vi.fn();
+const ratesMock = vi.fn();
 const leadsMock = vi.fn();
 const inviteMock = vi.fn();
 const introduceMock = vi.fn();
@@ -27,6 +28,7 @@ vi.mock("@/lib/api", () => ({
     referralCode: (...a: unknown[]) => codeMock(...a),
     referrals: (...a: unknown[]) => referralsMock(...a),
     commissions: (...a: unknown[]) => commissionsMock(...a),
+    commissionRates: (...a: unknown[]) => ratesMock(...a),
     leads: (...a: unknown[]) => leadsMock(...a),
     inviteClient: (...a: unknown[]) => inviteMock(...a),
     introduceListing: (...a: unknown[]) => introduceMock(...a),
@@ -62,6 +64,21 @@ describe("BrokerDashboard", () => {
     referralsMock.mockResolvedValue({ items: [], total: 0 });
     commissionsMock.mockResolvedValue({ items: [], total: 0 });
     leadsMock.mockResolvedValue({ items: [], total: 0 });
+    ratesMock.mockResolvedValue({
+      general_rate: "1.5",
+      items: [
+        { property_id: "p1", title: "Marina Loft", slug: "marina", rate: "4", own_rate: true },
+        { property_id: "p2", title: "Creek Tower", slug: "creek", rate: "1.5", own_rate: false },
+      ],
+    });
+  });
+
+  it("says the commission is a percentage of the investment, and the rate of each property", async () => {
+    renderIt("/broker-dashboard?tab=commissions");
+    const card = await screen.findByTestId("commission-rates");
+    await waitFor(() => expect(card).toHaveTextContent("Marina Loft4%"));
+    expect(card).toHaveTextContent("Creek Tower1.5%");
+    expect(card).toHaveTextContent("as a percentage of their investment");
   });
 
   it("renders live broker data and retires the mock arrays", async () => {

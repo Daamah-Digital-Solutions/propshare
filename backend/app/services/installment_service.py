@@ -48,6 +48,7 @@ from app.models.base import PropertyStatus, TransactionType
 from app.models.identity import User
 from app.models.investments import OwnershipLedger
 from app.services import (
+    broker_service,
     installment_pdf,
     notification_service,
     payment_service,
@@ -586,6 +587,11 @@ async def _charge_payment(
     if payment.status == "paid":
         return  # idempotent
 
+    # the referring broker is credited below: both wallets, in the global lock order
+    broker_id = await broker_service.referring_broker(session, plan.investor_id)
+    if broker_id is not None:
+        await wallet_service.lock_wallets(session, [plan.investor_id, broker_id])
+
     if funded_by is None:
         line_items: list[tuple[TransactionType, decimal.Decimal, str | None]] = [
             (
@@ -647,6 +653,16 @@ async def _charge_payment(
     payment.paid_at = _utcnow()
     payment.idempotency_key = idempotency_key
     plan.updated_at = _utcnow()
+
+    # A referred client's broker earns the property's rate on the principal of each payment.
+    await broker_service.accrue_commission(
+        session,
+        client_id=plan.investor_id,
+        revenue_event_type=broker_service.REVENUE_INSTALLMENT,
+        revenue_event_id=payment.id,
+        revenue_amount=payment.base_amount,
+        property_id=plan.property_id,
+    )
 
     # The plan completes (handover) when EVERY payment is paid — NOT when vesting hits
     # units_total, which can happen a payment or two early due to integer rounding (a tail

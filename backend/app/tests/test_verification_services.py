@@ -1,14 +1,16 @@
 """Verification partners: the page, the assistant and the link guard agree.
 
-The client named five services that verify Capimax records (2026-10-01): Capimax documents and
-investment certificates and valuation / financial documents at CIM Global Financial, insurance
-at CoverTech, legal documents at LexCrest Global, blockchain records at Proof Anchor. Before,
-the assistant only ever sent people "to the Verification Center". What each test protects:
+The client named five services that verify Capimax records (2026-10-01). Since 2026-10-28 the
+first is PropShare's own: an investment certificate is verified here by its QR code (as on
+Capimax BRX), no longer at CIM Global Financial, which keeps valuation / financial documents;
+insurance at CoverTech, legal documents at LexCrest Global, blockchain records at Proof Anchor.
+What each test protects:
   * the SPA's list (src/lib/verificationPartners.ts) and the backend's are the same five, in
-    the same order, with the same providers and links;
+    the same order, with the same providers and links; only the partners' links may leave
+    the platform;
   * the assistant's tool gives every service with what to enter and its link, to visitors
     too, untruncated;
-  * a holder's certificate reference from get_my_holdings is the one printed on the PDF;
+  * a holder's certificate number from get_my_holdings is the one printed on the PDF;
   * a reply may carry a partner's exact link, which becomes a button; a look-alike host, a
     longer path, a query string or plain http is still removed;
   * a sentence naming Proof Anchor is not flagged as blockchain wording about PropShare, the
@@ -57,6 +59,9 @@ def test_the_page_and_the_assistant_list_the_same_services():
     )
     backend = [(s.key, s.title, s.provider, s.url) for s in verification_partners.SERVICES]
     assert spa == backend
+    # the certificate check is ours: its "url" is a page of the site, not a link out
+    assert verification_partners.CERTIFICATES.internal
+    assert verification_partners.CERTIFICATES.url == "/verification-center"
     assert verification_partners.URLS == {CIM, COVERTECH, LEXCREST, PROOF_ANCHOR}
 
 
@@ -67,25 +72,32 @@ async def test_the_tool_gives_every_service_to_anyone(asession):
     guard.authorize(spec, VISITOR)  # visitors may ask too
     out = await call_tool(spec, asession, VISITOR, parse_args(spec, "{}"))
     assert [s["key"] for s in out["services"]] == [
-        "capimax_documents",
+        "capimax_certificates",
         "valuation_financial",
         "insurance",
         "legal",
         "blockchain",
     ]
     by_key = {s["key"]: s for s in out["services"]}
-    assert by_key["capimax_documents"]["url"] == CIM
-    assert "Certificate Number" in by_key["capimax_documents"]["how_to_verify"]
+    cert = by_key["capimax_certificates"]
+    assert (cert["provider"], cert["url"], cert["internal"]) == (
+        "Capimax PropShare",
+        "/verification-center",
+        True,
+    )
+    assert "QR code" in cert["how_to_verify"] and "verification code" in cert["how_to_verify"]
+    assert "CIM" not in cert["how_to_verify"] + cert["verifies"]
+    assert by_key["valuation_financial"]["url"] == CIM
     assert by_key["insurance"]["provider"] == "CoverTech Insurance"
     assert "Document Number" in by_key["legal"]["how_to_verify"]
     assert "Contract Address" in by_key["blockchain"]["how_to_verify"]
-    assert "exactly" in out["note"] and "get_my_holdings" in out["note"]
+    assert "exactly" in out["note"] and "get_my_certificates" in out["note"]
     text = guard.sanitize_result(spec.name, out)
     assert '"truncated"' not in text and len(text.encode()) <= guard.MAX_RESULT_BYTES
 
 
 @pytest.mark.asyncio
-async def test_a_holders_reference_is_the_one_printed_on_the_certificate(client, db, asession):
+async def test_a_holders_number_is_the_one_printed_on_the_certificate(client, db, asession):
     uid = await _user(client, db, f"verify-{uuid.uuid4().hex[:6]}@capimaxtrial.com")
     pid = _prop(db, slug=f"verify-tower-{uuid.uuid4().hex[:6]}")
     db(
@@ -95,13 +107,18 @@ async def test_a_holders_reference_is_the_one_printed_on_the_certificate(client,
         p=pid,
     )
     spec = REGISTRY["get_my_holdings"]
-    out = await call_tool(spec, asession, await _ctx(asession, uid), parse_args(spec, "{}"))
-    ref = out["items"][0]["certificate_reference"]
-    assert ref == ("CMX-" + str(pid)[:4] + str(uid)[:4]).upper()
+    ctx = await _ctx(asession, uid)
+    # reading the holdings issues nothing: no certificate yet, no number made up
+    out = await call_tool(spec, asession, ctx, parse_args(spec, "{}"))
+    assert out["items"][0]["certificate_number"] is None
+    assert not db("SELECT 1 FROM investment_certificates")
     _name, pdf = await certificate_service.build_for_holding(
         asession, user_id=uid, property_id=uuid.UUID(str(pid))
     )
-    assert ref.encode() in pdf
+    out = await call_tool(spec, asession, ctx, parse_args(spec, "{}"))
+    ref = out["items"][0]["certificate_number"]
+    assert re.fullmatch(r"PSC-\d{4}-[A-HJ-NP-Z2-9]{8}", ref), ref
+    assert ref.encode() in pdf  # the number on the certificate downloaded
 
 
 @pytest.mark.asyncio
@@ -136,20 +153,20 @@ def test_a_partners_exact_link_becomes_a_button(monkeypatch):
         get_settings(), "app_base_url", "https://capimaxpropshare.com", raising=False
     )
     text, flags, links = guard.postprocess_output(
-        f"Open [Verify Document / Certificate]({CIM}) and enter CMX-1234ABCD.\n"
+        f"Open [Verify Valuation / Financial Report]({CIM}) and enter VAL-1234.\n"
         f"Insurance certificates: {COVERTECH}.\n"
         f"- [LexCrest Document Center]({LEXCREST})\n"
         f"Proof Anchor, in capitals: {PROOF_ANCHOR.upper()}"
     )
     assert flags == []
-    assert "Open Verify Document / Certificate and enter CMX-1234ABCD." in text
+    assert "Open Verify Valuation / Financial Report and enter VAL-1234." in text
     assert f"{COVERTECH}." in text  # a link written out stays readable, the dot stays a dot
     assert (
         "LexCrest Document Center" not in text
     )  # the line was only a link: the button replaces it
     assert [(link["route_id"], link["path"], link["label"]) for link in links] == [
         (guard.PARTNER_ROUTE, LEXCREST, "LexCrest Document Center"),
-        (guard.PARTNER_ROUTE, CIM, "Verify Document / Certificate"),
+        (guard.PARTNER_ROUTE, CIM, "Verify Valuation / Financial Report"),
         (guard.PARTNER_ROUTE, COVERTECH, "Verify with CoverTech Insurance"),
         (guard.PARTNER_ROUTE, PROOF_ANCHOR, "Verify with Proof Anchor"),
     ]
@@ -204,7 +221,14 @@ def test_the_assistant_is_told_to_send_people_to_the_right_partner():
             "Proof Anchor",
         ):
             assert provider in body
+    for body in articles.values():  # the certificate check is ours, by its QR code
+        assert "QR" in body and "/capimax-verify)" in body
+    assert "CIM Global Financial's Capimax Verify" not in articles["en"]
+    assert "Capimax PropShare investment certificates are verified on PropShare itself" in (
+        articles["en"]
+    )
     prompt = prompts.CORE_SYSTEM
     assert "get_verification_services" in prompt and "copied exactly" in prompt
+    assert "QR code" in prompt and "Capimax Verify (CIM" not in prompt
     assert "a verification question gets /kyc" not in prompt
     assert guard.make_link("verification_services")["path"] == "/verification-center"

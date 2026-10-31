@@ -10,7 +10,6 @@ rejects non-public prefixes.
 from __future__ import annotations
 
 import io
-import re
 import uuid
 
 import pytest
@@ -203,9 +202,9 @@ async def test_certificate_prints_the_registered_spv_never_a_made_up_one(client,
 
 
 async def test_certificate_states_the_share_and_where_it_is_verified(client, db):
-    """Client (2026-10-01): the certificate says how much of the property the units are and,
-    under its reference, where it is verified (CIM Global Financial's Capimax Verify). The
-    dashboard is given the same share, which it used to round itself (20 of 42,000: 0.05%)."""
+    """Client (2026-10-01): the certificate says how much of the property the units are. Client
+    (2026-10-28): it is verified on PropShare by its QR code, no longer at CIM Global Financial.
+    The dashboard is given the same share, which it used to round itself (20 of 42,000: 0.05%)."""
     tok, uid = await _user(client, db, "cert-verify@x.com")
     pid = _seed_property(db, None, slug="cert-verify")
     db("UPDATE properties SET total_units=42000 WHERE id=:p", p=pid)
@@ -213,10 +212,13 @@ async def test_certificate_states_the_share_and_where_it_is_verified(client, db)
     pdf = (await client.get(f"/api/v1/investments/certificate/{pid}", headers=_h(tok))).content
     assert b"(representing 0.04762% of the property,) Tj" in pdf
     assert b"(as recorded in the Capimax PropShare ownership ledger.) Tj" in pdf
-    # written out for a printed copy, and a link in the file
-    line = rb"\(Verify at CIM Global Financial .* www\.cimglobalfinancial\.com/capimax-verify\) Tj"
-    assert re.search(line, pdf)
-    assert b"/URI (https://www.cimglobalfinancial.com/capimax-verify)" in pdf
+    code = db("SELECT verification_code FROM investment_certificates WHERE user_id=:u", u=uid)
+    assert len(code) == 1
+    url = certificate_service.verify_url(code[0][0])
+    # the QR code and the line under the number both open the certificate's own page
+    assert f"(Verify at {url.split('://', 1)[1]}) Tj".encode() in pdf
+    assert f"/URI ({url})".encode() in pdf
+    assert b"cimglobalfinancial" not in pdf and b"CIM Global" not in pdf
 
     held = (await client.get("/api/v1/secondary/holdings", headers=_h(tok))).json()["items"][0]
     assert (held["units"], held["ownership_pct"]) == (20, "0.04762%")
@@ -232,12 +234,14 @@ def test_certificate_without_a_unit_count_states_no_share():
         value="$300.00",
         spv="-",
         jurisdiction="-",
-        cert_ref="CMX-12AB34CD",
+        cert_ref="PSC-2026-ABCDEFGH",
         issued="Oct 06, 2026",
+        verification_code="code-0123456789abcdef",
+        verify_url="https://capimaxpropshare.com/verify/code-0123456789abcdef",
     )
     assert b"representing" not in pdf
     assert b"(as recorded in the Capimax PropShare ownership ledger.) Tj" in pdf
-    assert b"/URI (https://www.cimglobalfinancial.com/capimax-verify)" in pdf
+    assert b"/URI (https://capimaxpropshare.com/verify/code-0123456789abcdef)" in pdf
 
 
 async def test_certificate_404_without_holding(client, db):

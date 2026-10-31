@@ -1,24 +1,24 @@
 import { useMemo, useState } from "react";
-import { certificateRef, saveBlob } from "@/lib/certificates";
-import { CERTIFICATE_PARTNER } from "@/lib/verificationPartners";
-import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { saveBlob } from "@/lib/certificates";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  AlertTriangle,
   Building2,
   CheckCircle2,
   Download,
-  ExternalLink,
   Eye,
   FileArchive,
   FileText,
   Loader2,
   MapPin,
+  QrCode,
   Shield,
 } from "lucide-react";
-import { useAuth } from "@/contexts/AuthContext";
 import {
   certificateApi,
   documentsApi,
@@ -29,9 +29,9 @@ import {
 
 /**
  * Investor certificates — the rich documents surface, wired to REAL data (DELETE NOTHING /
- * no fabricated data). Certificates are generated live from the ownership ledger; every
- * figure (units, ownership %, value) is real, the SPV reference + jurisdiction come from the
- * property record, and the certificate reference is a stable derived id (never random).
+ * no fabricated data). Each certificate is issued from the ownership ledger and kept (client,
+ * 2026-10-28): its number, issue date, SPV and status are the server's, and its QR code opens
+ * its own verification page on the platform. Value is units at today's unit price.
  */
 
 
@@ -39,7 +39,7 @@ const usd0 = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
 export const InvestmentCertificates = () => {
-  const { user } = useAuth();
+  const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
 
   const { data: holdingsResp, isLoading } = useQuery({
@@ -47,6 +47,15 @@ export const InvestmentCertificates = () => {
     queryFn: () => holdingsApi.mine(),
   });
   const { data: returns } = useQuery({ queryKey: ["cert-returns"], queryFn: returnsApi.getMine });
+  // the certificate stating each holding (number, issue date, SPV, verification page)
+  const { data: certsResp } = useQuery({
+    queryKey: ["my-certificates"],
+    queryFn: () => certificateApi.mine(),
+  });
+  const certFor = useMemo(
+    () => new Map((certsResp?.items ?? []).map((c) => [c.property_id, c])),
+    [certsResp],
+  );
 
   const rows = useMemo(
     () => (holdingsResp?.items ?? []).filter((h) => h.units > 0),
@@ -73,11 +82,12 @@ export const InvestmentCertificates = () => {
     [returns],
   );
 
-  const issued = new Date().toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  const issuedOn = (iso: string | undefined) =>
+    iso
+      ? new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })
+      : "—";
+  const refreshCertificates = () =>
+    queryClient.invalidateQueries({ queryKey: ["my-certificates"] });
 
   const view = async (h: Holding) => {
     setBusy("view-" + h.property_id);
@@ -85,6 +95,7 @@ export const InvestmentCertificates = () => {
       const url = URL.createObjectURL(await certificateApi.download(h.property_id));
       window.open(url, "_blank", "noopener,noreferrer");
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      refreshCertificates();
     } catch {
       toast.error("Could not open the certificate. Please try again.");
     } finally {
@@ -95,6 +106,7 @@ export const InvestmentCertificates = () => {
     setBusy("dl-" + h.property_id);
     try {
       saveBlob(await certificateApi.download(h.property_id), `certificate-${h.title ?? h.property_id}.pdf`);
+      refreshCertificates();
     } catch {
       toast.error("Could not download the certificate. Please try again.");
     } finally {
@@ -194,15 +206,17 @@ export const InvestmentCertificates = () => {
               <h3 className="text-lg font-semibold">No certificates yet</h3>
               <p className="text-sm text-muted-foreground max-w-md">
                 Once you hold units in a property, a downloadable ownership certificate appears
-                here, generated live from your holdings.
+                here, with a QR code that anyone can scan to verify it.
               </p>
             </div>
           ) : (
             <div className="space-y-4">
               {rows.map((h) => {
                 const value = h.units * Number(h.unit_price || 0);
-                const certRef = certificateRef(h.property_id, user?.id);
-                const spv = `${h.title ?? "Property"} SPV`;
+                const cert = certFor.get(h.property_id);
+                // the listing's registered SPV, as on the certificate; never made up
+                const spv = cert?.spv_name ?? null;
+                const current = cert?.status === "valid" && cert.units === h.units;
                 return (
                   <div key={h.property_id} className="rounded-xl border border-border p-4">
                     <div className="flex flex-col lg:flex-row lg:items-center gap-4">
@@ -215,17 +229,18 @@ export const InvestmentCertificates = () => {
                           <p className="text-sm text-muted-foreground flex items-center gap-1">
                             <MapPin className="h-3 w-3" /> {h.location ?? "—"}
                           </p>
-                          <p className="text-xs text-muted-foreground mt-0.5">{certRef}</p>
-                          <a
-                            href={CERTIFICATE_PARTNER.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            aria-label={`Verify certificate ${certRef} at ${CERTIFICATE_PARTNER.provider}`}
-                            className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-4 hover:text-primary/80"
-                          >
-                            Verify at {CERTIFICATE_PARTNER.provider}
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {cert?.number ?? "Certificate issued on download"}
+                          </p>
+                          {cert && (
+                            <Link
+                              to={cert.verify_path}
+                              aria-label={`Verify certificate ${cert.number}`}
+                              className="mt-0.5 inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-4 hover:text-primary/80"
+                            >
+                              <QrCode className="h-3 w-3" /> Verify this certificate
+                            </Link>
+                          )}
                         </div>
                       </div>
                       <div className="grid grid-cols-3 gap-6 text-sm flex-1">
@@ -238,14 +253,20 @@ export const InvestmentCertificates = () => {
                           <p className="text-xs text-muted-foreground">Ownership</p>
                           {/* the share as the certificate prints it: never rounded to 0.00% */}
                           <p className="font-semibold text-foreground">{h.ownership_pct ?? "—"}</p>
-                          <p className="text-xs text-muted-foreground truncate">{spv}</p>
+                          {spv && <p className="text-xs text-muted-foreground truncate">{spv}</p>}
                         </div>
                         <div>
                           <p className="text-xs text-muted-foreground">Issued</p>
-                          <p className="font-medium text-foreground">{issued}</p>
-                          <Badge className="mt-1 text-[10px] border-0 bg-green-500/10 text-green-700">
-                            <CheckCircle2 className="h-3 w-3 mr-1" /> Active
-                          </Badge>
+                          <p className="font-medium text-foreground">{issuedOn(cert?.issued_at)}</p>
+                          {current ? (
+                            <Badge className="mt-1 text-[10px] border-0 bg-green-500/10 text-green-700">
+                              <CheckCircle2 className="h-3 w-3 mr-1" /> Valid
+                            </Badge>
+                          ) : (
+                            <Badge className="mt-1 text-[10px] border-0 bg-amber-500/10 text-amber-700">
+                              <AlertTriangle className="h-3 w-3 mr-1" /> New one on download
+                            </Badge>
+                          )}
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -292,7 +313,8 @@ export const InvestmentCertificates = () => {
                     </div>
                     <div className="mt-3 pt-3 border-t border-border/70 flex items-center gap-2 text-xs text-muted-foreground">
                       <Building2 className="h-3.5 w-3.5" />
-                      Issued by <span className="font-medium text-foreground">{spv}</span>
+                      Issued by <span className="font-medium text-foreground">Capimax PropShare</span>
+                      {spv ? <span>· SPV {spv}</span> : null}
                       {h.location ? <span>· {h.location}</span> : null}
                     </div>
                   </div>
@@ -311,10 +333,10 @@ export const InvestmentCertificates = () => {
             <div>
               <h4 className="font-semibold text-foreground mb-2">Important Notice</h4>
               <p className="text-sm text-muted-foreground">
-                Your investment certificates reflect the fractional units recorded in the Capimax
-                PropShare ownership ledger as of their generation date. They are generated from live
-                data and are not transferable securities or a substitute for the offering documents
-                and SPV agreements governing each property.
+                Your investment certificates state the fractional units recorded in the Capimax
+                PropShare ownership ledger on their issue date; each one's QR code lets anyone
+                confirm it is authentic and still current. They are not transferable securities or
+                a substitute for the offering documents and SPV agreements governing each property.
               </p>
             </div>
           </div>

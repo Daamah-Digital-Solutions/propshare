@@ -8,11 +8,11 @@ import {
 import { VerificationPartners } from "@/components/verification/VerificationPartners";
 
 /**
- * Verification Center — a GATEWAY page (no verification logic lives here). It lists the
- * designated partner that verifies each kind of record (Capimax documents and certificates,
- * valuations and financial reports, insurance, legal documents, digital-asset records of the
- * ecosystem's other platforms; see VerificationPartners) and hands off to the central Capimax
- * Trust platform. (Group-wide requirement — the same page exists on every Capimax platform;
+ * Verification Center. It says where each kind of record is verified (see
+ * VerificationPartners): investment certificates here, by their QR code or the code printed
+ * beside it (/verify/{code}, as on Capimax BRX); valuations and financial reports, insurance,
+ * legal documents and digital-asset records of the ecosystem's other platforms at their
+ * designated partner; and it hands off to the central Capimax Trust platform. (Group-wide requirement — the same page exists on every Capimax platform;
  * each one links to the single Capimax Trust source.)
  */
 
@@ -59,7 +59,7 @@ export default function VerificationCenter() {
 
         <TrustCapabilities />
 
-        {/* Honest scope note — verification never happens on this platform */}
+        {/* Scope note: what is checked here, what at a partner or on Capimax Trust */}
         <TrustScopeNote />
 
         <div className="text-center">

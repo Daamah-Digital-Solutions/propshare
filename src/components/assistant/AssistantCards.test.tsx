@@ -295,7 +295,8 @@ describe("document cards (client meeting 2026-10-01: 'give me the PDF here')", (
         rows: [
           ["Units", "20"],
           ["Share of the property", "0.04762%"],
-          ["Certificate number", "CMX-1A2B3C4D"],
+          ["Certificate number", "PSC-2026-K7M2Q9XA"],
+          ["Verification code", "Xq3vN8bKp2LmR5tY7wZa1c"],
         ],
         files: [{ label: "Certificate (PDF)", path: "/api/v1/investments/certificate/p1", filename: "certificate-creek.pdf", format: "pdf" }],
       },
@@ -306,14 +307,14 @@ describe("document cards (client meeting 2026-10-01: 'give me the PDF here')", (
       },
     ],
     files: [{ label: "All my certificates (ZIP)", path: "/api/v1/investments/certificates.zip", filename: "capimax-certificates.zip", format: "zip" }],
-    links: [{ label: "Verify at CIM Global Financial", path: "https://www.cimglobalfinancial.com/capimax-verify" }],
+    links: [{ label: "Verify: Creek Tower Installment Suite", path: "/verify/Xq3vN8bKp2LmR5tY7wZa1c" }],
     path: "/dashboard?tab=certificates",
-    footnote: "Generated live from the ownership ledger.",
+    footnote: "Each certificate's QR code opens its verification page.",
   };
 
   beforeEach(() => blobOf.mockReset());
 
-  it("downloads each certificate and the ZIP from the chat, with the share and the verifier", async () => {
+  it("downloads each certificate and the ZIP from the chat, with the share and its verify page", async () => {
     const blob = new Blob(["%PDF"]);
     blobOf.mockResolvedValue(blob);
     render(
@@ -323,15 +324,17 @@ describe("document cards (client meeting 2026-10-01: 'give me the PDF here')", (
     );
     const card = screen.getByTestId("document-card");
     expect(card).toHaveTextContent("Share of the property0.04762%");
-    expect(card).toHaveTextContent("Certificate numberCMX-1A2B3C4D");
+    expect(card).toHaveTextContent("Certificate numberPSC-2026-K7M2Q9XA");
+    expect(card).toHaveTextContent("Verification codeXq3vN8bKp2LmR5tY7wZa1c");
     fireEvent.click(screen.getAllByRole("button", { name: /certificate \(pdf\)/i })[1]);
     await waitFor(() => expect(save).toHaveBeenCalledWith(blob, "certificate-loft.pdf"));
     expect(blobOf).toHaveBeenCalledWith("/api/v1/investments/certificate/p2");
     fireEvent.click(screen.getByRole("button", { name: /all my certificates \(zip\)/i }));
     await waitFor(() => expect(blobOf).toHaveBeenCalledWith("/api/v1/investments/certificates.zip"));
-    const verify = screen.getByRole("link", { name: /verify at cim global financial/i });
-    expect(verify).toHaveAttribute("href", "https://www.cimglobalfinancial.com/capimax-verify");
-    expect(verify).toHaveAttribute("target", "_blank");
+    // the certificate's own verification page, on the platform: same tab, no new window
+    const verify = screen.getByRole("link", { name: /verify: creek tower installment suite/i });
+    expect(verify).toHaveAttribute("href", "/verify/Xq3vN8bKp2LmR5tY7wZa1c");
+    expect(verify).not.toHaveAttribute("target");
   });
 
   it("never downloads a path that is not one of the platform's own endpoints", () => {
@@ -387,10 +390,10 @@ describe("page buttons", () => {
     const url = "https://www.cimglobalfinancial.com/capimax-verify";
     render(
       <MemoryRouter>
-        <LinkButton card={{ kind: "link", path: url, label: "Verify Document / Certificate" }} onClose={onClose} />
+        <LinkButton card={{ kind: "link", path: url, label: "Verify Valuation / Financial Report" }} onClose={onClose} />
       </MemoryRouter>,
     );
-    const link = screen.getByRole("link", { name: /verify document \/ certificate/i });
+    const link = screen.getByRole("link", { name: /verify valuation \/ financial report/i });
     expect(link).toHaveAttribute("href", url);
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");

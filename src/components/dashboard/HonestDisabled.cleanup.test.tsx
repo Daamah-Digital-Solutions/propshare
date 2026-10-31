@@ -2,7 +2,8 @@
  * Guards two things:
  *  - InvestmentCertificates: the rich documents surface renders REAL holdings (from
  *    holdingsApi.mine() -> { items }) with working View/Download + Download-All, an honest
- *    empty state, and NO fabricated CERT-2024-* ids. (holdingsApi.mine returns { items, total } —
+ *    empty state, and NO fabricated CERT-2024-* ids; each holding shows the certificate the
+ *    server issued (number, SPV, issue date, status, its /verify page). (holdingsApi.mine returns { items, total } —
  *    reading it as a bare array is what blanked the tab; this test pins the real shape.)
  *  - InvestorWallet "Payment Methods": no fake saved cards/banks on the money page.
  */
@@ -20,6 +21,24 @@ const holdingsMine = vi.fn();
 const returnsGetMine = vi.fn();
 const docsList = vi.fn();
 const pmList = vi.fn();
+const certsMine = vi.fn();
+
+// the certificate the server issued for the p1 holding
+const CERT = {
+  id: "c1",
+  property_id: "p1",
+  property_title: "Marina Loft",
+  number: "PSC-2026-K7M2Q9XA",
+  verification_code: "Xq3vN8bKp2LmR5tY7wZa1c",
+  verify_path: "/verify/Xq3vN8bKp2LmR5tY7wZa1c",
+  verify_url: "https://capimaxpropshare.com/verify/Xq3vN8bKp2LmR5tY7wZa1c",
+  units: 8,
+  ownership: "0.01905%",
+  spv_name: "Marina Loft Holdings Ltd",
+  location: "Dubai",
+  status: "valid",
+  issued_at: "2026-10-20T09:00:00Z",
+};
 
 vi.mock("@/lib/api", () => ({
   walletApi: {
@@ -45,7 +64,11 @@ vi.mock("@/lib/api", () => ({
   holdingsApi: { mine: (...a: unknown[]) => holdingsMine(...a) },
   returnsApi: { getMine: (...a: unknown[]) => returnsGetMine(...a) },
   documentsApi: { listForProperty: (...a: unknown[]) => docsList(...a) },
-  certificateApi: { download: vi.fn(), downloadAllZip: vi.fn() },
+  certificateApi: {
+    download: vi.fn(),
+    downloadAllZip: vi.fn(),
+    mine: (...a: unknown[]) => certsMine(...a),
+  },
   paymentMethodsApi: {
     list: (...a: unknown[]) => pmList(...a),
     setupIntent: vi.fn(),
@@ -87,6 +110,7 @@ describe("InvestmentCertificates (real per-holding certificates)", () => {
       items: [],
     });
     docsList.mockResolvedValue([]);
+    certsMine.mockResolvedValue({ items: [CERT] });
   });
 
   it("lists real holdings (from { items }) with a working download; no fabricated certs", async () => {
@@ -112,10 +136,28 @@ describe("InvestmentCertificates (real per-holding certificates)", () => {
     expect(screen.queryByText(/CERT-2024-001/)).toBeNull(); // no fabricated cert ids
     // the share as the certificate prints it (it was rounded to two decimals: "0.02%")
     expect(screen.getByText("0.01905%")).toBeInTheDocument();
-    // under the reference, where it is verified
-    expect(
-      screen.getByRole("link", { name: /verify certificate CMX-P1USER at CIM Global Financial/i }),
-    ).toHaveAttribute("href", "https://www.cimglobalfinancial.com/capimax-verify");
+    // the certificate the server issued: its number, its SPV, its issue date, its own page
+    expect(await screen.findByText("PSC-2026-K7M2Q9XA")).toBeInTheDocument();
+    expect(screen.getAllByText("Marina Loft Holdings Ltd").length).toBeGreaterThan(0);
+    expect(screen.getByText("Oct 20, 2026")).toBeInTheDocument();
+    expect(screen.getByText("Valid")).toBeInTheDocument();
+    const verify = screen.getByRole("link", { name: "Verify certificate PSC-2026-K7M2Q9XA" });
+    expect(verify).toHaveAttribute("href", "/verify/Xq3vN8bKp2LmR5tY7wZa1c");
+    expect(screen.queryByText(/CIM Global Financial/)).toBeNull();
+    expect(screen.queryByText(/Marina Loft SPV/)).toBeNull(); // no made-up SPV name
+  });
+
+  it("a certificate that no longer states the units says a new one comes on download", async () => {
+    holdingsMine.mockResolvedValue({
+      items: [
+        { property_id: "p1", title: "Marina Loft", location: "Dubai", units: 12, ownership_pct: "1%", listed_units: 0, sellable_units: 12, unit_price: "100" },
+      ],
+      total: 1,
+    });
+    certsMine.mockResolvedValue({ items: [{ ...CERT, units: 8 }] });
+    wrap(<InvestmentCertificates />);
+    expect(await screen.findByText("New one on download")).toBeInTheDocument();
+    expect(screen.queryByText("Valid")).toBeNull();
   });
 
   it("shows an honest empty state when there are no holdings", async () => {

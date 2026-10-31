@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import io
 
-import segno
 from reportlab.lib.colors import Color, HexColor
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
@@ -79,28 +78,8 @@ def _two_lines(text: str, font: str, size: float, max_width: float) -> tuple[str
     return text[:cut], text[cut:].strip()
 
 
-def _qr(c: canvas.Canvas, x: float, y: float, side: float, url: str) -> None:
-    """The claim page as a QR code, drawn as vector squares (no image, no extra library)."""
-    matrix = segno.make(url, error="m").matrix
-    n = len(matrix)
-    cell = side / n
-    c.saveState()
-    c.setFillColor(HexColor("#FFFFFF"))
-    c.rect(x - 4, y - 4, side + 8, side + 8, stroke=0, fill=1)
-    c.setFillColor(base._INK)
-    for row_no, row in enumerate(matrix):
-        for col_no, dark in enumerate(row):
-            if dark:
-                # a hair of overlap so no viewer shows seams between the squares
-                c.rect(
-                    x + col_no * cell,
-                    y + side - (row_no + 1) * cell,
-                    cell + 0.2,
-                    cell + 0.2,
-                    stroke=0,
-                    fill=1,
-                )
-    c.restoreState()
+# the claim page as a QR code: the same vector drawing as the investment certificate's
+_qr = base.draw_qr
 
 
 def render(

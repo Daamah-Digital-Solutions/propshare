@@ -38,7 +38,7 @@ import PropertyTimeline from "@/components/property/PropertyTimeline";
 import UnderConstructionView from "@/components/property/UnderConstructionView";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { Loader2 } from "lucide-react";
-import { assetUrl, propertyApi, type PropertyDetail } from "@/lib/api";
+import { assetUrl, brokerApi, propertyApi, type PropertyDetail } from "@/lib/api";
 import { assetValue } from "@/lib/properties";
 import { fundedPct } from "@/lib/funding";
 
@@ -155,7 +155,13 @@ const PropertyDetails = () => {
   // An order prepared by the assistant arrives as ?units=N(&months=M): pre-fill the calculator,
   // bring it into view and (signed in, ready listing) open the review step — the last one
   // before payment. Paying stays the user's own click.
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
+  const { data: brokerRates } = useQuery({
+    queryKey: ["broker", "commission-rates"],
+    queryFn: () => brokerApi.commissionRates(),
+    enabled: user?.active_role === "broker",
+  });
+  const brokerRate = brokerRates?.items.find((r) => r.property_id === propertyData?.id)?.rate;
   const orderUnits = Number(searchParams.get("units") || 0);
   const orderMonths = searchParams.get("months") ?? undefined;
   const hasOrder = Number.isInteger(orderUnits) && orderUnits >= 1;
@@ -235,6 +241,7 @@ const PropertyDetails = () => {
           detail={data}
           preview={preview}
           fees={propertyData.fees}
+          brokerRate={brokerRate}
           documentsPanel={<PropertyDocuments propertyId={propertyData.id} preview={preview} />}
           investPanel={
             <div id="invest-panel" className="scroll-mt-24">
@@ -538,6 +545,8 @@ const PropertyDetails = () => {
                           label: "Unit Price",
                           value: propertyData.unitPrice ? `$${Number(propertyData.unitPrice).toLocaleString()}` : null,
                         },
+                        // a broker sees what they earn on this property; nobody else does
+                        { label: "Your Commission as a Broker", value: brokerRate ? `${brokerRate}% of the investment` : null },
                         { label: "Minimum Investment", value: `$${propertyData.minInvestment}` },
                         { label: "Maximum Investment", value: `$${propertyData.maxInvestment.toLocaleString()}` },
                         // Listing-specific terms are shown only when the listing declares them.

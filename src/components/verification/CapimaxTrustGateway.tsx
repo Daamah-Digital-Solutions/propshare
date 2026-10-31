@@ -6,7 +6,8 @@ import { Card, CardContent } from "@/components/ui/card";
  * The Capimax Trust hand-off, shared by the public Verification Center page and the
  * Verification tab of the investor dashboard so the two can never drift apart. No
  * verification logic lives here: documents are verified on Capimax Trust or by the
- * designated partner for their kind (VerificationPartners).
+ * designated partner for their kind, and an investment certificate by its QR code on
+ * PropShare (VerificationPartners, /verify/{code}).
  */
 
 // The central Capimax Trust verification gateway. Single source of truth for the destination.
@@ -95,9 +96,9 @@ export function TrustCapabilities() {
 export function TrustScopeNote() {
   return (
     <p className="text-center text-sm text-muted-foreground max-w-2xl mx-auto">
-      Capimax Trust is the central verification gateway of the Capimax ecosystem, and each
-      designated partner above verifies its own kind of record directly. Verification never
-      takes place on this platform itself: this page connects you to those services.
+      Capimax Trust is the central verification gateway of the Capimax ecosystem. Investment
+      certificates issued on this platform are verified here by their QR code; each designated
+      partner above verifies its own kind of record directly.
     </p>
   );
 }
