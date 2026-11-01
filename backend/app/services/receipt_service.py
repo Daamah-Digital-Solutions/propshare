@@ -36,8 +36,9 @@ from app.services.certificate_service import (
     _wrap,
 )
 from app.services.certificate_service import _spaced_centred as _spaced_centred_raw
+from app.services.doc_lang import DocCanvas, long_date, tr
 from app.services.installment_pdf import _RED, _page_frame
-from app.services.statement_service import STATUS_LABELS, TYPE_LABELS, english
+from app.services.statement_service import STATUS_LABELS, TYPE_LABELS, printable
 
 
 @dataclasses.dataclass(frozen=True)
@@ -76,14 +77,14 @@ async def build_receipt(
     return Receipt(
         number=receipt_number(tx.id),
         at=tx.created_at,
-        holder=(english(user.full_name) if user else None) or (user.email if user else ""),
+        holder=(printable(user.full_name) if user else None) or (user.email if user else ""),
         email=user.email if user else "",
         type_label=TYPE_LABELS.get(kind, str(kind).replace("_", " ").capitalize()),
-        description=english(tx.description) or "-",
+        description=printable(tx.description) or "-",
         status=STATUS_LABELS.get(tx.status, str(tx.status).capitalize()),
         amount=decimal.Decimal(tx.amount).quantize(decimal.Decimal("0.01")),
         request=wd.reference if wd else None,
-        destination=english(wd.destination_label) if wd else None,
+        destination=printable(wd.destination_label) if wd else None,
         transfer_reference=(
             wd.transfer_reference if wd and wd.status == "completed" and tx.amount < 0 else None
         ),
@@ -102,17 +103,17 @@ def _spaced_centred(c: canvas.Canvas, *args) -> None:
 
 
 def _when(t: dt.datetime) -> str:
-    return f"{t:%d %b %Y, %H:%M} UTC"
+    return f"{long_date(t)}, {t:%H:%M} UTC"
 
 
 def render_pdf(r: Receipt) -> bytes:
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(_W, _H), pageCompression=0)
-    c.setTitle(f"Capimax PropShare — Receipt {r.number}")
+    c = DocCanvas(buf, pagesize=(_W, _H), pageCompression=0)
+    c.setTitle(tr(f"Capimax PropShare — Receipt {r.number}"))
     _page_frame(c)
     _draw_brand(c, _CX)
     _divider(c, _CX, 712, 150)
-    _spaced_centred(c, _CX, 676, "Times-Bold", 27, "Receipt", 1.0, _GREEN_D)
+    _spaced_centred(c, _CX, 676, "Times-Bold", 27, tr("Receipt"), 1.0, _GREEN_D)
     c.setFillColor(_MUTED)
     c.setFont("Times-Italic", 11.5)
     c.drawCentredString(_CX, 658, r.number)
@@ -129,15 +130,15 @@ def render_pdf(r: Receipt) -> bytes:
     c.setFillColor(_MUTED)
     c.setFont("Helvetica", 8)
     c.drawCentredString(
-        _CX, 544, "MONEY INTO THE WALLET" if r.amount >= 0 else "MONEY OUT OF THE WALLET"
+        _CX, 544, tr("MONEY INTO THE WALLET" if r.amount >= 0 else "MONEY OUT OF THE WALLET")
     )
 
     rows = [
         ("Receipt number", r.number),
         ("Date", _when(r.at)),
-        ("Movement", r.type_label),
-        ("Description", r.description),
-        ("Status", r.status),
+        ("Movement", tr(r.type_label)),
+        ("Description", tr(r.description)),
+        ("Status", tr(r.status)),
     ]
     if r.request:
         rows.append(("Withdrawal request", r.request))
@@ -157,7 +158,7 @@ def render_pdf(r: Receipt) -> bytes:
     for label, value in rows:
         c.setFillColor(_MUTED)
         c.setFont("Helvetica", 7.5)
-        c.drawString(px + 20, y + 2, label.upper())
+        c.drawString(px + 20, y + 2, tr(label.upper()))
         c.setFillColor(_INK)
         c.setFont("Times-Roman", 11)
         c.drawRightString(px + pw - 20, y, _clip(value, "Times-Roman", 11, pw - 190))
@@ -165,7 +166,7 @@ def render_pdf(r: Receipt) -> bytes:
 
     c.setFillColor(_MUTED)
     c.setFont("Times-Roman", 8.5)
-    note = (
+    note = tr(
         "Issued from the Capimax PropShare wallet ledger for this one movement. Times are UTC. "
         "This receipt is informational and is not a tax document."
     )
@@ -176,7 +177,7 @@ def render_pdf(r: Receipt) -> bytes:
     c.setFillColor(_GOLD)
     c.setFont("Helvetica", 8)
     c.drawCentredString(
-        _CX, 62, f"{r.number}   •   issued {_when(r.issued_at)}   •   capimaxpropshare.com"
+        _CX, 62, tr(f"{r.number}   •   issued {_when(r.issued_at)}   •   capimaxpropshare.com")
     )
     c.showPage()
     c.save()

@@ -56,6 +56,7 @@ from app.services import (
     wallet_service,
 )
 from app.services.distribution_service import hamilton
+from app.services.doc_lang import long_date, sheet_direction, status_text, tr
 from app.services.investment_service import (
     RESERVATION_TTL,
     _recompute_progress,
@@ -1128,7 +1129,7 @@ async def _schedule_facts(
     paid = sum((p.total_amount for p in payments if p.status == "paid"), decimal.Decimal("0"))
     unpaid = sorted((p for p in payments if p.status != "paid"), key=lambda x: x.due_date)
     if unpaid:
-        next_due = unpaid[0].due_date.strftime("%b %d, %Y")
+        next_due = long_date(unpaid[0].due_date, "%b %d, %Y")
     else:
         next_due = "Completed" if plan.status == "completed" else "-"
     return {
@@ -1163,7 +1164,7 @@ async def build_schedule_pdf(
     rows = [
         {
             "label": _payment_label(p),
-            "due": p.due_date.strftime("%b %d, %Y"),
+            "due": long_date(p.due_date, "%b %d, %Y"),
             "base": money(p.base_amount),
             "fee": money(p.fee_amount),
             "total": money(p.total_amount),
@@ -1191,7 +1192,7 @@ async def build_schedule_pdf(
         remaining_balance=money(f["remaining"]),
         next_due=f["next_due"],
         plan_ref=f["plan_ref"],
-        issued=f["issued"].strftime("%b %d, %Y"),
+        issued=long_date(f["issued"], "%b %d, %Y"),
         rows=rows,
     )
     return f"installment-schedule-{f['slug']}.pdf", pdf
@@ -1215,14 +1216,14 @@ async def build_schedule_xlsx(
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Installment schedule"
+    ws.title = tr("Installment schedule")
     meta = [
         ("Capimax PropShare — Installment schedule", None, None),
         ("Holder", f["holder"], None),
         ("Property", prop.title, None),
         ("Location", prop.location or "-", None),
         ("Plan reference", f["plan_ref"], None),
-        ("Status", plan.status.capitalize(), None),
+        ("Status", status_text(plan.status.capitalize()), None),
         ("Units", plan.units_total, None),
         ("Units vested", plan.vested_units, None),
         ("Unit price (USD)", plan.unit_price, money),
@@ -1234,11 +1235,11 @@ async def build_schedule_xlsx(
         ("Grand total (USD)", f["grand"], money),
         ("Paid so far (USD)", f["paid"], money),
         ("Remaining (USD)", f["remaining"], money),
-        ("Next due", f["next_due"], None),
+        ("Next due", tr(f["next_due"]), None),
         ("Issued (UTC)", f["issued"].strftime("%Y-%m-%d %H:%M"), None),
     ]
     for label, value, fmt in meta:
-        ws.append([label, value])
+        ws.append([tr(label), value])
         if fmt:
             ws.cell(row=ws.max_row, column=2).number_format = fmt
     ws["A1"].font = Font(bold=True, size=14, color="0F6E4C")
@@ -1246,19 +1247,20 @@ async def build_schedule_xlsx(
         row[0].font = Font(bold=True)
     ws.append([])
 
-    ws.append(["Payment", "Due date", "Principal (USD)", "Fee (USD)", "Total (USD)", "Status"])
+    header = ["Payment", "Due date", "Principal (USD)", "Fee (USD)", "Total (USD)", "Status"]
+    ws.append([tr(h) for h in header])
     head_row = ws.max_row
     for cell in ws[head_row]:
         cell.font, cell.fill = head_font, head_fill
     for p in f["payments"]:
         ws.append(
             [
-                _payment_label(p),
+                tr(_payment_label(p)),
                 p.due_date,
                 p.base_amount,
                 p.fee_amount,
                 p.total_amount,
-                p.status.capitalize(),
+                status_text(p.status.capitalize()),
             ]
         )
         ws.cell(row=ws.max_row, column=2).number_format = "yyyy-mm-dd"
@@ -1267,6 +1269,7 @@ async def build_schedule_xlsx(
     ws.freeze_panes = ws.cell(row=head_row + 1, column=1)
     for col, width in zip("ABCDEF", (34, 22, 16, 13, 15, 12), strict=True):
         ws.column_dimensions[col].width = width
+    sheet_direction(ws)
 
     buf = io.BytesIO()
     wb.save(buf)

@@ -19,7 +19,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query, Request, Response
 
-from app.api.deps import KycVerifiedDep, PrincipalDep, SessionDep
+from app.api.deps import DocLang, KycVerifiedDep, PrincipalDep, SessionDep
 from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.errors import AppError
@@ -43,6 +43,7 @@ from app.services import (
     statement_service,
     wallet_service,
 )
+from app.services.doc_lang import doc_language
 
 router = APIRouter(prefix="/api/v1/wallet", tags=["wallet"])
 
@@ -61,12 +62,16 @@ async def statement(
     start: Annotated[dt.date, Query(description="First day, inclusive (UTC)")],
     end: Annotated[dt.date, Query(description="Last day, inclusive (UTC)")],
     format: Annotated[Literal["pdf", "xlsx"], Query()] = "pdf",  # noqa: A002
+    lang: DocLang = None,
 ):
     """The signed-in user's own account statement. Only their ledger is ever read."""
-    stmt = await statement_service.build_statement(session, principal.user_id, start, end)
-    body = (
-        statement_render.render_pdf(stmt) if format == "pdf" else statement_render.render_xlsx(stmt)
-    )
+    with doc_language(lang):
+        stmt = await statement_service.build_statement(session, principal.user_id, start, end)
+        body = (
+            statement_render.render_pdf(stmt)
+            if format == "pdf"
+            else statement_render.render_xlsx(stmt)
+        )
     await write_audit(
         session,
         action="statement.exported",
@@ -90,12 +95,18 @@ async def statement(
 @router.get("/transactions/{transaction_id}/receipt")
 @limiter.limit(STATEMENT_LIMIT)
 async def transaction_receipt(
-    request: Request, transaction_id: uuid.UUID, principal: PrincipalDep, session: SessionDep
+    request: Request,
+    transaction_id: uuid.UUID,
+    principal: PrincipalDep,
+    session: SessionDep,
+    lang: DocLang = None,
 ):
     """A numbered PDF receipt for one of the caller's own wallet movements."""
-    receipt = await receipt_service.build_receipt(session, principal.user_id, transaction_id)
+    with doc_language(lang):
+        receipt = await receipt_service.build_receipt(session, principal.user_id, transaction_id)
+        pdf = receipt_service.render_pdf(receipt)
     return Response(
-        content=receipt_service.render_pdf(receipt),
+        content=pdf,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="{receipt_service.filename(receipt)}"',

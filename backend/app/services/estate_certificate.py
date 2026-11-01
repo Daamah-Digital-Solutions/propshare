@@ -10,8 +10,8 @@ frame, logo, palette and seal. It is a record of a designation, not of ownership
 the holder may change the register afterwards, so the certificate carries the record's version
 and the footer states that the register at the time of a claim prevails.
 
-Set in the PDF's standard Latin fonts, like the ownership certificate and the statements: the
-caller passes text that is already printable (``statement_service.english``).
+It comes in the language the person has the site in, like every document; the person's name
+stays in Latin letters, as on their passport (``estate_service.build_certificate``).
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ from __future__ import annotations
 import io
 
 from reportlab.lib.colors import Color, HexColor
-from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 
 from app.services import certificate_service as base
+from app.services.doc_lang import DocCanvas, current, mbox, mx, text_width, tr
 
 _W, _H, _CX = base._W, base._H, base._CX
 _FRAME = 44.0  # the inner border: nothing is drawn outside it
@@ -48,11 +48,11 @@ def _fit_left(
 ) -> None:
     """A left-aligned value that shrinks before it wraps, and wraps onto a second line before
     it is ever cut: a long address or list stays whole."""
-    while size > 8 and stringWidth(text, font, size) > max_width:
+    while size > 8 and text_width(text, font, size) > max_width:
         size -= 0.5
     c.setFillColor(color)
     c.setFont(font, size)
-    if stringWidth(text, font, size) <= max_width:
+    if text_width(text, font, size) <= max_width:
         c.drawString(x, y, text)
         return
     first, rest = _two_lines(text, font, size, max_width)
@@ -67,13 +67,13 @@ def _two_lines(text: str, font: str, size: float, max_width: float) -> tuple[str
     first = ""
     for i, word in enumerate(words):
         trial = f"{first} {word}".strip()
-        if stringWidth(trial, font, size) > max_width:
+        if text_width(trial, font, size) > max_width:
             if first:
                 return first, " ".join(words[i:])
             break
         first = trial
     cut = len(text)
-    while cut > 1 and stringWidth(text[:cut], font, size) > max_width:
+    while cut > 1 and text_width(text[:cut], font, size) > max_width:
         cut -= 1
     return text[:cut], text[cut:].strip()
 
@@ -103,8 +103,8 @@ def render(
     """Draw the certificate. ``designation`` is the sentence part after the holder's name
     ("as heir to 40% of the holder's assets on Capimax PropShare,")."""
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(_W, _H), pageCompression=0)
-    c.setTitle("Capimax PropShare — Certificate of Designation")
+    c = DocCanvas(buf, pagesize=(_W, _H), pageCompression=0)
+    c.setTitle(tr("Capimax PropShare — Certificate of Designation"))
 
     # Ground, watermark, frame: the ownership certificate's own.
     c.setFillColor(base._CREAM)
@@ -133,29 +133,29 @@ def render(
     base._divider(c, _CX, 712, 150)
 
     base._spaced_centred(
-        c, _CX, 670, "Times-Bold", 30, "Certificate of Designation", 1.2, base._GREEN_D
+        c, _CX, 670, "Times-Bold", 30, tr("Certificate of Designation"), 1.2, base._GREEN_D
     )
     _plain_spacing(c)
     c.setFillColor(base._MUTED)
     c.setFont("Times-Italic", 12)
-    c.drawCentredString(_CX, 650, f"{role}  -  Capimax PropShare Beneficiary Register")
+    c.drawCentredString(_CX, 650, tr(f"{role}  -  Capimax PropShare Beneficiary Register"))
 
     # The statement.
     c.setFillColor(base._INK)
     c.setFont("Times-Roman", 12)
-    c.drawCentredString(_CX, 616, "This is to certify that")
+    c.drawCentredString(_CX, 616, tr("This is to certify that"))
     base._fit_centred(c, _CX, 588, "Times-Bold", 22, beneficiary, 420, base._GREEN_D)
     c.setStrokeColor(base._GOLD_L)
     c.setLineWidth(0.8)
     c.line(_CX - 150, 580, _CX + 150, 580)
     c.setFillColor(base._INK)
     c.setFont("Times-Roman", 12)
-    c.drawCentredString(_CX, 558, "has been designated by the account holder")
+    c.drawCentredString(_CX, 558, tr("has been designated by the account holder"))
     base._fit_centred(c, _CX, 537, "Times-Bold", 14, holder, 430, base._GREEN)
-    base._fit_centred(c, _CX, 517, "Times-Roman", 12, designation, 440, base._INK)
+    base._fit_centred(c, _CX, 517, "Times-Roman", 12, tr(designation), 440, base._INK)
     c.setFillColor(base._INK)
     c.setFont("Times-Roman", 12)
-    c.drawCentredString(_CX, 501, "as recorded in the Capimax PropShare beneficiary register.")
+    c.drawCentredString(_CX, 501, tr("as recorded in the Capimax PropShare beneficiary register."))
 
     # The person's details as recorded (2 columns x 5 rows).
     px, pw = 82.0, _W - 164.0
@@ -167,16 +167,16 @@ def render(
     c.setLineWidth(0.8)
     c.roundRect(px, py, pw, ph, 6, stroke=1, fill=1)
     fields = [
-        ("RELATIONSHIP TO THE HOLDER", relationship),
-        ("DESIGNATED AS", role),
-        ("IDENTITY DOCUMENT", id_type),
+        ("RELATIONSHIP TO THE HOLDER", tr(relationship)),
+        ("DESIGNATED AS", tr(role)),
+        ("IDENTITY DOCUMENT", tr(id_type)),
         ("DOCUMENT NUMBER", id_number),
-        ("ALLOCATION", allocation),
+        ("ALLOCATION", tr(allocation)),
         ("COVERAGE RECORDED", coverage),
-        ("TRANSFER CONDITION", condition),
+        ("TRANSFER CONDITION", tr(condition)),
         ("EMAIL ON RECORD", email),
         ("CERTIFICATE NUMBER", certificate_no),
-        ("ISSUED", f"{issued}  -  Version {version}"),
+        ("ISSUED", tr(f"{issued}  -  Version {version}")),
     ]
     col_w = pw / 2 - 12
     for i, (label, value) in enumerate(fields):
@@ -185,7 +185,7 @@ def render(
         y = py + ph - 24 - row * pitch
         c.setFillColor(base._MUTED)
         c.setFont("Helvetica", 7)
-        c.drawString(x, y, label)
+        c.drawString(x, y, tr(label))
         _fit_left(c, x, y - 14, "Times-Roman", 12, value or "-", col_w - 30, base._INK)
 
     # How a claim is made, with the page as a QR code.
@@ -195,11 +195,11 @@ def render(
     c.setLineWidth(0.8)
     c.roundRect(px, by, pw, bh, 6, stroke=1, fill=1)
     qr_side = 58.0
-    _qr(c, px + pw - qr_side - 16, by + (bh - qr_side) / 2, qr_side, claim_url)
+    _qr(c, mbox(px + pw - qr_side - 16, qr_side), by + (bh - qr_side) / 2, qr_side, claim_url)
     c.setFillColor(base._GREEN_D)
     c.setFont("Helvetica-Bold", 7.5)
-    c.drawString(px + 18, by + bh - 18, "HOW A CLAIM IS MADE")
-    how = (
+    c.drawString(px + 18, by + bh - 18, tr("HOW A CLAIM IS MADE"))
+    how = tr(
         "The person named above presents this certificate together with their own identity "
         "document at capimaxpropshare.com/estate-claim. After verification, the assets "
         "allocated to them are transferred to their own Capimax PropShare account. The "
@@ -215,19 +215,20 @@ def render(
     # Signature (left) and seal (right).
     c.setStrokeColor(base._INK)
     c.setLineWidth(0.8)
-    c.line(92, 152, 250, 152)
+    c.line(mx(92), 152, mx(250), 152)
     c.setFillColor(base._GREEN_D)
     c.setFont("Times-Italic", 12)
     c.drawString(98, 158, "Capimax PropShare")
     c.setFillColor(base._MUTED)
     c.setFont("Helvetica", 8)
-    c.drawString(92, 139, "Issued from the platform's beneficiary register")
+    c.drawString(92, 139, tr("Issued from the platform's beneficiary register"))
     base._seal(c, 458, 152, 48, upper="DESIGNATION", lower="RECORDED")
 
     # What this certificate is, and is not.
     c.setFillColor(base._MUTED)
-    c.setFont("Times-Roman", 8)
-    footer = (
+    size = 8 if current() == "en" else 7.2  # the translations run longer
+    c.setFont("Times-Roman", size)
+    footer = tr(
         "This certificate records a designation made by the account holder in the Capimax "
         "PropShare beneficiary register, as it stood on the issue date. The holder may change "
         "or withdraw it at any time: the register at the time of a claim prevails. It is not "
@@ -236,15 +237,13 @@ def render(
         "platform's terms and to applicable law."
     )
     fy = 122.0
-    for line in base._wrap(footer, "Times-Roman", 8, 305):
+    for line in base._wrap(footer, "Times-Roman", size, 305):
         c.drawString(92, fy, line)
         fy -= 10
     c.setFillColor(base._GOLD)
     c.setFont("Helvetica", 8)
     c.drawCentredString(_CX, 56, f"{certificate_no}   -   capimaxpropshare.com/estate-claim")
-    link_w = stringWidth(
-        f"{certificate_no}   -   capimaxpropshare.com/estate-claim", "Helvetica", 8
-    )
+    link_w = text_width(f"{certificate_no}   -   capimaxpropshare.com/estate-claim", "Helvetica", 8)
     c.linkURL(claim_url, (_CX - link_w / 2, 52, _CX + link_w / 2, 64), relative=0)
 
     c.showPage()

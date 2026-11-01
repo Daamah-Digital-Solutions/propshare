@@ -208,10 +208,49 @@ async def test_pdf_and_excel_downloads(client, db):
 
 
 @pytest.mark.asyncio
+async def test_the_statement_and_a_receipt_come_in_the_language_asked_for(client, db):
+    """``?lang=`` as the site sends it; an Arabic document keeps Arabic text as written."""
+    from openpyxl import load_workbook
+
+    tok, uid = await _user(client, db, "statement-ar@x.io")
+    db("UPDATE users SET full_name='سارة المستثمرة' WHERE id=:u", u=uid)
+    pid = _prop(db, "برج الخور")
+    _own(db, uid, pid, 2, "2026-02-10T00:00:00Z")
+    _tx(db, uid, "2026-02-10T00:00:00Z", "deposit", "500.00", desc="Deposit via stripe")
+    _balance(db, uid, "500.00")
+    q = "start=2026-02-01&end=2026-02-28"
+
+    def font(content: bytes) -> bool:
+        return b"DejaVuSans" in content
+
+    url = f"/api/v1/wallet/statement?{q}&format="
+    assert not font((await client.get(url + "pdf", headers=_h(tok))).content)
+    assert not font((await client.get(url + "pdf&lang=fr", headers=_h(tok))).content)
+    assert not font((await client.get(url + "pdf&lang=de", headers=_h(tok))).content)  # English
+    r = await client.get(url + "pdf&lang=ar", headers=_h(tok))
+    assert r.status_code == 200 and r.content.startswith(b"%PDF") and font(r.content)
+
+    r = await client.get(url + "xlsx&lang=ar", headers=_h(tok))
+    ws = load_workbook(io.BytesIO(r.content)).worksheets[0]
+    assert ws.sheet_view.rightToLeft and ws.cell(row=2, column=2).value == "سارة المستثمرة"
+    r = await client.get(url + "xlsx", headers=_h(tok))
+    ws = load_workbook(io.BytesIO(r.content)).worksheets[0]
+    assert not ws.sheet_view.rightToLeft and ws.cell(row=2, column=2).value == "statement-ar@x.io"
+
+    tx = db("SELECT id FROM transactions WHERE user_id=:u", u=uid)[0][0]
+    receipt = f"/api/v1/wallet/transactions/{tx}/receipt"
+    assert font((await client.get(f"{receipt}?lang=ar", headers=_h(tok))).content)
+    assert not font((await client.get(receipt, headers=_h(tok))).content)
+
+    # the language in force for one request does not reach the next
+    assert not font((await client.get(url + "pdf", headers=_h(tok))).content)
+
+
+@pytest.mark.asyncio
 async def test_statement_is_english_only(client, db, asession):
-    """Owner's decision (2026-09-24): the statement is in English. Text in another script (an
-    Arabic name, property title or admin note) is replaced by an English equivalent instead of
-    being printed as empty boxes; English text keeps what the fonts can draw."""
+    """An English or French statement is set in the standard Latin fonts. Text in another script
+    (an Arabic name, property title or admin note) is replaced by an English equivalent instead
+    of being printed as empty boxes; English text keeps what the fonts can draw."""
     from pypdf import PdfReader
 
     from app.services import statement_service as svc

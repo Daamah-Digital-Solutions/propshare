@@ -5,6 +5,7 @@
 //   - the REFRESH token is an httpOnly cookie set by the backend (credentials:
 //     "include" sends it). On a 401 we transparently call /auth/refresh once.
 // Supabase is gone — this is the only backend the SPA talks to.
+import { currentLanguage } from "@/lib/i18n/language";
 import type { PaymentOptions } from "@/lib/paymentMethods";
 
 export type { PaymentOptions };
@@ -112,11 +113,18 @@ export const apiUrl = (path: string): string => `${API_BASE}${path}`;
 export const assetUrl = (url: string): string =>
   url.startsWith("/api/") ? `${API_BASE}${url}` : url;
 
+/** A document the platform generates comes in the language the person has the site in. */
+const withDocLang = (path: string): string => {
+  const lang = currentLanguage();
+  if (lang === "en") return path;
+  return `${path}${path.includes("?") ? "&" : "?"}lang=${lang}`;
+};
+
 /** Authenticated binary fetch (e.g. a generated PDF certificate). One-shot refresh on 401. */
 export async function fetchBlob(path: string, _retried = false): Promise<Blob> {
   const headers: Record<string, string> = {};
   if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-  const resp = await fetch(`${API_BASE}${path}`, { headers, credentials: "include" });
+  const resp = await fetch(`${API_BASE}${withDocLang(path)}`, { headers, credentials: "include" });
   if (resp.status === 401 && !_retried) {
     const ok = await refreshAccessToken();
     if (ok) return fetchBlob(path, true);

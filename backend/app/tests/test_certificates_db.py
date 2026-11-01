@@ -18,8 +18,10 @@ What each test protects:
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 import uuid
+import zipfile
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -42,6 +44,35 @@ def _certs(db, uid):
 
 async def _download(client, tok, pid):
     return await client.get(f"/api/v1/investments/certificate/{pid}", headers=_h(tok))
+
+
+@pytest.mark.asyncio
+async def test_the_same_certificate_downloads_in_each_language(client, db):
+    tok, uid = await _user(client, db, "cert-lang@x.com")
+    pid = _seed_property(db, None, slug="cert-lang")
+    _ledger(db, uid, pid, 7)
+    url = f"/api/v1/investments/certificate/{pid}"
+
+    english = await client.get(url, headers=_h(tok))
+    assert b"Certificate of Ownership" in english.content and b"DejaVuSans" not in english.content
+    arabic = await client.get(f"{url}?lang=ar", headers=_h(tok))
+    assert arabic.status_code == 200 and b"DejaVuSans" in arabic.content
+    assert b"Certificate of Ownership" not in arabic.content
+    french = await client.get(f"{url}?lang=fr", headers=_h(tok))
+    assert b"Certificat de propri" in french.content
+
+    # one holding, one certificate: asking in another language issues nothing new
+    assert len(_certs(db, uid)) == 1
+    number, code, *_rest = _certs(db, uid)[0]
+    assert number.encode() in french.content and code.encode() in french.content
+    assert f"/URI ({certificate_service.verify_url(code)})".encode() in arabic.content
+
+    # the bundles follow it too
+    for path in ("certificates.zip", f"property/{pid}/documents.zip"):
+        r = await client.get(f"/api/v1/investments/{path}?lang=ar", headers=_h(tok))
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            pdfs = [z.read(n) for n in z.namelist() if n.endswith(".pdf")]
+        assert pdfs and all(b"DejaVuSans" in p for p in pdfs)
 
 
 @pytest.mark.asyncio

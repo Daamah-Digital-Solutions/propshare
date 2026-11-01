@@ -37,6 +37,7 @@ from app.services.certificate_service import (
     _spaced_centred,
     _wrap,
 )
+from app.services.doc_lang import DocCanvas, current, mbox, mx, status_text, tr
 
 _RED = HexColor("#B23A2E")  # overdue
 
@@ -78,13 +79,13 @@ def _page_frame(c: canvas.Canvas) -> None:
 def _footer(c: canvas.Canvas, plan_ref: str) -> None:
     c.setFillColor(_MUTED)
     c.setFont("Times-Roman", 8.5)
-    note = (
+    note = tr(
         "This schedule reflects the installment plan recorded in the Capimax PropShare ledger as "
         "of the issue date. It is generated from live data. Ownership vests progressively with "
         "each paid installment; rental income begins at handover (final payment)."
     )
     fy = 96
-    for ln in _wrap(note, "Times-Roman", 8.5, 300):
+    for ln in _wrap(note, "Times-Roman", 8.5, 300 if current() == "en" else 420):
         c.drawCentredString(_CX, fy, ln)
         fy -= 12
     c.setFillColor(_GOLD)
@@ -104,25 +105,26 @@ def _status_color(status: str) -> HexColor:
 def _table_header(c: canvas.Canvas, y: float) -> float:
     c.setFillColor(_MUTED)
     c.setFont("Helvetica-Bold", 7.5)
-    c.drawString(_C_PAY, y, "PAYMENT")
-    c.drawString(_C_DUE, y, "DUE DATE")
-    c.drawRightString(_C_BASE, y, "BASE")
-    c.drawRightString(_C_FEE, y, "FEE")
-    c.drawRightString(_C_TOTAL, y, "TOTAL")
-    c.drawRightString(_C_STATUS, y, "STATUS")
+    c.drawString(_C_PAY, y, tr("PAYMENT"))
+    c.drawString(_C_DUE, y, tr("DUE DATE"))
+    c.drawRightString(_C_BASE, y, tr("BASE"))
+    c.drawRightString(_C_FEE, y, tr("FEE"))
+    c.drawRightString(_C_TOTAL, y, tr("TOTAL"))
+    c.drawRightString(_C_STATUS, y, tr("STATUS"))
     c.setStrokeColor(_GOLD)
     c.setLineWidth(0.8)
-    c.line(_C_PAY, y - 6, _C_STATUS, y - 6)
+    c.line(mx(_C_PAY), y - 6, mx(_C_STATUS), y - 6)
     return y - 20
 
 
 def _table_row(c: canvas.Canvas, y: float, row: dict, zebra: bool) -> None:
     if zebra:
         c.setFillColor(_PANEL)
-        c.rect(_C_PAY - 6, y - 5, _C_STATUS - _C_PAY + 12, _ROW_H, stroke=0, fill=1)
+        width = _C_STATUS - _C_PAY + 12
+        c.rect(mbox(_C_PAY - 6, width), y - 5, width, _ROW_H, stroke=0, fill=1)
     c.setFillColor(_INK)
     c.setFont("Times-Roman", 9)
-    c.drawString(_C_PAY, y, _clip(str(row["label"]), "Times-Roman", 9, _C_DUE - _C_PAY - 8))
+    c.drawString(_C_PAY, y, _clip(tr(str(row["label"])), "Times-Roman", 9, _C_DUE - _C_PAY - 8))
     c.setFillColor(_MUTED)
     c.drawString(_C_DUE, y, str(row["due"]))
     c.setFillColor(_INK)
@@ -132,7 +134,7 @@ def _table_row(c: canvas.Canvas, y: float, row: dict, zebra: bool) -> None:
     c.drawRightString(_C_TOTAL, y, str(row["total"]))
     c.setFont("Helvetica-Bold", 7.5)
     c.setFillColor(_status_color(str(row["status"])))
-    c.drawRightString(_C_STATUS, y, str(row["status"]).upper())
+    c.drawRightString(_C_STATUS, y, status_text(str(row["status"])).upper())
 
 
 def render_schedule_pdf(
@@ -164,18 +166,18 @@ def render_schedule_pdf(
     this function only lays out the page. Content stream is left uncompressed so the real
     figures appear literally in the bytes (verifiable in tests)."""
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(_W, _H), pageCompression=0)
-    c.setTitle("Capimax PropShare — Installment Schedule")
+    c = DocCanvas(buf, pagesize=(_W, _H), pageCompression=0)
+    c.setTitle(tr("Capimax PropShare — Installment Schedule"))
 
     _page_frame(c)
 
     # Header — official logo (vector fallback), divider, title, subtitle.
     _draw_brand(c, _CX)
     _divider(c, _CX, 712, 150)
-    _spaced_centred(c, _CX, 676, "Times-Bold", 27, "Installment Schedule", 1.0, _GREEN_D)
+    _spaced_centred(c, _CX, 676, "Times-Bold", 27, tr("Installment Schedule"), 1.0, _GREEN_D)
     c.setFillColor(_MUTED)
     c.setFont("Times-Italic", 11.5)
-    c.drawCentredString(_CX, 658, "Progressive-Ownership Payment Plan")
+    c.drawCentredString(_CX, 658, tr("Progressive-Ownership Payment Plan"))
 
     # Property + holder line.
     _fit_centred(c, _CX, 628, "Times-Bold", 16, property_title, 440, _GREEN)
@@ -186,7 +188,7 @@ def render_schedule_pdf(
         c.drawCentredString(_CX, 610, loc)
     c.setFillColor(_MUTED)
     c.setFont("Times-Italic", 10.5)
-    c.drawCentredString(_CX, 594, f"Plan holder: {holder}")
+    c.drawCentredString(_CX, 594, tr(f"Plan holder: {holder}"))
 
     # Summary panel — 3 columns x 4 rows of plan facts.
     px, pw = 56.0, _W - 112.0
@@ -197,18 +199,18 @@ def render_schedule_pdf(
     c.setLineWidth(0.8)
     c.roundRect(px, py, pw, ph, 6, stroke=1, fill=1)
     fields = [
-        ("UNITS", f"{vested_units} / {units_total} vested"),
+        ("UNITS", tr(f"{vested_units} / {units_total} vested")),
         ("UNIT PRICE", unit_price),
         ("CONTRACT VALUE", contract_value),
         ("DOWN PAYMENT", f"{down_payment_pct}%"),
-        ("DURATION", f"{duration_months} months"),
-        ("INSTALLMENT FEE", f"{fee_rate}% / payment"),
+        ("DURATION", tr(f"{duration_months} months")),
+        ("INSTALLMENT FEE", tr(f"{fee_rate}% / payment")),
         ("TOTAL FEES", total_fees),
         ("GRAND TOTAL", grand_total),
         ("PAID TO DATE", total_paid),
         ("REMAINING", remaining_balance),
-        ("NEXT PAYMENT", next_due),
-        ("STATUS", "Completed — handover" if status == "completed" else "Active"),
+        ("NEXT PAYMENT", tr(next_due)),
+        ("STATUS", tr("Completed — handover" if status == "completed" else "Active")),
     ]
     col_w = pw / 3
     for i, (label, val) in enumerate(fields):
@@ -217,7 +219,7 @@ def render_schedule_pdf(
         y = py + ph - 26 - rrow * 32
         c.setFillColor(_MUTED)
         c.setFont("Helvetica", 6.8)
-        c.drawString(x, y, label)
+        c.drawString(x, y, tr(label))
         c.setFillColor(_GREEN_D if label in ("GRAND TOTAL", "REMAINING") else _INK)
         c.setFont("Times-Bold" if label in ("GRAND TOTAL", "REMAINING") else "Times-Roman", 10.5)
         c.drawString(x, y - 15, _clip(str(val), "Times-Roman", 10.5, col_w - 24))
@@ -226,7 +228,7 @@ def render_schedule_pdf(
     y = py - 26
     c.setFillColor(_GREEN_D)
     c.setFont("Times-Bold", 12)
-    c.drawString(_C_PAY, y, "Payment Schedule")
+    c.drawString(_C_PAY, y, tr("Payment Schedule"))
     y -= 22
     y = _table_header(c, y)
     for i, row in enumerate(rows):
@@ -235,7 +237,7 @@ def render_schedule_pdf(
             c.showPage()
             _page_frame(c)
             _spaced_centred(
-                c, _CX, 780, "Times-Bold", 15, "Payment Schedule (continued)", 1.0, _GREEN_D
+                c, _CX, 780, "Times-Bold", 15, tr("Payment Schedule (continued)"), 1.0, _GREEN_D
             )
             y = _table_header(c, 748)
         _table_row(c, y, row, zebra=(i % 2 == 1))
@@ -243,7 +245,7 @@ def render_schedule_pdf(
 
     c.setFillColor(_MUTED)
     c.setFont("Times-Italic", 8.5)
-    c.drawString(_C_PAY, y - 4, f"Issued {issued}")
+    c.drawString(_C_PAY, y - 4, tr(f"Issued {issued}"))
 
     _footer(c, plan_ref)
     c.showPage()

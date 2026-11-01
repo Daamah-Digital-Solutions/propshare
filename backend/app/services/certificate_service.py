@@ -32,7 +32,6 @@ import zipfile
 
 import segno
 from reportlab.lib.colors import Color, HexColor
-from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +41,16 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import InvestmentCertificate, OwnershipLedger, Property
 from app.models.identity import User
+from app.services.doc_lang import (
+    DocCanvas,
+    current,
+    has_arabic,
+    long_date,
+    mbox,
+    mx,
+    text_width,
+    tr,
+)
 
 _W, _H = 595.0, 842.0  # A4 points
 _CX = _W / 2
@@ -72,14 +81,24 @@ def _spaced_centred(
     spacing: float,
     color: HexColor,
 ) -> None:
-    """Centred text with letter-spacing (Canvas has no setCharSpace — use a text object)."""
-    w = stringWidth(text, font, size) + spacing * max(0, len(text) - 1)
+    """Centred text with letter-spacing (Canvas has no setCharSpace — use a text object).
+    Spaced-out Arabic letters would no longer join, so Arabic is drawn plain; and only an English
+    document lets the spacing run on into the lines after it (see the certificate's footer)."""
+    if has_arabic(text):
+        _fit_centred(c, cx, y, font, size, text, 470, color)
+        return
+    contain = current() != "en"
+    if contain:
+        c.saveState()
+    w = text_width(text, font, size) + spacing * max(0, len(text) - 1)
     t = c.beginText(cx - w / 2, y)
     t.setFont(font, size)
     t.setFillColor(color)
     t.setCharSpace(spacing)
     t.textLine(text)
     c.drawText(t)
+    if contain:
+        c.restoreState()
 
 
 def _wrap(text: str, font: str, size: float, max_width: float) -> list[str]:
@@ -88,7 +107,7 @@ def _wrap(text: str, font: str, size: float, max_width: float) -> list[str]:
     cur = ""
     for word in text.split():
         trial = f"{cur} {word}".strip()
-        if stringWidth(trial, font, size) <= max_width or not cur:
+        if text_width(trial, font, size) <= max_width or not cur:
             cur = trial
         else:
             lines.append(cur)
@@ -110,7 +129,7 @@ def _fit_centred(
 ) -> None:
     """Draw centred text, shrinking the font just enough that a long value never overflows."""
     size = base_size
-    while size > 8 and stringWidth(text, font, size) > max_width:
+    while size > 8 and text_width(text, font, size) > max_width:
         size -= 0.5
     c.setFillColor(color)
     c.setFont(font, size)
@@ -119,9 +138,9 @@ def _fit_centred(
 
 def _clip(text: str, font: str, size: float, max_width: float) -> str:
     """Truncate with an ellipsis so a value fits inside its column."""
-    if stringWidth(text, font, size) <= max_width:
+    if text_width(text, font, size) <= max_width:
         return text
-    while text and stringWidth(text + "…", font, size) > max_width:
+    while text and text_width(text + "…", font, size) > max_width:
         text = text[:-1]
     return text + "…"
 
@@ -187,8 +206,10 @@ def _seal(
 ) -> None:
     """A gold-gradient wax-style seal with a rosette, monogram and ribbon tails. ``upper``
     and ``lower`` are the two words around the monogram (the beneficiary certificate has
-    its own)."""
+    its own). ``cx`` is on the document's own side: the canvas mirrors the words, the shapes
+    are mirrored here."""
     c.saveState()
+    word_x, cx = cx, mx(cx)
     # Ribbon tails first (so the disc overlaps them).
     top, bot = cy - r + 6, cy - r - 24
     c.setFillColor(_GOLD)
@@ -238,11 +259,11 @@ def _seal(
     c.circle(cx, cy, r - 17, stroke=1, fill=0)
     c.setFillColor(_GREEN_D)
     c.setFont("Times-Bold", 26)
-    c.drawCentredString(cx, cy - 3, "C")
+    c.drawCentredString(word_x, cy - 3, "C")
     c.setFont("Helvetica-Bold", 5.5)
     c.setFillColor(_GREEN)
-    c.drawCentredString(cx, cy + 17, upper)
-    c.drawCentredString(cx, cy - 24, lower)
+    c.drawCentredString(word_x, cy + 17, tr(upper))
+    c.drawCentredString(word_x, cy - 24, tr(lower))
     c.restoreState()
 
 
@@ -316,8 +337,8 @@ def render_certificate_pdf(
     the certificate's number; its QR code opens ``verify_url``, where ``verification_code`` is
     checked."""
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(_W, _H), pageCompression=0)
-    c.setTitle("Capimax PropShare — Certificate of Ownership")
+    c = DocCanvas(buf, pagesize=(_W, _H), pageCompression=0)
+    c.setTitle(tr("Capimax PropShare — Certificate of Ownership"))
 
     # Ground + faint monogram watermark.
     c.setFillColor(_CREAM)
@@ -348,32 +369,34 @@ def render_certificate_pdf(
     _divider(c, _CX, 712, 150)
 
     # Title + subtitle.
-    _spaced_centred(c, _CX, 668, "Times-Bold", 31, "Certificate of Ownership", _TRACKING, _GREEN_D)
+    _spaced_centred(
+        c, _CX, 668, "Times-Bold", 31, tr("Certificate of Ownership"), _TRACKING, _GREEN_D
+    )
     c.setFillColor(_MUTED)
     c.setFont("Times-Italic", 12)
-    c.drawCentredString(_CX, 648, "Fractional Real-Estate Ownership")
+    c.drawCentredString(_CX, 648, tr("Fractional Real-Estate Ownership"))
 
     # Attestation.
     c.setFillColor(_INK)
     c.setFont("Times-Roman", 12)
-    c.drawCentredString(_CX, 612, "This is to certify that")
+    c.drawCentredString(_CX, 612, tr("This is to certify that"))
     _fit_centred(c, _CX, 584, "Times-Bold", 22, holder, 400, _GREEN_D)
     c.setStrokeColor(_GOLD_L)
     c.setLineWidth(0.8)
     c.line(_CX - 150, 576, _CX + 150, 576)
     c.setFillColor(_INK)
     c.setFont("Times-Roman", 12)
-    holds_line = f"is the registered holder of {units} fractional ownership units in"
+    holds_line = tr(f"is the registered holder of {units} fractional ownership units in")
     c.drawCentredString(_CX, 552, holds_line)
     _fit_centred(c, _CX, 530, "Times-Bold", 14, property_title, 430, _GREEN)
     c.setFillColor(_INK)
     c.setFont("Times-Roman", 12)
-    ledger_line = "as recorded in the Capimax PropShare ownership ledger."
+    ledger_line = tr("as recorded in the Capimax PropShare ownership ledger.")
     if ownership == "-":  # a listing without a unit count has no share to state
         c.drawCentredString(_CX, 510, ledger_line)
     else:
         # how much of the property the units are (client, 2026-10-01): OWNERSHIP STAKE below
-        c.drawCentredString(_CX, 511, f"representing {ownership} of the property,")
+        c.drawCentredString(_CX, 511, tr(f"representing {ownership} of the property,"))
         c.drawCentredString(_CX, 494, ledger_line)
 
     # Fact panel (2 columns x 4 rows).
@@ -398,7 +421,7 @@ def render_certificate_pdf(
         y = py + ph - 30 - row * 38
         c.setFillColor(_MUTED)
         c.setFont("Helvetica", 7.5)
-        c.drawString(x, y, label)
+        c.drawString(x, y, tr(label))
         c.setFillColor(_INK)
         c.setFont("Times-Roman", 12.5)
         c.drawString(x, y - 16, _clip(str(val), "Times-Roman", 12.5, pw / 2 - 44))
@@ -408,26 +431,27 @@ def render_certificate_pdf(
     # 2026-10-28, as on Capimax BRX).
     qr_side = 70.0
     qr_x, qr_y = _CX - qr_side / 2 + 8, 196.0
-    draw_qr(c, qr_x, qr_y, qr_side, verify_url)
-    c.linkURL(verify_url, (qr_x, qr_y, qr_x + qr_side, qr_y + qr_side), relative=0)
+    qr_left = mbox(qr_x, qr_side)
+    draw_qr(c, qr_left, qr_y, qr_side, verify_url)
+    c.linkURL(verify_url, (qr_left, qr_y, qr_left + qr_side, qr_y + qr_side), relative=0)
     c.setFillColor(_MUTED)
     c.setFont("Helvetica", 6.8)
-    c.drawCentredString(qr_x + qr_side / 2, qr_y - 13, "SCAN TO VERIFY")
+    c.drawCentredString(qr_x + qr_side / 2, qr_y - 13, tr("SCAN TO VERIFY"))
     _seal(c, 458, 232, 48)
     c.setStrokeColor(_INK)
     c.setLineWidth(0.8)
-    c.line(92, 210, 250, 210)
+    c.line(mx(92), 210, mx(250), 210)
     c.setFillColor(_GREEN_D)
     c.setFont("Times-Italic", 12)
     c.drawString(98, 216, "Capimax PropShare")
     c.setFillColor(_MUTED)
     c.setFont("Helvetica", 8)
-    c.drawString(92, 196, "Authorized on behalf of the platform")
+    c.drawString(92, 196, tr("Authorized on behalf of the platform"))
 
     # Footer — honest legal framing, word-wrapped so it never spills past the frame.
     c.setFillColor(_MUTED)
     c.setFont("Times-Roman", 8.5)
-    footer_text = (
+    footer_text = tr(
         "This certificate reflects the fractional units recorded in the Capimax PropShare "
         "ownership ledger on its issue date; scan its QR code to confirm it is authentic and "
         "still current. It is not a transferable security or a substitute for the offering "
@@ -435,9 +459,11 @@ def render_certificate_pdf(
     )
     # NB: the title's letter-spacing stays in the PDF text state, so every later line is drawn
     # wider than stringWidth() says (~1.3x at this size): keep the wrap width well under the
-    # ~500pt safe area.
+    # ~500pt safe area. Translations do not carry the spacing (``_spaced_centred``).
+    english = current() == "en"
+    tracking = _TRACKING if english else 0.0
     fy = 128
-    for ln in _wrap(footer_text, "Times-Roman", 8.5, 270):
+    for ln in _wrap(footer_text, "Times-Roman", 8.5, 270 if english else 440):
         c.drawCentredString(_CX, fy, ln)
         fy -= 12.5
 
@@ -445,16 +471,16 @@ def render_certificate_pdf(
     # copy (and a link in the file). The title's letter-spacing (NB above) widens a line by its
     # length, so each line is placed by its drawn width to sit centred.
     def _centred_tracked(text: str, y: float, color: HexColor, size: float) -> tuple[float, float]:
-        drawn = stringWidth(text, "Helvetica", size) + _TRACKING * (len(text) - 1)
+        drawn = text_width(text, "Helvetica", size) + tracking * (len(text) - 1)
         left = _CX - drawn / 2
         c.setFillColor(color)
         c.setFont("Helvetica", size)
         c.drawString(left, y, text)
         return left, drawn
 
-    _centred_tracked(f"{cert_ref}   •   Verification code {verification_code}", 74, _GOLD, 7.2)
+    _centred_tracked(tr(f"{cert_ref}   •   Verification code {verification_code}"), 74, _GOLD, 7.2)
     shown = verify_url.split("://", 1)[-1]
-    left, drawn = _centred_tracked(f"Verify at {shown}", 61, _GREEN_D, 7.2)
+    left, drawn = _centred_tracked(tr(f"Verify at {shown}"), 61, _GREEN_D, 7.2)
     c.linkURL(verify_url, (left, 57, left + drawn, 69), relative=0)
 
     c.showPage()
@@ -821,7 +847,7 @@ def render_for(cert: InvestmentCertificate) -> bytes:
         spv=cert.spv_name or "-",
         jurisdiction=cert.jurisdiction or "-",
         cert_ref=cert.number,
-        issued=cert.issued_at.strftime("%b %d, %Y"),
+        issued=long_date(cert.issued_at, "%b %d, %Y"),
         verification_code=cert.verification_code,
         verify_url=verify_url(cert.verification_code),
     )

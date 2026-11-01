@@ -21,7 +21,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,6 +64,9 @@ async def current_principal(request: Request) -> Principal:
 
 
 PrincipalDep = Annotated[Principal, Depends(current_principal)]
+# The language a generated document comes in: the one the person has the site in (ar, fr; else
+# English).
+DocLang = Annotated[str | None, Query()]
 
 
 def require_role(*allowed: str) -> Callable[[Principal], Awaitable[Principal]]:

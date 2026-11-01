@@ -244,10 +244,10 @@ class UnitStatement:
 
 def _property_name(pid: uuid.UUID, titles: dict) -> str:
     # imported here, like the statement's period rules below: that module is the wallet's
-    from app.services.statement_service import _humanize, english
+    from app.services.statement_service import _humanize, printable
 
     title, slug = titles.get(pid, (None, None))
-    return english(title) or _humanize(slug) or f"Property {str(pid)[:8].upper()}"
+    return printable(title) or _humanize(slug) or f"Property {str(pid)[:8].upper()}"
 
 
 async def build_statement(
@@ -257,7 +257,7 @@ async def build_statement(
     with the units held in its property afterwards, and per property the units held at the
     start, what came in, what went out and what was held at the end. Only the caller's own
     ledger lines are read."""
-    from app.services.statement_service import MAX_ROWS, english, validate_period
+    from app.services.statement_service import MAX_ROWS, printable, validate_period
 
     validate_period(start, end)
     user = await session.get(User, user_id)
@@ -327,7 +327,7 @@ async def build_statement(
                 at=r.created_at,
                 property_title=_property_name(r.property_id, titles),
                 label=LABELS.get(r.reason, _OTHER),
-                counterparty=(english(name) or "a named person") if name else "",
+                counterparty=(printable(name) or "a named person") if name else "",
                 units=r.units,
                 balance=running[r.property_id],
                 reference=numbers.get(r.ref_id) or str(r.ref_id or r.id)[:8].upper(),
@@ -350,7 +350,7 @@ async def build_statement(
     )
     return UnitStatement(
         ref=f"UST-{str(user_id)[:4].upper()}-{start:%Y%m%d}-{end:%Y%m%d}",
-        holder=english(user.full_name) or user.email,
+        holder=printable(user.full_name) or user.email,
         email=user.email,
         start=start,
         end=end,

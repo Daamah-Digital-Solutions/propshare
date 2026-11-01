@@ -437,7 +437,7 @@ export const BeneficiaryRegister = () => {
                   placeholder="As shown on ID, in Latin letters"
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  In Latin letters, as in their passport: the certificate is issued in English.
+                  In Latin letters, as in their passport: the certificate states the name that way.
                 </p>
               </div>
               <div className="space-y-1.5">

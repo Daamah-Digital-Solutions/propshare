@@ -69,8 +69,10 @@ from app.services import (
     wallet_service,
 )
 from app.services.distribution_service import hamilton
+from app.services.doc_lang import list_text, long_date
+from app.services.doc_lang import tr as in_document_language
 from app.services.integrations import storage
-from app.services.statement_service import english
+from app.services.statement_service import english, printable
 
 # What the holder's form offers; the certificate and the staff page print these labels.
 ROLES = {
@@ -569,17 +571,17 @@ async def build_certificate(
     now: dt.datetime | None = None,
 ) -> tuple[str, bytes]:
     """(file name, PDF) of the certificate for one person in the caller's register: what the
-    register says about them today. It is issued in English, like every document of the
-    platform, so the name must be written in Latin letters; and it must identify the person,
-    so their identity document number must be on the record."""
+    register says about them today. It states the name in Latin letters, as on the person's
+    passport, whatever language it is issued in; and it must identify the person, so their
+    identity document number must be on the record."""
     b = await _get_owned(session, owner_id, beneficiary_id)
     meta = _meta(b.meta)
     name = english(b.full_name)
     if not name:
         raise AppError(
             "CERTIFICATE_LATIN_NAME",
-            "The certificate is issued in English. Edit this person and write their full "
-            "name in Latin letters, exactly as in their passport or identity card.",
+            "The certificate states the name in Latin letters. Edit this person and write "
+            "their full name in Latin letters, exactly as in their passport or identity card.",
             status_code=422,
         )
     id_number = english(meta["idNumber"])
@@ -591,18 +593,22 @@ async def build_certificate(
             status_code=422,
         )
     owner = await session.get(User, owner_id)
-    holder = (english(owner.full_name) if owner else None) or (owner.email if owner else "-")
+    holder = (printable(owner.full_name) if owner else None) or (owner.email if owner else "-")
     role = ROLES[meta["role"]]
     pct = b.allocation_pct
     share = f"with an allocation of {pct}%," if pct > 0 else "with no share allocated,"
     scope = meta["scope"]
-    coverage = SCOPES["portfolio"] if "portfolio" in scope else ", ".join(SCOPES[s] for s in scope)
+    coverage = (
+        in_document_language(SCOPES["portfolio"])
+        if "portfolio" in scope
+        else list_text([in_document_language(SCOPES[s]) for s in scope])
+    )
     pdf = estate_certificate.render(
         beneficiary=name,
         holder=holder,
         role=role,
         designation=f"as {role.lower()}, {share}",
-        relationship=english(b.relationship) or "-",
+        relationship=printable(b.relationship) or "-",
         id_type=english(meta["idType"]) or "-",
         id_number=id_number,
         allocation=f"{pct}%" if pct > 0 else "No share allocated",
@@ -610,7 +616,7 @@ async def build_certificate(
         condition=TRIGGERS[meta["trigger"]],
         email=english(b.email) or "-",
         certificate_no=b.certificate_no,
-        issued=(now or _utcnow()).strftime("%b %d, %Y"),
+        issued=long_date(now or _utcnow(), "%b %d, %Y"),
         version=b.version or 1,
         claim_url=claim_url(b.certificate_no),
     )

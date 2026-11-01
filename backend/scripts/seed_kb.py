@@ -130,7 +130,9 @@ payouts are switched on, an eligible debit card can receive the money within min
 small fee that is shown before you confirm and deducted from the amount; if an instant payout
 cannot go through it is sent at standard speed instead, never lost. You see every withdrawal,
 its number, destination and status in your wallet (Withdrawal requests) and are notified when
-it is paid or returned (returned funds go back to your wallet). An account statement for any period you choose (up to
+it is paid or returned (returned funds go back to your wallet). Every document you download
+from the platform (certificates, receipts, statements, installment schedules) comes in the
+language you have the site in: English, Arabic or French. An account statement for any period you choose (up to
 three years at a time) can be downloaded as a PDF or an Excel file from the Account statement
 card on the wallet page: opening and closing balance, every movement with a running balance,
 totals by type and your holdings at the end of the period. Your units have their own
@@ -326,8 +328,9 @@ whole. The holder can upload a copy of the person's identity document (a photo o
 keep with the record, can edit or remove a record at any time, and can download a certificate
 for each person. The certificate carries the platform's logo, the person's details as recorded,
 a certificate number, its version (every change to a record makes a new version, and the
-latest one is the valid one) and where a claim is made. It is issued in English, so the name
-must be written in Latin letters, and it needs the identity document number. It records the
+latest one is the valid one) and where a claim is made. It comes in the language the site is
+in, and states the name in Latin letters, as on the passport, so the name must be written in
+Latin letters; it also needs the identity document number. It records the
 holder's wishes and is not a will. The assistant never shows identity documents or their
 numbers.
 
@@ -576,7 +579,8 @@ ARTICLES_AR: list[tuple[str, str, str, int, str]] = [
 يمكن أن يصل المبلغ إلى بطاقة خصم مؤهلة خلال دقائق مقابل رسم صغير يُعرض قبل التأكيد ويُخصم من
 المبلغ؛ وإن تعذّر الصرف الفوري يُرسل بالسرعة العادية ولا يضيع. ترى كل سحب وسرعته ورسمه وحالته في
 المحفظة (Withdrawal requests) برقمه ووجهته وحالته، ويصلك إشعار عند الصرف أو الإرجاع (المبلغ
-المرتجع يعود لمحفظتك). ويمكنك تنزيل كشف حساب لأي
+المرتجع يعود لمحفظتك). وكل مستند تنزّله من المنصة (الشهادات والإيصالات والكشوف وجداول الأقساط)
+يأتي باللغة التي تستخدم بها الموقع: الإنجليزية أو العربية أو الفرنسية. ويمكنك تنزيل كشف حساب لأي
 فترة تختارها (حتى ثلاث سنوات في المرة) بصيغة PDF أو Excel من بطاقة "كشف الحساب" في صفحة المحفظة:
 الرصيد الافتتاحي والختامي، وكل حركة مع الرصيد بعدها، والإجماليات حسب النوع، وحيازاتك في نهاية
 الفترة. وللوحدات كشف خاص بها: من لوحة التحكم ← Active Investments ← Unit Movements ← "Download
@@ -740,8 +744,9 @@ statement" تنزّل للفترة التي تختارها، بصيغة PDF أو
 له؛ ولا يتجاوز مجموع حصص الجميع الكل. يستطيع صاحب الحساب رفع صورة من وثيقة هوية الشخص (صورة أو
 ملف PDF) لتُحفظ مع سجله، وتعديل السجل أو حذفه في أي وقت، وتنزيل شهادة لكل شخص. تحمل الشهادة شعار
 المنصة وبيانات الشخص كما سُجّلت ورقم الشهادة وإصدارها (كل تعديل على السجل يصدر إصدارًا جديدًا،
-والأحدث هو المعتمد) ومكان تقديم المطالبة. تصدر الشهادة بالإنجليزية، فيُكتب الاسم بالحروف
-اللاتينية، ويلزم لها رقم وثيقة الهوية. وهي سجل لرغبة صاحب الحساب وليست وصية. ولا يعرض المساعد
+والأحدث هو المعتمد) ومكان تقديم المطالبة. تصدر الشهادة بلغة الموقع، وتذكر الاسم بالحروف
+اللاتينية كما في جواز السفر، فيُكتب الاسم بالحروف اللاتينية، ويلزم لها رقم وثيقة الهوية.
+وهي سجل لرغبة صاحب الحساب وليست وصية. ولا يعرض المساعد
 وثائق الهوية ولا أرقامها أبدًا.
 
 ما تشمله الحصة: حصة الشخص من وحدات صاحب الحساب مشمولة دائمًا، وتتبعها عوائدها القادمة. وإذا اختار

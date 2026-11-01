@@ -342,7 +342,12 @@ async def test_the_certificate_states_the_record_and_where_to_claim(client, db):
     assert (await client.get(url, headers=oh)).status_code == 404
     assert (await client.get(url)).status_code == 401
 
-    # it is issued in English: a name the fonts cannot print is refused with what to do...
+    # it comes in the language the person has the site in...
+    arabic_paper = await client.get(f"{url}?lang=ar", headers=h)
+    assert arabic_paper.status_code == 200 and b"DejaVuSans" in arabic_paper.content
+    assert b"Certificat de d" in (await client.get(f"{url}?lang=fr", headers=h)).content
+
+    # the name stays in Latin letters, as on the passport: anything else is refused with what to do
     arabic = await _beneficiary(
         client, h, full_name="فاطمة المنصوري", email=None, allocation_pct=10
     )

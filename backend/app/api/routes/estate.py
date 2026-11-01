@@ -30,7 +30,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import Response
 from slowapi.util import get_remote_address
 
-from app.api.deps import AdminDep, PrincipalDep, SessionDep, current_principal
+from app.api.deps import AdminDep, DocLang, PrincipalDep, SessionDep, current_principal
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.ratelimit import ESTATE_CLAIM_LIMIT, limiter
@@ -42,6 +42,7 @@ from app.schemas.estate import (
     EstateExecutionOut,
 )
 from app.services import document_service, estate_service
+from app.services.doc_lang import doc_language
 
 router = APIRouter(prefix="/api/v1", tags=["estate"])
 
@@ -139,13 +140,14 @@ async def remove_beneficiary_document(
 
 @router.get("/estate/beneficiaries/{beneficiary_id}/certificate")
 async def beneficiary_certificate(
-    beneficiary_id: uuid.UUID, principal: OwnerScoped, session: SessionDep
+    beneficiary_id: uuid.UUID, principal: OwnerScoped, session: SessionDep, lang: DocLang = None
 ):
     """The certificate of one person in the caller's register: what the register says about
     them today, with the number a claim is made with. Generated on demand, always current."""
-    filename, pdf = await estate_service.build_certificate(
-        session, principal.user_id, beneficiary_id
-    )
+    with doc_language(lang):
+        filename, pdf = await estate_service.build_certificate(
+            session, principal.user_id, beneficiary_id
+        )
     return Response(
         content=pdf,
         media_type="application/pdf",

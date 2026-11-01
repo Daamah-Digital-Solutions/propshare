@@ -15,10 +15,11 @@ ends on the real balance instead of printing an impossible negative one.
 Periods are whole UTC days, both ends inclusive. Holdings are the units the user owned at the
 end of the period (``ownership_ledger``).
 
-Statements are in English only (owner's decision, 2026-09-24). The PDF is set in the standard
-Latin fonts, so free text written in another script — an Arabic name, property title or
-admin note — is replaced by an English equivalent (the email, the slug, the movement's type)
-instead of being printed as empty boxes; see ``english``.
+A statement comes in the language the person has the site in (``doc_lang``; client,
+2026-11-01). The PDF is set in the standard Latin fonts, so free text written in another script
+— an Arabic name, property title or admin note — is replaced by an English equivalent (the
+email, the slug, the movement's type) instead of being printed as empty boxes; only an Arabic
+document, which has the font, keeps Arabic text as written. See ``printable``.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import OwnershipLedger, Property, Transaction, User, Wallet
+from app.services.doc_lang import has_arabic, is_rtl
 
 MAX_DAYS = 3 * 366  # a longer statement is split into several downloads
 MAX_ROWS = 5000
@@ -124,6 +126,13 @@ def english(text: str | None) -> str | None:
             lost = lost or ch.isalnum()
     out = " ".join("".join(kept).split())
     return None if lost or not out else out
+
+
+def printable(text: str | None) -> str | None:
+    """``english``, except that an Arabic document keeps Arabic text as written."""
+    if text and is_rtl() and has_arabic(text):
+        return " ".join(text.split())
+    return english(text)
 
 
 def _humanize(slug: str | None) -> str | None:
@@ -229,7 +238,7 @@ async def build_statement(
                 at=tx.created_at,
                 type=kind,
                 type_label=label,
-                description=(english(note) or label) if note else "",
+                description=(printable(note) or label) if note else "",
                 status=STATUS_LABELS.get(tx.status, tx.status.capitalize()),
                 amount=amount,
                 balance=running,
@@ -256,7 +265,7 @@ async def build_statement(
     holdings = sorted(
         (
             Holding(
-                english(title) or _humanize(slug) or f"Property {str(pid)[:8].upper()}",
+                printable(title) or _humanize(slug) or f"Property {str(pid)[:8].upper()}",
                 int(units),
             )
             for pid, title, slug, units in held
@@ -266,7 +275,7 @@ async def build_statement(
 
     return Statement(
         ref=statement_ref(user_id, start, end),
-        holder=english(user.full_name) or user.email,
+        holder=printable(user.full_name) or user.email,
         email=user.email,
         currency=get_settings().wallet_currency,
         start=start,

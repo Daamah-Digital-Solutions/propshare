@@ -463,6 +463,35 @@ async def test_plan_carries_property_and_schedule_pdf(client, db):
     assert forbidden.status_code == 404
 
 
+async def test_the_schedule_comes_in_the_language_asked_for(client, db):
+    import io
+
+    from openpyxl import load_workbook
+
+    tok, uid = await _user(client, db, "in-lang@x.com")
+    _kyc_verify(db, uid)
+    _set_balance(db, uid, 100000)
+    pid = _seed_property(db)
+    plan = (await _create(client, tok, pid, amount=1200, duration=12)).json()
+    url = f"/api/v1/installments/{plan['id']}/schedule"
+
+    english = (await client.get(f"{url}.pdf", headers=_h(tok))).content
+    assert b"Installment Schedule" in english and b"DejaVuSans" not in english
+    arabic = (await client.get(f"{url}.pdf?lang=ar", headers=_h(tok))).content
+    assert b"DejaVuSans" in arabic and b"Installment Schedule" not in arabic
+    french = (await client.get(f"{url}.pdf?lang=fr", headers=_h(tok))).content
+    assert b"Acompte" in french and b"DejaVuSans" not in french
+
+    wb = load_workbook(
+        io.BytesIO((await client.get(f"{url}.xlsx?lang=ar", headers=_h(tok))).content)
+    )
+    ws = wb.worksheets[0]
+    assert ws.title == "جدول الأقساط" and ws.sheet_view.rightToLeft
+    assert ws.cell(row=2, column=1).value == "صاحب الحساب"
+    rows = [[c.value for c in r] for r in ws.iter_rows()]
+    assert "الدفعة المقدمة" in [r[0] for r in rows]
+
+
 async def test_schedule_downloads_as_excel_with_the_same_figures(client, db):
     import io
 

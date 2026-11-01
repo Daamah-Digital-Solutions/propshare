@@ -23,13 +23,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 
-from app.api.deps import KycVerifiedDep, PrincipalDep, SessionDep
+from app.api.deps import DocLang, KycVerifiedDep, PrincipalDep, SessionDep
 from app.api.routes._sukuk_form import certificate_upload
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.schemas.installments import InstallmentPlanCreateIn, InstallmentPlanOut
 from app.schemas.investment import SukukCertificateOut
 from app.services import installment_service, sukuk_service
+from app.services.doc_lang import doc_language
 
 router = APIRouter(prefix="/api/v1/installments", tags=["installments"])
 
@@ -115,12 +116,15 @@ async def pay_installment(
 
 
 @router.get("/{plan_id}/schedule.pdf")
-async def schedule_pdf(plan_id: uuid.UUID, session: SessionDep, principal: PrincipalDep):
+async def schedule_pdf(
+    plan_id: uuid.UUID, session: SessionDep, principal: PrincipalDep, lang: DocLang = None
+):
     """Download the caller's installment plan as a branded PDF (official design + logo, full
     schedule + details). Generated on demand from live data; 404 if not the caller's plan."""
-    filename, pdf = await installment_service.build_schedule_pdf(
-        session, investor_id=principal.user_id, plan_id=plan_id
-    )
+    with doc_language(lang):
+        filename, pdf = await installment_service.build_schedule_pdf(
+            session, investor_id=principal.user_id, plan_id=plan_id
+        )
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -129,12 +133,15 @@ async def schedule_pdf(plan_id: uuid.UUID, session: SessionDep, principal: Princ
 
 
 @router.get("/{plan_id}/schedule.xlsx")
-async def schedule_xlsx(plan_id: uuid.UUID, session: SessionDep, principal: PrincipalDep):
+async def schedule_xlsx(
+    plan_id: uuid.UUID, session: SessionDep, principal: PrincipalDep, lang: DocLang = None
+):
     """The same plan as an Excel workbook (amounts as numbers, due dates as dates); 404 if not
     the caller's plan."""
-    filename, data = await installment_service.build_schedule_xlsx(
-        session, investor_id=principal.user_id, plan_id=plan_id
-    )
+    with doc_language(lang):
+        filename, data = await installment_service.build_schedule_xlsx(
+            session, investor_id=principal.user_id, plan_id=plan_id
+        )
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

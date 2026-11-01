@@ -27,6 +27,16 @@ from app.services.certificate_service import (
     _wrap,
 )
 from app.services.certificate_service import _spaced_centred as _spaced_centred_raw
+from app.services.doc_lang import (
+    DocCanvas,
+    date_range,
+    long_date,
+    mbox,
+    mx,
+    sheet_direction,
+    table_date,
+    tr,
+)
 from app.services.installment_pdf import _RED, _page_frame
 from app.services.statement_service import Statement
 
@@ -56,7 +66,7 @@ def _fmt(v: decimal.Decimal, signed: bool = False) -> str:
 
 
 def _day(d: dt.date | dt.datetime) -> str:
-    return d.strftime("%d %b %Y")
+    return long_date(d)
 
 
 def _period(stmt: Statement) -> str:
@@ -69,7 +79,7 @@ def _period(stmt: Statement) -> str:
 def _footer(c: canvas.Canvas, stmt: Statement, page: int) -> None:
     c.setFillColor(_MUTED)
     c.setFont("Times-Roman", 8.5)
-    note = (
+    note = tr(
         "Generated from the Capimax PropShare wallet ledger. Times are UTC; the period includes "
         "both dates. Amounts in progress (for example a withdrawal being paid) are shown as "
         "they were booked. This statement is informational and is not a tax document."
@@ -80,21 +90,21 @@ def _footer(c: canvas.Canvas, stmt: Statement, page: int) -> None:
         fy -= 11
     c.setFillColor(_GOLD)
     c.setFont("Helvetica", 8)
-    c.drawCentredString(_CX, 62, f"{stmt.ref}   •   page {page}   •   capimaxpropshare.com")
+    c.drawCentredString(_CX, 62, tr(f"{stmt.ref}   •   page {page}   •   capimaxpropshare.com"))
 
 
 def _movements_header(c: canvas.Canvas, y: float) -> float:
     c.setFillColor(_MUTED)
     c.setFont("Helvetica-Bold", 7.5)
-    c.drawString(_C_DATE, y, "DATE")
-    c.drawString(_C_TYPE, y, "TYPE")
-    c.drawString(_C_DESC, y, "DESCRIPTION")
-    c.drawString(_C_STATUS, y, "STATUS")
-    c.drawRightString(_C_AMOUNT, y, "AMOUNT")
-    c.drawRightString(_C_BAL, y, "BALANCE")
+    c.drawString(_C_DATE, y, tr("DATE"))
+    c.drawString(_C_TYPE, y, tr("TYPE"))
+    c.drawString(_C_DESC, y, tr("DESCRIPTION"))
+    c.drawString(_C_STATUS, y, tr("STATUS"))
+    c.drawRightString(_C_AMOUNT, y, tr("AMOUNT"))
+    c.drawRightString(_C_BAL, y, tr("BALANCE"))
     c.setStrokeColor(_GOLD)
     c.setLineWidth(0.8)
-    c.line(_C_DATE, y - 6, _C_BAL, y - 6)
+    c.line(mx(_C_DATE), y - 6, mx(_C_BAL), y - 6)
     return y - 19
 
 
@@ -104,8 +114,8 @@ class _Pdf:
     def __init__(self, stmt: Statement) -> None:
         self.stmt = stmt
         self.buf = io.BytesIO()
-        self.c = canvas.Canvas(self.buf, pagesize=(_W, _H), pageCompression=0)
-        self.c.setTitle("Capimax PropShare — Account Statement")
+        self.c = DocCanvas(self.buf, pagesize=(_W, _H), pageCompression=0)
+        self.c.setTitle(tr("Capimax PropShare — Account Statement"))
         self.page = 1
         _page_frame(self.c)
 
@@ -114,7 +124,7 @@ class _Pdf:
         self.c.showPage()
         self.page += 1
         _page_frame(self.c)
-        _spaced_centred(self.c, _CX, 780, "Times-Bold", 15, title, 1.0, _GREEN_D)
+        _spaced_centred(self.c, _CX, 780, "Times-Bold", 15, tr(title), 1.0, _GREEN_D)
         return 748.0
 
     def finish(self) -> bytes:
@@ -130,10 +140,10 @@ def render_pdf(stmt: Statement) -> bytes:
 
     _draw_brand(c, _CX)
     _divider(c, _CX, 712, 150)
-    _spaced_centred(c, _CX, 676, "Times-Bold", 27, "Account Statement", 1.0, _GREEN_D)
+    _spaced_centred(c, _CX, 676, "Times-Bold", 27, tr("Account Statement"), 1.0, _GREEN_D)
     c.setFillColor(_MUTED)
     c.setFont("Times-Italic", 11.5)
-    c.drawCentredString(_CX, 658, f"{_period(stmt)}  (UTC)")
+    c.drawCentredString(_CX, 658, tr(f"{_period(stmt)}  (UTC)"))
     _fit_centred(c, _CX, 630, "Times-Bold", 15, stmt.holder, 440, _GREEN)
     c.setFillColor(_INK)
     c.setFont("Times-Roman", 10.5)
@@ -161,7 +171,7 @@ def render_pdf(stmt: Statement) -> bytes:
         y = py + ph - 24 - row * 34
         c.setFillColor(_MUTED)
         c.setFont("Helvetica", 6.8)
-        c.drawString(x, y, label)
+        c.drawString(x, y, tr(label))
         strong = label in ("CLOSING BALANCE",)
         c.setFillColor(_GREEN_D if strong else _INK)
         c.setFont("Times-Bold" if strong else "Times-Roman", 10.5)
@@ -171,29 +181,32 @@ def render_pdf(stmt: Statement) -> bytes:
     y = py - 26
     c.setFillColor(_GREEN_D)
     c.setFont("Times-Bold", 12)
-    c.drawString(_C_DATE, y, "Wallet movements")
+    c.drawString(_C_DATE, y, tr("Wallet movements"))
     y = _movements_header(c, y - 20)
     if not stmt.rows:
         c.setFillColor(_MUTED)
         c.setFont("Times-Italic", 10)
-        c.drawString(_C_DATE, y, "No wallet movements in this period.")
+        c.drawString(_C_DATE, y, tr("No wallet movements in this period."))
         y -= _ROW_H
     for i, r in enumerate(stmt.rows):
         if y < _BOTTOM:
             y = _movements_header(c, pdf.new_page("Wallet movements (continued)"))
         if i % 2:
             c.setFillColor(_PANEL)
-            c.rect(_C_DATE - 6, y - 4, _C_BAL - _C_DATE + 12, _ROW_H, stroke=0, fill=1)
+            width = _C_BAL - _C_DATE + 12
+            c.rect(mbox(_C_DATE - 6, width), y - 4, width, _ROW_H, stroke=0, fill=1)
         c.setFillColor(_MUTED)
         c.setFont("Times-Roman", 8.5)
-        c.drawString(_C_DATE, y, _day(r.at))
+        c.drawString(_C_DATE, y, table_date(r.at))
         c.setFillColor(_INK)
-        c.drawString(_C_TYPE, y, _clip(r.type_label, "Times-Roman", 8.5, _C_DESC - _C_TYPE - 6))
+        c.drawString(_C_TYPE, y, _clip(tr(r.type_label), "Times-Roman", 8.5, _C_DESC - _C_TYPE - 6))
         c.drawString(
-            _C_DESC, y, _clip(r.description or "-", "Times-Roman", 8.5, _C_STATUS - _C_DESC - 8)
+            _C_DESC,
+            y,
+            _clip(tr(r.description) or "-", "Times-Roman", 8.5, _C_STATUS - _C_DESC - 8),
         )
         c.setFillColor(_MUTED)
-        c.drawString(_C_STATUS, y, r.status)
+        c.drawString(_C_STATUS, y, tr(r.status))
         c.setFillColor(_GREEN if r.amount >= 0 else _RED)
         c.setFont("Times-Bold", 8.5)
         c.drawRightString(_C_AMOUNT, y, _fmt(r.amount, signed=True))
@@ -211,17 +224,17 @@ def render_pdf(stmt: Statement) -> bytes:
             y -= 18
             c.setFillColor(_GREEN_D)
             c.setFont("Times-Bold", 12)
-            c.drawString(_C_DATE, y, title)
+            c.drawString(_C_DATE, y, tr(title))
             y -= 20
         c.setFillColor(_MUTED)
         c.setFont("Helvetica-Bold", 7.5)
-        c.drawString(_C_DATE, y, head[0])
-        c.drawRightString(_C_AMOUNT, y, head[1])
-        c.drawRightString(_C_BAL, y, head[2])
+        c.drawString(_C_DATE, y, tr(head[0]))
+        c.drawRightString(_C_AMOUNT, y, tr(head[1]))
+        c.drawRightString(_C_BAL, y, tr(head[2]))
         c.setStrokeColor(_GOLD)
-        c.line(_C_DATE, y - 6, _C_BAL, y - 6)
+        c.line(mx(_C_DATE), y - 6, mx(_C_BAL), y - 6)
         y -= 19
-        for a, b, d in lines or [("None", "", "")]:
+        for a, b, d in lines or [(tr("None"), "", "")]:
             if y < _BOTTOM:
                 y = pdf.new_page(f"{title} (continued)")
             c.setFillColor(_INK)
@@ -234,7 +247,7 @@ def render_pdf(stmt: Statement) -> bytes:
     section(
         "Summary by type",
         ("TYPE", "MONEY IN", "MONEY OUT"),
-        [(t.label, _fmt(t.money_in), _fmt(t.money_out)) for t in stmt.totals],
+        [(tr(t.label), _fmt(t.money_in), _fmt(t.money_out)) for t in stmt.totals],
     )
     section(
         f"Holdings on {_day(stmt.end)}",
@@ -258,13 +271,13 @@ def render_xlsx(stmt: Statement) -> bytes:
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Statement"
+    ws.title = tr("Statement")
     meta = [
         ("Capimax PropShare — Account statement", None),
         ("Holder", stmt.holder),
         ("Email", stmt.email),
         ("Reference", stmt.ref),
-        ("Period (UTC, inclusive)", f"{stmt.start.isoformat()} to {stmt.end.isoformat()}"),
+        ("Period (UTC, inclusive)", date_range(stmt.start.isoformat(), stmt.end.isoformat())),
         ("Currency", stmt.currency),
         ("Opening balance", stmt.opening),
         ("Money in", stmt.money_in),
@@ -273,7 +286,7 @@ def render_xlsx(stmt: Statement) -> bytes:
         ("Issued (UTC)", stmt.generated_at.strftime("%Y-%m-%d %H:%M")),
     ]
     for label, value in meta:
-        ws.append([label, value])
+        ws.append([tr(label), value])
     ws["A1"].font = Font(bold=True, size=14, color="0F6E4C")
     for row in ws.iter_rows(min_row=2, max_row=len(meta), max_col=1):
         row[0].font = bold
@@ -282,7 +295,7 @@ def render_xlsx(stmt: Statement) -> bytes:
     ws.append([])
 
     header = ["Date (UTC)", "Type", "Description", "Status", "Amount", "Balance", "Reference"]
-    ws.append(header)
+    ws.append([tr(h) for h in header])
     head_row = ws.max_row
     for cell in ws[head_row]:
         cell.font, cell.fill = head_font, head_fill
@@ -290,9 +303,9 @@ def render_xlsx(stmt: Statement) -> bytes:
         ws.append(
             [
                 r.at.astimezone(dt.UTC).replace(tzinfo=None),
-                r.type_label,
-                r.description,
-                r.status,
+                tr(r.type_label),
+                tr(r.description),
+                tr(r.status),
                 r.amount,
                 r.balance,
                 r.reference,
@@ -302,18 +315,18 @@ def render_xlsx(stmt: Statement) -> bytes:
         ws.cell(row=ws.max_row, column=5).number_format = money
         ws.cell(row=ws.max_row, column=6).number_format = money
     if not stmt.rows:
-        ws.append(["No wallet movements in this period."])
+        ws.append([tr("No wallet movements in this period.")])
     ws.freeze_panes = ws.cell(row=head_row + 1, column=1)
     for col, width in zip("ABCDEFG", (24, 24, 46, 13, 15, 15, 12), strict=True):
         ws.column_dimensions[col].width = width
 
-    totals = wb.create_sheet("Summary by type")
-    totals.append(["Type", "Money in", "Money out"])
+    totals = wb.create_sheet(tr("Summary by type"))
+    totals.append([tr("Type"), tr("Money in"), tr("Money out")])
     for cell in totals[1]:
         cell.font, cell.fill = head_font, head_fill
     for t in stmt.totals:
-        totals.append([t.label, t.money_in, t.money_out])
-    totals.append(["Total", stmt.money_in, stmt.money_out])
+        totals.append([tr(t.label), t.money_in, t.money_out])
+    totals.append([tr("Total"), stmt.money_in, stmt.money_out])
     for cell in totals[totals.max_row]:
         cell.font = bold
     for row in totals.iter_rows(min_row=2, min_col=2, max_col=3):
@@ -323,8 +336,8 @@ def render_xlsx(stmt: Statement) -> bytes:
     totals.column_dimensions["B"].width = 16
     totals.column_dimensions["C"].width = 16
 
-    holdings = wb.create_sheet("Holdings")
-    holdings.append([f"Property (units held on {stmt.end.isoformat()})", "Units"])
+    holdings = wb.create_sheet(tr("Holdings"))
+    holdings.append([tr(f"Property (units held on {stmt.end.isoformat()})"), tr("Units")])
     for cell in holdings[1]:
         cell.font, cell.fill = head_font, head_fill
     for h in stmt.holdings:
@@ -335,6 +348,7 @@ def render_xlsx(stmt: Statement) -> bytes:
         for row in sheet.iter_rows():
             for cell in row:
                 cell.alignment = Alignment(vertical="top")
+    sheet_direction(ws, totals, holdings)
 
     out = io.BytesIO()
     wb.save(out)

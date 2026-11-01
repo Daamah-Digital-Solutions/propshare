@@ -22,7 +22,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, File, Form, Query, Request, UploadFile
 from fastapi.responses import Response
 
-from app.api.deps import AdminOrCronDep, KycVerifiedDep, PrincipalDep, SessionDep
+from app.api.deps import AdminOrCronDep, DocLang, KycVerifiedDep, PrincipalDep, SessionDep
 from app.api.routes._sukuk_form import certificate_upload
 from app.core.audit import write_audit
 from app.core.config import get_settings
@@ -56,6 +56,7 @@ from app.services import (
     unit_movement_service,
     unit_statement_render,
 )
+from app.services.doc_lang import doc_language
 
 router = APIRouter(prefix="/api/v1/investments", tags=["investments"])
 
@@ -156,16 +157,18 @@ async def my_unit_statement(
     start: Annotated[dt.date, Query(description="First day, inclusive (UTC)")],
     end: Annotated[dt.date, Query(description="Last day, inclusive (UTC)")],
     format: Annotated[Literal["pdf", "xlsx"], Query()] = "pdf",  # noqa: A002
+    lang: DocLang = None,
 ):
     """The caller's own unit statement: every unit movement in the period with the units held
     afterwards, and per property the units at the start and at the end. Only their ledger is
     ever read."""
-    stmt = await unit_movement_service.build_statement(session, principal.user_id, start, end)
-    body = (
-        unit_statement_render.render_pdf(stmt)
-        if format == "pdf"
-        else unit_statement_render.render_xlsx(stmt)
-    )
+    with doc_language(lang):
+        stmt = await unit_movement_service.build_statement(session, principal.user_id, start, end)
+        body = (
+            unit_statement_render.render_pdf(stmt)
+            if format == "pdf"
+            else unit_statement_render.render_xlsx(stmt)
+        )
     await write_audit(
         session,
         action="unit_statement.exported",
@@ -248,10 +251,11 @@ async def my_certificates(principal: PrincipalDep, session: SessionDep):
 
 
 @router.get("/certificates.zip")
-async def my_certificates_zip(principal: PrincipalDep, session: SessionDep):
+async def my_certificates_zip(principal: PrincipalDep, session: SessionDep, lang: DocLang = None):
     """A single .zip of the caller's certificates — one PDF per property they currently hold
     (live from the ownership ledger; 404 if they hold none)."""
-    filename, data = await certificate_service.build_all_zip(session, user_id=principal.user_id)
+    with doc_language(lang):
+        filename, data = await certificate_service.build_all_zip(session, user_id=principal.user_id)
     return Response(
         content=data,
         media_type="application/zip",
@@ -260,13 +264,16 @@ async def my_certificates_zip(principal: PrincipalDep, session: SessionDep):
 
 
 @router.get("/certificate/{property_id}")
-async def my_certificate(property_id: uuid.UUID, principal: PrincipalDep, session: SessionDep):
+async def my_certificate(
+    property_id: uuid.UUID, principal: PrincipalDep, session: SessionDep, lang: DocLang = None
+):
     """A PDF certificate of the caller's CURRENT net holding in a property (live from the
     ownership ledger; 404 if they hold none): the certificate stating their units now, with the
     QR code of its verification page."""
-    filename, pdf = await certificate_service.build_for_holding(
-        session, user_id=principal.user_id, property_id=property_id
-    )
+    with doc_language(lang):
+        filename, pdf = await certificate_service.build_for_holding(
+            session, user_id=principal.user_id, property_id=property_id
+        )
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -276,14 +283,15 @@ async def my_certificate(property_id: uuid.UUID, principal: PrincipalDep, sessio
 
 @router.get("/property/{property_id}/documents.zip")
 async def my_property_documents_zip(
-    property_id: uuid.UUID, principal: PrincipalDep, session: SessionDep
+    property_id: uuid.UUID, principal: PrincipalDep, session: SessionDep, lang: DocLang = None
 ):
     """One .zip of EVERYTHING for a single property the caller holds: their live ownership
     certificate PLUS every published property document (SPV, agreements, valuation/financial
     reports, legal, insurance, audit…). 404 if the property has neither for the caller."""
-    filename, data = await certificate_service.build_property_bundle_zip(
-        session, user_id=principal.user_id, property_id=property_id
-    )
+    with doc_language(lang):
+        filename, data = await certificate_service.build_property_bundle_zip(
+            session, user_id=principal.user_id, property_id=property_id
+        )
     return Response(
         content=data,
         media_type="application/zip",
