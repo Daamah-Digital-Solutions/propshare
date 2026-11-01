@@ -30,6 +30,7 @@ from app.models import Property
 from app.models.base import PropertyStatus
 from app.models.identity import User
 from app.schemas.property import OWNERSHIP_MODELS
+from app.services import listing_translation
 
 PUBLIC_STATUSES = (PropertyStatus.active, PropertyStatus.funded)
 EDITABLE_STATUSES = (PropertyStatus.draft, PropertyStatus.under_review)
@@ -128,7 +129,7 @@ def serialize_detail(prop: Property, owner_names: dict[uuid.UUID, str | None]) -
             "spv_registration": prop.spv_registration,
             "legal_structure": prop.legal_structure,
             "fees": prop.fees if isinstance(prop.fees, dict) else None,
-            "content": prop.content if isinstance(prop.content, dict) else {},
+            "content": listing_translation.public_content(prop.content),
             "owner_id": prop.owner_id,
             "created_at": prop.created_at,
             "updated_at": prop.updated_at,
@@ -243,7 +244,9 @@ async def list_public(
     return rows, int(total)
 
 
-async def public_developer_profile(session: AsyncSession, slug: str) -> dict:
+async def public_developer_profile(
+    session: AsyncSession, slug: str, *, lang: str | None = None
+) -> dict:
     """Everything the platform can honestly say about one developer: the facts entered on its
     listings (name, logo, about, website, rating, projects) and the live figures of every
     PUBLIC listing it has here. Drafts and closed listings never leak through."""
@@ -266,6 +269,14 @@ async def public_developer_profile(session: AsyncSession, slug: str) -> dict:
     if not mine:
         raise AppError("DEVELOPER_NOT_FOUND", "Developer not found.", status_code=404)
 
+    def translated(key: str) -> str | None:
+        """The newest listing with this text in the language, while its English still has it."""
+        for p in mine:
+            text = listing_translation.developer_field(p.content, lang, key)
+            if text and (p.content.get("developer") or {}).get(key):
+                return text
+        return None
+
     def first(key: str):
         """The newest listing that filled a field wins; nothing is invented."""
         for p in mine:
@@ -274,12 +285,15 @@ async def public_developer_profile(session: AsyncSession, slug: str) -> dict:
                 return dev[key]
         return None
 
-    summaries = [serialize_summary(p, owner_names) for p in mine]
+    summaries = [
+        listing_translation.localized_summary(serialize_summary(p, owner_names), p.content, lang)
+        for p in mine
+    ]
     return {
         "slug": wanted,
-        "name": summaries[0]["developer_name"],
+        "name": translated("name") or _developer_name(mine[0], owner_names),
         "logo": first("logo"),
-        "about": first("about"),
+        "about": translated("about") or first("about"),
         "website": first("website"),
         "rating": first("rating"),
         "projects_completed": first("projectsCompleted"),
@@ -373,7 +387,7 @@ async def create(session: AsyncSession, *, owner_id: uuid.UUID, data: dict) -> P
         spv_registration=data.get("spv_registration"),
         legal_structure=data.get("legal_structure"),
         images=data.get("images") or [],
-        content=data.get("content") or {},
+        content=listing_translation.public_content(data.get("content")),
         funded_amount=0,
         funding_progress=0,
         investors_count=0,
@@ -432,6 +446,12 @@ async def update(
         # available stays in lock-step with total while no units are sold yet (pre-Phase-5).
         prop.total_units = data["total_units"]
         prop.available_units = data["total_units"]
+    if isinstance(data.get("content"), dict):
+        # what an owner sees has no stored versions, and saving it must not remove them
+        kept = (prop.content or {}).get(listing_translation.KEY)
+        data["content"] = listing_translation.public_content(data["content"])
+        if kept:
+            data["content"][listing_translation.KEY] = kept
     for field in _EDITABLE_FIELDS:
         if field in data and data[field] is not None:
             setattr(prop, field, data[field])

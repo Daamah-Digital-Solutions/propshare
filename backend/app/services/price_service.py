@@ -47,7 +47,7 @@ from app.models import (
 )
 from app.models.base import PropertyStatus
 from app.models.investments import OwnershipLedger
-from app.services import notification_service
+from app.services import listing_translation, notification_service
 from app.services.investment_service import _recompute_progress
 
 _CENTS = decimal.Decimal("0.01")
@@ -147,8 +147,9 @@ def launch_price_of(prop: Property) -> decimal.Decimal:
     return decimal.Decimal(prop.unit_price)
 
 
-async def history(session: AsyncSession, prop: Property) -> dict:
-    return _history(prop, await _rows(session, prop.id))
+async def history(session: AsyncSession, prop: Property, *, lang: str | None = None) -> dict:
+    rows = await _rows(session, prop.id)
+    return listing_translation.localized_prices(_history(prop, rows), rows, prop.content, lang)
 
 
 async def summaries(

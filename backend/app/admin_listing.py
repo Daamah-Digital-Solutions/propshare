@@ -33,6 +33,9 @@ from app.services import (
     document_service,
     listing_media_service,
     listing_service,
+    listing_translation,
+    listing_translation_form,
+    price_service,
     property_service,
 )
 from app.services.integrations import storage
@@ -81,6 +84,10 @@ _STYLE = """
  .checklist ul{margin:6px 0 10px 18px;padding:0} .checklist li{margin:3px 0;font-size:13px}
  .err,.ok,.warn{white-space:pre-line}
  [hidden]{display:none!important}
+ details.tr{border:1px solid #e8e6e1;border-radius:10px;padding:10px 12px;margin-top:10px;background:#fafaf8}
+ details.tr summary{cursor:pointer;font-size:15px}
+ details.tr .f{margin-bottom:10px}
+ details.tr .english{white-space:pre-line;direction:ltr;text-align:left}
 """
 
 # One macro renders every listing field from its FieldSpec: label, required mark, the
@@ -253,6 +260,31 @@ _PAGE = _env.from_string(
  {% for group, fields in core_groups %}<h3>{{ group }}</h3><div class="cols">{% for f in fields %}{{ field(f, core_values.get(f.name), profile, model_locked) }}{% endfor %}</div>{% if loop.first %}{{ installment_notice(installment_terms, profile) }}{% endif %}{% endfor %}
  <button class="primary" type="submit" style="margin-top:14px">Save listing details</button>
  </form>
+</div>
+
+<div class="card" id="translations" data-translations>
+ <h2>Arabic &amp; French versions</h2>
+ <p class="lead">What a visitor reads when the site is in Arabic or French. Only the text this listing has appears here, with the English under each box. A box left blank shows the English. Text removed from the English goes in every language. Save the English first: photos, figures and dates are the same in every language.</p>
+ {% for v in translation_forms %}
+ <details class="tr" data-version="{{ v.lang }}" {{ 'open' if v.lang == translation_open }}>
+  <summary><b>{{ v.name }}</b> <span class="muted">{{ v.filled }} of {{ v.total }} filled</span></summary>
+  {% if v.groups %}
+  <form method="post"><input type="hidden" name="action" value="save_translation"><input type="hidden" name="lang" value="{{ v.lang }}">
+   {% for g in v.groups %}<h3>{{ g.title }}</h3>
+    {% for f in g.fields %}
+    <div class="f" data-field="{{ f.name }}">
+     <label for="t_{{ v.lang }}_{{ loop.index }}_{{ f.name }}">{{ f.label }}</label>
+     {% if f.kind == 'line' %}<input type="text" id="t_{{ v.lang }}_{{ loop.index }}_{{ f.name }}" name="{{ f.name }}" dir="{{ v.dir }}" lang="{{ v.lang }}" maxlength="{{ f.max_len }}" value="{{ f.value }}">
+     {% else %}<textarea id="t_{{ v.lang }}_{{ loop.index }}_{{ f.name }}" name="{{ f.name }}" dir="{{ v.dir }}" lang="{{ v.lang }}" rows="{{ 6 if f.kind == 'text' else 3 }}">{{ f.value }}</textarea>{% endif %}
+     <div class="help english">{% if f.kind == 'lines' %}One per line. {% endif %}English: {{ f.english }}</div>
+    </div>
+    {% endfor %}
+   {% endfor %}
+   <button class="primary" type="submit" style="margin-top:8px">Save {{ v.name }} version</button>
+  </form>
+  {% else %}<p class="muted">Nothing to translate yet: write the listing in English first.</p>{% endif %}
+ </details>
+ {% endfor %}
 </div>
 
 <div class="card">
@@ -792,6 +824,7 @@ class ListingEditorView(BaseView):
 
         message, error, preview_url, preview_token = "", False, "", ""
         request.state.listing_warnings = []
+        request.state.translation_open = ""
         if request.query_params.get("created"):
             message = (
                 "Draft created. Add photos, documents and details below, then Preview and Publish."
@@ -885,6 +918,10 @@ class ListingEditorView(BaseView):
                 terms=content.get("terms") or {},
                 fees=content.get("fees") or {},
                 milestones=milestones,
+                translation_forms=listing_translation_form.form_model(
+                    prop, milestones, docs, await price_service._rows(session, prop.id)
+                ),
+                translation_open=request.state.translation_open,
                 construction_progress=listing_service.construction_progress(milestones),
                 ms_statuses=list(listing_service.MILESTONE_STATUS_LABELS.items()),
                 categories=document_service.DOC_CATEGORIES,
@@ -1071,6 +1108,27 @@ class ListingEditorView(BaseView):
                 session, prop=prop, new_content=new, section="terms", actor_id=actor
             )
             return "Terms saved.", preview_token
+        if action == "save_translation":
+            lang = str(form.get("lang") or "")
+            request.state.translation_open = lang
+            milestones = await listing_service.list_milestones(session, prop.id)
+            docs = (
+                (await session.execute(select(Document).where(Document.property_id == prop.id)))
+                .scalars()
+                .all()
+            )
+            prices = await price_service._rows(session, prop.id)
+            new = listing_translation_form.with_version(
+                prop, form, lang, milestones, list(docs), prices
+            )
+            await listing_service.apply_content(
+                session,
+                prop=prop,
+                new_content=new,
+                section=listing_translation.KEY,
+                actor_id=actor,
+            )
+            return f"{listing_translation.LANGUAGES[lang]} version saved.", preview_token
         # --- milestones ------------------------------------------------------------- #
         if action == "ms_add":
             data = listing_service.parse_milestone(form)

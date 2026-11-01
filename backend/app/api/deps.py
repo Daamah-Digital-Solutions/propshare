@@ -64,8 +64,8 @@ async def current_principal(request: Request) -> Principal:
 
 
 PrincipalDep = Annotated[Principal, Depends(current_principal)]
-# The language a generated document comes in: the one the person has the site in (ar, fr; else
-# English).
+# The language a generated document or a listing's text comes in: the one the person has the
+# site in (ar, fr; else English).
 DocLang = Annotated[str | None, Query()]
 
 

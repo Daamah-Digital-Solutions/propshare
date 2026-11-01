@@ -3,7 +3,53 @@
  * download goes through fetchBlob, which says so. English sends nothing, as before.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchBlob } from "./api";
+import { developerApi, documentsApi, fetchBlob, propertyApi } from "./api";
+
+describe("a listing's text in the site's language", () => {
+  const fetchMock = vi.fn();
+  const asked = () => String(fetchMock.mock.calls[0][0]);
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    localStorage.removeItem("language");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.removeItem("language");
+  });
+
+  it("asks for nothing special in English", async () => {
+    await propertyApi.get("creek-tower");
+    expect(asked().endsWith("/api/v1/properties/creek-tower")).toBe(true);
+  });
+
+  it("asks for the property page, keeping a preview token", async () => {
+    localStorage.setItem("language", "ar");
+    await propertyApi.get("creek-tower", "tok");
+    expect(asked().endsWith("/api/v1/properties/creek-tower?preview=tok&lang=ar")).toBe(true);
+  });
+
+  it("asks for the marketplace, the developer and the documents", async () => {
+    localStorage.setItem("language", "fr");
+    await propertyApi.list({ limit: 4 });
+    expect(asked().endsWith("/api/v1/properties?limit=4&lang=fr")).toBe(true);
+    fetchMock.mockClear();
+    await developerApi.get("crest");
+    expect(asked().endsWith("/api/v1/developers/crest?lang=fr")).toBe(true);
+    fetchMock.mockClear();
+    await documentsApi.listForProperty("creek-tower");
+    expect(asked().endsWith("/api/v1/properties/creek-tower/documents?lang=fr")).toBe(true);
+  });
+
+  it("never asks for an owner's own listings in another language: they edit the English", async () => {
+    localStorage.setItem("language", "ar");
+    await propertyApi.listOwner();
+    expect(asked()).not.toContain("lang=");
+  });
+});
 
 describe("fetchBlob document language", () => {
   const fetchMock = vi.fn();

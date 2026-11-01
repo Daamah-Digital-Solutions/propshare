@@ -18,11 +18,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import Response
 
-from app.api.deps import Principal, SessionDep, require_active_role_db
+from app.api.deps import DocLang, Principal, SessionDep, require_active_role_db
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.schemas.document import DocumentOut
-from app.services import document_service
+from app.services import document_service, listing_translation, property_service
 from app.services.integrations import storage
 
 router = APIRouter(prefix="/api/v1", tags=["documents"])
@@ -67,12 +67,17 @@ async def upload_property_document(
 
 @router.get("/properties/{id_or_slug}/documents", response_model=list[DocumentOut])
 async def list_property_documents(
-    id_or_slug: str, session: SessionDep, preview: str | None = None
+    id_or_slug: str, session: SessionDep, preview: str | None = None, lang: DocLang = None
 ):
     docs = await document_service.list_property_documents(
         session, id_or_slug, preview_token=preview
     )
-    return [DocumentOut(**document_service.serialize(d)) for d in docs]
+    out = [document_service.serialize(d) for d in docs]
+    if listing_translation.language(lang):
+        prop = await property_service.get_public_detail(session, id_or_slug, preview_token=preview)
+        for d in out:
+            d["title"] = listing_translation.document_title(prop.content, lang, d["id"], d["title"])
+    return [DocumentOut(**d) for d in out]
 
 
 @router.get("/documents/{doc_id}/download")

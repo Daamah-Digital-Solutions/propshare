@@ -19,7 +19,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 
-from app.api.deps import Principal, SessionDep, require_active_role_db
+from app.api.deps import DocLang, Principal, SessionDep, require_active_role_db
 from app.schemas.property import (
     DeveloperProfileOut,
     OwnerPropertyOut,
@@ -32,6 +32,7 @@ from app.schemas.property import (
 )
 from app.services import (
     listing_media_service,
+    listing_translation,
     milestone_service,
     price_service,
     property_service,
@@ -58,6 +59,7 @@ async def list_properties(
     sort: str = "newest",
     limit: int = Query(default=60, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    lang: DocLang = None,
 ):
     rows, total = await property_service.list_public(
         session,
@@ -75,7 +77,14 @@ async def list_properties(
         offset=offset,
     )
     owner_names = await property_service._owner_names(session, rows)
-    items = [PropertySummaryOut(**property_service.serialize_summary(p, owner_names)) for p in rows]
+    items = [
+        PropertySummaryOut(
+            **listing_translation.localized_summary(
+                property_service.serialize_summary(p, owner_names), p.content, lang
+            )
+        )
+        for p in rows
+    ]
     return PropertyListOut(items=items, total=total, limit=limit, offset=offset)
 
 
@@ -95,7 +104,9 @@ async def my_properties(principal: OwnerDep, session: SessionDep):
 
 
 @router.get("/properties/{id_or_slug}", response_model=PropertyDetailOut)
-async def get_property(id_or_slug: str, session: SessionDep, preview: str | None = None):
+async def get_property(
+    id_or_slug: str, session: SessionDep, preview: str | None = None, lang: DocLang = None
+):
     """Public detail. ``preview`` = a signed 24h token minted by the admin Listing Editor;
     it lets the owner see a draft exactly as investors will, without publishing it."""
     prop = await property_service.get_public_detail(session, id_or_slug, preview_token=preview)
@@ -115,21 +126,23 @@ async def get_property(id_or_slug: str, session: SessionDep, preview: str | None
     milestones = await milestone_service.list_for_property(session, prop.id)
     data["milestones"] = [milestone_service.serialize(m) for m in milestones]
     data["construction_progress"] = milestone_service.construction_progress_from_rows(milestones)
-    return PropertyDetailOut(**data)
+    return PropertyDetailOut(**listing_translation.localized_detail(data, prop.content, lang))
 
 
 @router.get("/properties/{id_or_slug}/prices", response_model=PriceHistoryOut)
-async def get_property_prices(id_or_slug: str, session: SessionDep):
+async def get_property_prices(id_or_slug: str, session: SessionDep, lang: DocLang = None):
     """The unit price of a published listing over time: what an investor bought at, what it
     is now, and each change in between (a monthly revaluation or a new sales phase)."""
     prop = await property_service.get_public_detail(session, id_or_slug)
-    return PriceHistoryOut(**await price_service.history(session, prop))
+    return PriceHistoryOut(**await price_service.history(session, prop, lang=lang))
 
 
 @router.get("/developers/{slug}", response_model=DeveloperProfileOut)
-async def get_developer(slug: str, session: SessionDep):
+async def get_developer(slug: str, session: SessionDep, lang: DocLang = None):
     """Public developer profile, reached from the Developer card on a property page."""
-    return DeveloperProfileOut(**await property_service.public_developer_profile(session, slug))
+    return DeveloperProfileOut(
+        **await property_service.public_developer_profile(session, slug, lang=lang)
+    )
 
 
 @router.post("/properties", response_model=OwnerPropertyOut, status_code=201)

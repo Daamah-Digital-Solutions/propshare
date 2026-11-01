@@ -113,8 +113,8 @@ export const apiUrl = (path: string): string => `${API_BASE}${path}`;
 export const assetUrl = (url: string): string =>
   url.startsWith("/api/") ? `${API_BASE}${url}` : url;
 
-/** A document the platform generates comes in the language the person has the site in. */
-const withDocLang = (path: string): string => {
+/** Generated documents and a listing's text come in the language the person has the site in. */
+const withSiteLang = (path: string): string => {
   const lang = currentLanguage();
   if (lang === "en") return path;
   return `${path}${path.includes("?") ? "&" : "?"}lang=${lang}`;
@@ -124,7 +124,7 @@ const withDocLang = (path: string): string => {
 export async function fetchBlob(path: string, _retried = false): Promise<Blob> {
   const headers: Record<string, string> = {};
   if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-  const resp = await fetch(`${API_BASE}${withDocLang(path)}`, { headers, credentials: "include" });
+  const resp = await fetch(`${API_BASE}${withSiteLang(path)}`, { headers, credentials: "include" });
   if (resp.status === 401 && !_retried) {
     const ok = await refreshAccessToken();
     if (ok) return fetchBlob(path, true);
@@ -646,7 +646,7 @@ export interface DeveloperProfile {
 
 export const developerApi = {
   get(slug: string): Promise<DeveloperProfile> {
-    return apiRequest<DeveloperProfile>(`/api/v1/developers/${encodeURIComponent(slug)}`, {
+    return apiRequest<DeveloperProfile>(withSiteLang(`/api/v1/developers/${encodeURIComponent(slug)}`), {
       auth: false,
     });
   },
@@ -655,7 +655,7 @@ export const developerApi = {
 export const propertyApi = {
   list(params: PropertyFilterParams = {}): Promise<PropertyListResponse> {
     return apiRequest<PropertyListResponse>(
-      `/api/v1/properties${buildQuery(params as Record<string, unknown>)}`,
+      withSiteLang(`/api/v1/properties${buildQuery(params as Record<string, unknown>)}`),
       { auth: false },
     );
   },
@@ -663,13 +663,13 @@ export const propertyApi = {
    * a draft render exactly as investors will see it (that property only). */
   get(idOrSlug: string, preview?: string | null): Promise<PropertyDetail> {
     const q = preview ? `?preview=${encodeURIComponent(preview)}` : "";
-    return apiRequest<PropertyDetail>(`/api/v1/properties/${encodeURIComponent(idOrSlug)}${q}`, {
+    return apiRequest<PropertyDetail>(withSiteLang(`/api/v1/properties/${encodeURIComponent(idOrSlug)}${q}`), {
       auth: false,
     });
   },
   /** The unit price of a published listing over time (public). */
   prices(idOrSlug: string): Promise<PriceHistory> {
-    return apiRequest<PriceHistory>(`/api/v1/properties/${encodeURIComponent(idOrSlug)}/prices`, {
+    return apiRequest<PriceHistory>(withSiteLang(`/api/v1/properties/${encodeURIComponent(idOrSlug)}/prices`), {
       auth: false,
     });
   },
@@ -1128,7 +1128,7 @@ export const documentsApi = {
   listForProperty(idOrSlug: string, preview?: string | null): Promise<PropertyDocument[]> {
     const q = preview ? `?preview=${encodeURIComponent(preview)}` : "";
     return apiRequest<PropertyDocument[]>(
-      `/api/v1/properties/${encodeURIComponent(idOrSlug)}/documents${q}`,
+      withSiteLang(`/api/v1/properties/${encodeURIComponent(idOrSlug)}/documents${q}`),
       { auth: false },
     );
   },
