@@ -47,7 +47,7 @@ const PWAInstallPrompt = () => {
   if (showPrompt && canInstall) {
     return (
       <div className={cn(
-        "fixed bottom-20 lg:bottom-4 left-4 right-4 z-50 animate-fade-up",
+        "fixed bottom-20 lg:bottom-4 inset-x-4 z-50 animate-fade-up",
         "max-w-md mx-auto"
       )}>
         <div className="bg-card border border-border rounded-2xl shadow-xl p-4">
@@ -86,7 +86,7 @@ const PWAInstallPrompt = () => {
   if (showIOSPrompt && isIOS) {
     return (
       <div className={cn(
-        "fixed bottom-20 lg:bottom-4 left-4 right-4 z-50 animate-fade-up",
+        "fixed bottom-20 lg:bottom-4 inset-x-4 z-50 animate-fade-up",
         "max-w-md mx-auto"
       )}>
         <div className="bg-card border border-border rounded-2xl shadow-xl p-4">

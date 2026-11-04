@@ -74,7 +74,7 @@ const NotificationsSection = () => {
               className="group relative overflow-hidden border-border/50 hover:border-primary/30 transition-all duration-300 hover:shadow-xl hover:-translate-y-1"
             >
               {/* Gradient accent bar */}
-              <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${notification.color}`} />
+              <div className={`absolute top-0 inset-x-0 h-1 bg-gradient-to-r ${notification.color}`} />
               
               <CardContent className="p-6">
                 {/* Icon and Badge */}
