@@ -84,8 +84,8 @@ const SecondaryMarket = () => {
               {[
                 {
                   icon: Clock,
-                  title: "Exit After 6 Months",
-                  description: "Trade units on the secondary market after a 6-month holding period.",
+                  title: "Exit Through the Secondary Market",
+                  description: "Sell your units to other investors on the secondary market.",
                 },
                 {
                   icon: TrendingUp,

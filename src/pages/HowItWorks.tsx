@@ -51,7 +51,7 @@ const steps = [
   {
     step: 6,
     title: "Exit Anytime",
-    description: "Sell your shares on our secondary market after 6 months, providing liquidity when you need it.",
+    description: "Sell your shares on our secondary market, providing liquidity when you need it.",
     icon: ArrowLeftRight,
   },
 ];
@@ -74,7 +74,7 @@ const spvBenefits = [
   },
   {
     title: "Tradeable Shares",
-    description: "Sell your shares on the secondary market after 6 months for liquidity.",
+    description: "Sell your shares on the secondary market for liquidity.",
     icon: TrendingUp,
   },
 ];

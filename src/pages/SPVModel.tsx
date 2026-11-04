@@ -55,7 +55,7 @@ const mockSPVs: SPVData[] = [
     unitPrice: 25000,
     investorParticipation: 75,
     projectDuration: "5 Years",
-    exitRules: "Secondary market trading available after 6 months",
+    exitRules: "Secondary market trading available",
     status: "active",
   },
   {
@@ -617,8 +617,8 @@ const SPVModel = () => {
                   Defined Timelines
                 </h3>
                 <p className="text-sm text-muted-foreground">
-                  Exit timelines are clearly defined per SPV. Ready properties: 6 months. 
-                  Under-construction: varies by project.
+                  Exit rules are clearly defined per SPV. Ready properties can be sold on the secondary
+                  market; under-construction projects follow their own timeline.
                 </p>
               </CardContent>
             </Card>

@@ -267,18 +267,9 @@ const AboutCapimaxPropShare = () => {
             <UserCircle className="h-8 w-8 text-primary" />
             <h2 className="text-3xl font-bold text-foreground">Leadership & Experience</h2>
           </div>
-          <p className="text-muted-foreground mb-6">
+          <p className="text-muted-foreground">
             Capimax PropShare is founded and led by professionals with experience in real estate, finance, and digital platforms.
           </p>
-          <Card className="bg-gradient-to-br from-primary/10 to-secondary/10">
-            <CardContent className="p-8 text-center">
-              <div className="h-20 w-20 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-4">
-                <UserCircle className="h-12 w-12 text-primary" />
-              </div>
-              <h3 className="text-xl font-bold text-foreground mb-2">Ibrahim Gad</h3>
-              <p className="text-primary font-medium">Founder & Chief Executive Officer</p>
-            </CardContent>
-          </Card>
         </section>
 
         <Separator className="my-8" />
