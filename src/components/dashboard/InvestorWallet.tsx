@@ -40,6 +40,7 @@ import {
   Zap,
   Hand,
   Send,
+  Tag,
 } from "lucide-react";
 import { saveBlob } from "@/lib/certificates";
 import { ExitButton } from "@/components/exit/ExitButton";
@@ -905,7 +906,7 @@ export const InvestorWallet = () => {
           </Link>
         </Button>
 
-        <ExitButton variant="outline" label="Exit Position" />
+        <ExitButton variant="outline" label="Sell" icon={Tag} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

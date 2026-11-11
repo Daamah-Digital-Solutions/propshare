@@ -34,6 +34,7 @@ import {
   FolderOpen,
   ShieldCheck,
   Send,
+  Tag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExitRequestsPanel } from "@/components/exit/ExitRequestsPanel";
@@ -93,7 +94,8 @@ const InvestorDashboard = () => {
                 >
                   <Home className="h-5 w-5" />
                 </Button>
-                <ExitButton variant="outline" label="Exit" />
+                {/* starts selling: on the secondary market or to a liquidity provider */}
+                <ExitButton variant="outline" label="Sell" icon={Tag} />
                 <Button
                   variant="outline"
                   size="icon"

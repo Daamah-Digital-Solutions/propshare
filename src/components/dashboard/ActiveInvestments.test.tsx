@@ -27,7 +27,11 @@ vi.mock("@/lib/api", async (orig) => {
     },
   };
 });
-vi.mock("@/components/exit/ExitButton", () => ({ ExitButton: () => <button>exit</button> }));
+vi.mock("@/components/exit/ExitButton", () => ({
+  ExitButton: ({ label, initialPositionId }: { label?: string; initialPositionId?: string }) => (
+    <button data-position={initialPositionId}>{label}</button>
+  ),
+}));
 vi.mock("@/components/dashboard/PaymentReturnStatus", () => ({ PaymentReturnStatus: () => null }));
 vi.mock("@/components/dashboard/SukukCertificatesCard", () => ({ SukukCertificatesCard: () => null }));
 
@@ -89,11 +93,9 @@ describe("ActiveInvestments: the unit price of each holding", () => {
     expect(screen.getByText("+$100 on what you paid")).toBeInTheDocument(); // 10 × (110 − 100)
     expect(screen.queryByTestId("holding-plan-units")).toBeNull();
     expect(screen.queryByTestId("value-with-positions")).toBeNull(); // 10 × $110, nothing else
-    // Sell opens the sell form on this property
-    expect(screen.getByRole("link", { name: /^sell$/i })).toHaveAttribute(
-      "href",
-      "/secondary-market?tab=sell&property=prop-1",
-    );
+    // one Sell: it opens the sell flow (secondary market or a liquidity provider) on this property
+    expect(screen.getByRole("button", { name: /^sell$/i })).toHaveAttribute("data-position", "prop-1");
+    expect(screen.queryByRole("button", { name: /^exit$/i })).toBeNull();
   });
 
   it("says a price that fell, in the same place", async () => {

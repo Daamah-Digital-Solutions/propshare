@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Home, Store, PieChart, UserCircle, LogOut, Menu } from "lucide-react";
+import { Home, Building2, LayoutDashboard, UserCircle, ArrowRightLeft, Menu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useAuth } from "@/contexts/AuthContext";
@@ -9,17 +9,16 @@ const MobileBottomNav = () => {
   const location = useLocation();
   const { toggleSidebar } = useSidebar();
   const { userRole } = useAuth();
-  // the dashboard of the role in use (an LP / broker / owner cannot open /dashboard)
+  // Six places, in this order (client, 2026-11-11): Home, Properties, Dashboard, Account,
+  // Trade, More. The bar is mirrored with the site in Arabic, so it reads right to left there.
+  // Dashboard opens the dashboard of the role in use (an LP / broker / owner cannot open
+  // /dashboard); Trade is where units are bought and sold and offers are managed.
   const navItems = [
     { label: "Home", href: "/", icon: Home },
-    { label: "Marketplace", href: "/marketplace", icon: Store },
-    {
-      label: userRole === "investor" || userRole === "guest" ? "Portfolio" : "Dashboard",
-      href: roleHome(userRole),
-      icon: PieChart,
-    },
+    { label: "Properties", href: "/marketplace", icon: Building2 },
+    { label: "Dashboard", href: roleHome(userRole), icon: LayoutDashboard },
     { label: "Account", href: "/settings", icon: UserCircle },
-    { label: "Exit", href: "/secondary-market", icon: LogOut },
+    { label: "Trade", href: "/secondary-market", icon: ArrowRightLeft },
   ];
 
   const isActive = (href: string) => {

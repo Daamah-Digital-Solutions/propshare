@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, DollarSign, Building2, PiggyBank, BarChart3 } from "lucide-react";
+import { TrendingUp, DollarSign, Building2, PiggyBank, BarChart3, Tag } from "lucide-react";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { investApi, returnsApi } from "@/lib/api";
 
@@ -54,7 +54,7 @@ export const PortfolioOverview = () => {
             Track performance, allocation and exit ownership positions.
           </p>
         </div>
-        <ExitButton variant="default" label="Exit Position" />
+        <ExitButton variant="default" label="Sell" icon={Tag} />
       </div>
 
       {/* Stats Grid — live from the server */}

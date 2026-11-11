@@ -259,23 +259,28 @@ export const ActiveInvestments = () => {
                 )}
 
                 <div className="flex items-center justify-end gap-2 flex-wrap">
-                  <Link
-                    to={
-                      h.sellable_units === 0 && (h.plan_units ?? 0) > 0
-                        ? "/dashboard?tab=installments" // only a plan here: it is sold from its card
-                        : `/secondary-market?tab=sell&property=${h.property_id}`
-                    }
-                  >
-                    <Button
-                      variant="outline"
+                  {/* only a plan here: it is sold from its card; otherwise one Sell, which asks how
+                      (secondary market or a liquidity provider) for this property */}
+                  {h.sellable_units === 0 && (h.plan_units ?? 0) > 0 ? (
+                    <Link to="/dashboard?tab=installments">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 text-success border-success/50 hover:bg-success/10"
+                      >
+                        <Tag className="h-3 w-3" />
+                        Sell
+                      </Button>
+                    </Link>
+                  ) : (
+                    <ExitButton
                       size="sm"
-                      className="gap-1.5 text-success border-success/50 hover:bg-success/10"
-                    >
-                      <Tag className="h-3 w-3" />
-                      Sell
-                    </Button>
-                  </Link>
-                  <ExitButton size="sm" label="Exit" />
+                      label="Sell"
+                      icon={Tag}
+                      initialPositionId={h.property_id}
+                      className="text-success border-success/50 hover:bg-success/10"
+                    />
+                  )}
                   <Link to={`/property/${h.property_id}`}>
                     <Button variant="outline" size="sm" className="gap-2">
                       View
