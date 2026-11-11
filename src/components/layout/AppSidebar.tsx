@@ -335,8 +335,10 @@ const EXPLORABLE_VIEWS: { value: UserRole; label: string }[] = [
 ];
 
 export function AppSidebar() {
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
+  const { state, isMobile } = useSidebar();
+  // Icons-only is a wide-screen mode. The phone menu always shows the full list, even when the
+  // sidebar was shrunk on a wide screen (a phone turned sideways, a tablet) before.
+  const collapsed = state === "collapsed" && !isMobile;
   const location = useLocation();
   const { userRole, authorizedRoles, pendingRoles, switchActiveRole, isAuthenticated, signOut } = useAuth();
   const navigate = useNavigate();
@@ -419,10 +421,10 @@ export function AppSidebar() {
       collapsible="icon"
     >
       {/* Header */}
-      <SidebarHeader className="border-b border-border p-4">
+      <SidebarHeader className={cn("border-b border-border", collapsed ? "px-1 py-4" : "p-4")}>
         {collapsed ? (
           <Link to="/" className="flex items-center" aria-label="Capimax PropShare">
-            <img src="/icon-192.png" alt="Capimax PropShare" className="w-9 h-9 mx-auto" />
+            <img src="/icon-192.png" alt="Capimax PropShare" className="w-8 h-8 mx-auto" />
           </Link>
         ) : (
           <BrandMark />
@@ -597,7 +599,7 @@ export function AppSidebar() {
       </SidebarContent>
 
       {/* Footer */}
-      <SidebarFooter className="border-t border-border p-3 space-y-3">
+      <SidebarFooter className={cn("border-t border-border space-y-3", collapsed ? "p-2" : "p-3")}>
         {/* Language Switcher */}
         {!collapsed && (
           <div className="flex items-center justify-between px-2">
@@ -620,23 +622,30 @@ export function AppSidebar() {
           </div>
         )}
 
-        {/* Dark Mode Toggle */}
-        <div className={cn(
-          "flex items-center px-2",
-          collapsed ? "justify-center" : "justify-between"
-        )}>
-          {!collapsed && (
+        {/* Dark Mode Toggle (a single icon button in the narrow icons-only rail, where the
+            switch does not fit) */}
+        {collapsed ? (
+          <button
+            type="button"
+            onClick={toggleDarkMode}
+            aria-label={isDarkMode ? "Light Mode" : "Dark Mode"}
+            className="mx-auto flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+        ) : (
+          <div className="flex items-center justify-between px-2">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               {isDarkMode ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
               <span>{isDarkMode ? "Dark Mode" : "Light Mode"}</span>
             </div>
-          )}
-          <Switch
-            checked={isDarkMode}
-            onCheckedChange={toggleDarkMode}
-            className="data-[state=checked]:bg-primary"
-          />
-        </div>
+            <Switch
+              checked={isDarkMode}
+              onCheckedChange={toggleDarkMode}
+              className="data-[state=checked]:bg-primary"
+            />
+          </div>
+        )}
 
         {/* PWA Install */}
         {!collapsed && (
