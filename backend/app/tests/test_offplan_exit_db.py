@@ -16,7 +16,7 @@ What each test protects:
     are conserved; nothing can be charged that the buyer did not confirm;
   * a position that was bought is measured from what ITS holder paid: no gain the day it is
     bought, and on a resale the next buyer pays that holder's own cost plus the change since;
-  * what refuses: a partial purchase, a stale amount, an own or second listing, a price that
+  * what refuses: more units than listed, a stale amount, an own or second listing, a price that
     does not cover the remainder, someone else's plan, a paid-off plan, a Nova pledge, no KYC,
     no funds;
   * an under-construction listing is bought the way the listing says: by installments, in
@@ -635,8 +635,9 @@ async def test_a_position_sale_refuses_what_it_must(client, db, asession):
     assert _code(await _buy_position(client, seller_tok, lid, 10, "350.00")) == (
         "CANNOT_BUY_OWN_LISTING"
     )
-    part = await _buy_position(client, other_tok, lid, 3, "350.00")
-    assert part.status_code == 422 and _code(part) == "WHOLE_POSITION"
+    # (part of it can be bought since 0042: test_plan_parts_db) but not more than is listed
+    more = await _buy_position(client, other_tok, lid, 11, "350.00")
+    assert more.status_code == 409 and _code(more) == "INSUFFICIENT_UNITS"
     assert _code(await _buy_position(client, nokyc_tok, lid, 10, "350.00")) == "KYC_REQUIRED"
     assert _code(await _buy_position(client, poor_tok, lid, 10, "350.00")) == "INSUFFICIENT_FUNDS"
     # nothing moved through any of that
@@ -901,7 +902,7 @@ async def test_the_assistant_knows_the_price_and_how_each_listing_is_bought(clie
 def test_the_assistant_no_longer_calls_phased_sales_unbuilt():
     core = prompts.CORE_SYSTEM
     for phrase in (
-        "sold with the plan, whole,\n  as one position",
+        "they go with their installments,\n  the whole plan or some of its units",
         "Never tell a user with a running plan\n  that they have nothing to sell",
         "you_would_receive = cost + gain",
         "unit_price is the price of a unit NOW",

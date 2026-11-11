@@ -89,6 +89,8 @@ class InstallmentPlanOut(BaseModel):
     position: PlanPositionOut | None = None
     listing_id: uuid.UUID | None = None
     acquired_at: dt.datetime | None = None
+    # 0042: the plan this one was taken from (part of another investor's plan changed hands)
+    parent_plan_id: uuid.UUID | None = None
 
 
 class InstallmentRunOut(BaseModel):

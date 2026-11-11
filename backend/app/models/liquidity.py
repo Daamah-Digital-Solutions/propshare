@@ -84,6 +84,11 @@ class LpExitRequest(Base):
     expires_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     filled_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     cancelled_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    # 0042: units of a running installment plan (the provider takes them with their share of
+    # the plan's installments)
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("installment_plans.id")
+    )
     seller = relationship(
         "User",
         primaryjoin="foreign(LpExitRequest.seller_id) == User.id",
@@ -119,6 +124,10 @@ class LpPosition(Base):
     unit_price_snapshot: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
     discount_pct: Mapped[decimal.Decimal | None] = mapped_column(Numeric(6, 3))
     spread_at_entry: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
+    # 0042: the installment plan the provider took (a new part, or the whole plan)
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("installment_plans.id")
+    )
     # PASSIVE-only
     pool_tier_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("lp_pool_tiers.id", ondelete="SET NULL")

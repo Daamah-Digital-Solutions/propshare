@@ -11,8 +11,8 @@ import { ApiError, secondaryApi, type MyPosition } from "@/lib/api";
 import { money, shortDate, unitPrice } from "@/lib/money";
 
 /** A position sale prepared elsewhere (the Installments tab, or the assistant):
- * /secondary-market?tab=sell&plan=<plan id>[&price=P] */
-export type PositionPrefill = { planId: string; price?: number };
+ * /secondary-market?tab=sell&plan=<plan id>[&units=N][&price=P] (N: part of the plan) */
+export type PositionPrefill = { planId: string; price?: number; units?: number };
 
 const BLOCKED: Record<string, (p: MyPosition) => string> = {
   pledged: () =>
@@ -22,42 +22,65 @@ const BLOCKED: Record<string, (p: MyPosition) => string> = {
 };
 
 /**
- * Selling a running installment plan as one position. The units of a plan are not listed
- * one by one: the whole plan changes hands. The buyer pays the seller the position's value at
- * the asking price less the principal still to pay (what the seller paid plus the increase on
- * every unit) and takes over the remaining installments. The amounts previewed here are the
- * server's formula; the listing the server returns is what counts.
+ * Selling a running installment plan as a position: all its units, or some of them. The units
+ * sold go with their share of every payment: a buyer pays the seller their value at the asking
+ * price less their share of the principal still to pay (what the seller paid on them plus the
+ * increase), and carries on with their installments as a plan of their own; the seller's plan
+ * keeps the rest. A buyer can also take only some of the units listed. The amounts previewed
+ * here are the server's formula (the share of what is still to pay is rounded to the cent the
+ * same way); the listing the server returns is what counts. Part of a plan is sold only when no
+ * installment is overdue.
  */
 function PositionRow({
   position,
   feePct,
   prefillPrice,
+  prefillUnits,
   prepared,
 }: {
   position: MyPosition;
   feePct: number;
   prefillPrice?: number;
+  prefillUnits?: number;
   prepared: boolean;
 }) {
   const queryClient = useQueryClient();
   const [price, setPrice] = useState(String(prefillPrice ?? Number(position.unit_price)));
+  const free = position.free_units ?? position.units;
+  const [unitsText, setUnitsText] = useState(
+    String(prefillUnits && prefillUnits <= free ? prefillUnits : free),
+  );
+  const units = Math.floor(Number(unitsText) || 0);
+  const validUnits = units >= 1 && units <= free;
+  const whole = units === position.units;
+  const share = validUnits ? units / position.units : 0;
   // cents, as the server keeps it: the preview and the listing use the same price
-  const asking = Math.round((parseFloat(price) || 0) * 100) / 100;
-  const remaining = Number(position.remaining_principal);
-  // what the seller has put in: their installments, or what they paid to take the plan over
-  // plus their installments since
-  const paid = Number(position.cost);
-  const value = asking * position.units;
-  const youReceive = value - remaining;
+  const cents = (n: number) => Math.round(n * 100 + 1e-6) / 100;
+  const asking = cents(parseFloat(price) || 0);
+  // the units' share of what is still to pay, and of what the seller has put in (their
+  // installments, or what they paid to take the plan over plus their installments since)
+  const remaining = cents(Number(position.remaining_principal) * share);
+  const paid = cents(Number(position.cost) * share);
+  const value = cents(asking * units);
+  const youReceive = cents(value - remaining);
   const gain = youReceive - paid;
-  const minimum = remaining / position.units;
+  const minimum = units > 0 ? remaining / units : 0;
+  const overdue = Number(position.overdue_amount ?? 0);
+  const blockedByOverdue = validUnits && !whole && overdue > 0;
   const blocked = position.blocked ? BLOCKED[position.blocked]?.(position) : null;
 
   const create = useMutation({
-    mutationFn: () => secondaryApi.create({ plan_id: position.plan_id, price_per_unit: asking }),
+    mutationFn: () =>
+      secondaryApi.create({
+        plan_id: position.plan_id,
+        price_per_unit: asking,
+        ...(whole ? {} : { units }),
+      }),
     onSuccess: (listing) => {
       toast.success("Position listed", {
-        description: `A buyer pays you ${money(listing.position?.cash ?? youReceive)} and takes over the remaining installments.`,
+        description: whole
+          ? `A buyer pays you ${money(listing.position?.cash ?? youReceive)} and takes over the remaining installments.`
+          : `${units} unit(s) listed. A buyer pays you ${money(listing.position?.cash ?? youReceive)} for them and takes over their share of the installments.`,
       });
       queryClient.invalidateQueries({ queryKey: ["secondary"] });
       queryClient.invalidateQueries({ queryKey: ["installments"] });
@@ -105,6 +128,26 @@ function PositionRow({
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
+              <Label htmlFor={`units-${position.plan_id}`}>Units to sell (1–{free})</Label>
+              <Input
+                id={`units-${position.plan_id}`}
+                data-testid="sell-position-units"
+                type="number"
+                min={1}
+                max={free}
+                step={1}
+                value={unitsText}
+                onChange={(e) => setUnitsText(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                {whole
+                  ? "The whole plan: the buyer takes it over."
+                  : validUnits
+                    ? `Part of the plan: you keep ${position.units - units} unit(s), and each of your remaining installments goes down by the buyer's share.`
+                    : `Choose between 1 and ${free} units.`}
+                {free < position.units &&
+                  ` ${position.units - free} unit(s) are already offered (listed, or to a liquidity provider).`}
+              </p>
               <Label htmlFor={`price-${position.plan_id}`}>Asking price per unit ($)</Label>
               <Input
                 id={`price-${position.plan_id}`}
@@ -121,7 +164,7 @@ function PositionRow({
             <div className="rounded-lg bg-secondary/50 p-3 space-y-1.5 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">
-                  Position value ({position.units} × {unitPrice(asking)})
+                  Value ({units} × {unitPrice(asking)})
                 </span>
                 <span className="font-medium">{money(value)}</span>
               </div>
@@ -135,20 +178,34 @@ function PositionRow({
               </div>
               {youReceive > 0 && (
                 <p className="text-xs text-muted-foreground">
-                  = {money(paid)} you put in {gain >= 0 ? "+" : "−"} {money(Math.abs(gain))} price{" "}
-                  {gain >= 0 ? "increase" : "decrease"} on all {position.units} units. Installment fees
-                  you paid are not returned. The buyer pays a {feePct}% fee on top.
+                  {/* one sentence, so the language layer translates it whole */}
+                  {`= ${money(paid)} you put in ${gain >= 0 ? "+" : "−"} ${money(Math.abs(gain))} price ${
+                    gain >= 0 ? "increase" : "decrease"
+                  } on ${units} units.`}{" "}
+                  Installment fees you paid are not returned. The buyer pays a {feePct}% fee on top.
                 </p>
               )}
             </div>
           </div>
+          {blockedByOverdue && (
+            <div
+              className="flex items-start gap-2 rounded-lg bg-destructive/10 p-3 text-sm text-destructive"
+              data-testid="sell-position-overdue"
+            >
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>
+                {money(overdue)} of this plan's installments are overdue. Pay them first to sell part of the
+                plan (the whole plan can still be sold).
+              </span>
+            </div>
+          )}
           <Button
             className="w-full gap-2"
-            disabled={!(youReceive > 0) || create.isPending}
+            disabled={!validUnits || blockedByOverdue || !(youReceive > 0) || create.isPending}
             onClick={() => create.mutate()}
           >
             <CheckCircle className="h-4 w-4" />
-            {create.isPending ? "Listing…" : "List this position"}
+            {create.isPending ? "Listing…" : whole ? "List this position" : `List ${units} unit(s)`}
             {youReceive > 0 && (
               <Badge variant="secondary" className="ml-2">
                 Receive {money(youReceive)}
@@ -183,9 +240,9 @@ const SellPositionForm = ({ prefill = null }: { prefill?: PositionPrefill | null
           Sell an Installment Position
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          Units you are still paying for are sold with their plan, as one position. The buyer pays you the
-          principal you have paid plus the price change on all the units, and takes over the remaining
-          installments.
+          Units you are still paying for are sold with their installments: the whole plan, or some of its
+          units. The buyer pays you the principal you have paid on them plus the price change, and takes
+          over their installments; your plan keeps the rest.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -195,6 +252,7 @@ const SellPositionForm = ({ prefill = null }: { prefill?: PositionPrefill | null
             position={p}
             feePct={feePct}
             prefillPrice={p.plan_id === prefill?.planId ? prefill.price : undefined}
+            prefillUnits={p.plan_id === prefill?.planId ? prefill.units : undefined}
             prepared={p.plan_id === prefill?.planId}
           />
         ))}

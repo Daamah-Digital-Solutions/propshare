@@ -111,7 +111,8 @@ async def test_a_budget_finds_what_it_can_enter_and_the_units_it_buys(client, db
 async def test_units_on_a_running_plan_are_sold_as_the_whole_position(client, db, asession):
     """The client's test (2026-10-01): "I want to exit" on an under-construction holding was
     answered "zero sellable units". The units of a running plan are not listed one by one,
-    but the plan is sold whole: the assistant prepares that, it does not say "you cannot"."""
+    but the plan is sold as a position, whole or (2026-11-08) some of its units: the assistant
+    prepares that, it does not say "you cannot"."""
     uid, pid = await _plan(client, db, "held@p.io")  # 12 units at 100, 300 paid, 3 vested
     ctx = await _ctx(asession, uid)
     out = await _run(asession, ctx, "get_my_holdings", {})
@@ -120,7 +121,7 @@ async def test_units_on_a_running_plan_are_sold_as_the_whole_position(client, db
     assert item["units"] == vested and item["sellable_units"] == 0
     assert item["held_back"]["installment_plan"] == vested and item["held_back"]["listed"] == 0
     assert "installment plan that is still running" in out["note"]
-    assert "sold with the plan, whole, as one POSITION" in out["note"]
+    assert "the whole plan or some of its units" in out["note"]
     assert item["lockup_until"] is None
     assert (item["value"], item["launch_price"], item["average_cost"]) == (
         "300.00",
@@ -140,9 +141,22 @@ async def test_units_on_a_running_plan_are_sold_as_the_whole_position(client, db
         "900.00",
     )
     assert (pos["you_would_receive"], pos["listed"], pos["blocked"]) == ("300.00", False, None)
+    assert (pos["free_units"], pos["overdue_amount"]) == (12, "0.00")
 
-    # "sell 1 unit" of it prepares the sale of the whole position, ready to list
-    sale = await _run(asession, ctx, "prepare_sale", {"property": "Plan Tower", "units": 1})
+    # "sell 1 unit" of it prepares that unit of the plan: 100 less a twelfth of the 900 still
+    # to pay; the buyer takes over a twelfth of every remaining installment
+    one = await _run(asession, ctx, "prepare_sale", {"property": "Plan Tower", "units": 1})
+    assert (one["ready"], one["kind"], one["units"], one["plan_units"]) == (True, "position", 1, 12)
+    assert (one["you_receive"], one["buyer_fee"], one["remaining_principal"]) == (
+        "25.00",
+        "0.25",
+        "75.00",
+    )
+    assert "Part of the plan is sold: 1 of its 12 units" in " ".join(one["notes"])
+    assert "units=1" in _card_for("prepare_sale", one, [])["path"]
+
+    # the position, with no number of units, is the whole plan, ready to list
+    sale = await _run(asession, ctx, "prepare_sale", {"property": "Plan Tower", "position": True})
     assert (sale["ready"], sale["kind"], sale["units"]) == (True, "position", 12)
     assert (sale["you_receive"], sale["buyer_fee"], sale["buyer_pays"]) == (
         "300.00",
@@ -157,6 +171,7 @@ async def test_units_on_a_running_plan_are_sold_as_the_whole_position(client, db
     assert (
         card["path"].startswith("/secondary-market?tab=sell&plan=")
         and "price=100.00" in card["path"]
+        and "units=" not in card["path"]
     )
     assert card["position"] == {
         "position_value": "1200.00",

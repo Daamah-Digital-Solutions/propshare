@@ -1,7 +1,8 @@
 """Liquidity-provider routes (Phase 9) — ACTIVE rail.
 
 Seller side (instant-buyout exit requests):
-- POST /liquidity/exit-requests            list an instant exit (KYC-gated).
+- POST /liquidity/exit-requests            list an instant exit (KYC-gated): units of a
+                                           property, or (0042) of a running installment plan.
 - GET  /liquidity/exit-requests            the open order book.
 - GET  /liquidity/exit-requests/mine       the seller's own requests.
 - POST /liquidity/exit-requests/{id}/cancel  cancel an open request.
@@ -9,6 +10,8 @@ Seller side (instant-buyout exit requests):
 LP side:
 - POST /liquidity/exit-requests/{id}/fund  fund a request (KYC + liquidity_provider
                                            role + Idempotency-Key; atomic buyback).
+- GET  /liquidity/exit-requests/{id}/quote?units=N  what funding N installment-plan units
+                                           comes to (the cash, the schedule taken over).
 - GET  /liquidity/positions                the LP's ACTIVE acquisition history (audit).
 - GET  /liquidity/holdings                 the LP's CURRENT holdings (ownership_ledger).
 - GET  /liquidity/settings                 discount/fee/ttl/band + PASSIVE flag + tiers.
@@ -35,6 +38,7 @@ from app.schemas.liquidity import (
     ExitRequestOut,
     FundIn,
     LiquiditySettingsOut,
+    PlanUnitsQuoteOut,
     PoolTierOut,
     PositionListOut,
     PositionOut,
@@ -58,6 +62,7 @@ async def create_exit_request(
         property_id=body.property_id,
         units=body.units,
         idempotency_key=request.headers.get("Idempotency-Key"),
+        plan_id=body.plan_id,
     )
     return ExitRequestOut(**result)
 
@@ -106,8 +111,20 @@ async def fund_request(
         request_id=request_id,
         units=body.units,
         idempotency_key=idempotency_key,
+        expected_cash=body.expected_cash,
     )
     return PositionOut(**result)
+
+
+@router.get("/exit-requests/{request_id}/quote", response_model=PlanUnitsQuoteOut)
+async def quote_plan_units(
+    request_id: uuid.UUID, units: int, session: SessionDep, principal: PrincipalDep
+):
+    """What funding N units of a request for installment-plan units comes to (0042)."""
+    result = await liquidity_service.quote_plan_request(
+        session, lp_user_id=principal.user_id, request_id=request_id, units=units
+    )
+    return PlanUnitsQuoteOut(**result)
 
 
 @router.get("/positions", response_model=PositionListOut)

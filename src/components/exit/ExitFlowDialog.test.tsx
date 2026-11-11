@@ -2,7 +2,8 @@
  * The exit dialog must show the platform's own rates (it used to print literals that matched
  * nothing: a 2.5% seller fee on the secondary market, 3.5% and a 3% discount for a liquidity
  * exit) and must not tell an investor who pays by installments that there is nothing to sell:
- * a running plan is sold whole, as a position.
+ * a running plan's units go with their installments (the whole plan, or some of its units), on
+ * the secondary market or to a liquidity provider (client, 2026-11-08).
  */
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -159,7 +160,7 @@ describe("ExitFlowDialog", () => {
     mount();
     fireEvent.click(await screen.findByText("Secondary Market Exit"));
     const box = await screen.findByTestId("exit-plan-positions");
-    expect(box).toHaveTextContent(/sold with their plan, as one position/i);
+    expect(box).toHaveTextContent(/sold with their installments/i);
     expect(within(box).getByRole("link", { name: /sell the harbour gate position/i })).toHaveAttribute(
       "href",
       "/secondary-market?tab=sell&plan=plan-1",
@@ -168,15 +169,54 @@ describe("ExitFlowDialog", () => {
     expect(screen.queryByText(/You have no sellable units yet/)).toBeNull();
   });
 
-  it("says a liquidity provider buys fully paid units only", async () => {
+  it("offers some of a plan's units to liquidity providers, with what the seller receives", async () => {
+    const PLAN = {
+      plan_id: "plan-1",
+      property_id: "prop-9",
+      property_title: "Harbour Gate",
+      units: 10,
+      free_units: 10,
+      unit_price: "100.00",
+      remaining_principal: "700.00",
+      overdue_amount: "0.00",
+    };
+    positions.mockResolvedValue({ items: [PLAN], total: 1 });
+    createExit.mockResolvedValue({ request_id: "r-1", seller_net: "105.84", position: { seller_net: "105.84" } });
+    mount();
+    fireEvent.click(await screen.findByText("Liquidity Provider Exit"));
+    const box = await screen.findByTestId("plan-lp-exit");
+    fireEvent.change(within(box).getByLabelText(/Units of the Harbour Gate plan to offer/), {
+      target: { value: "4" },
+    });
+    // 4 x $95 (the 5% discount) = $380, less the $280 (4/10 of $700) the provider takes over:
+    // $100, less the 2% fee
+    expect(within(box).getByText(/Value at the liquidity price/).parentElement).toHaveTextContent("$380.00");
+    expect(within(box).getByText(/Still to pay on these units/).parentElement).toHaveTextContent("−$280.00");
+    expect(within(box).getByText("You receive").parentElement).toHaveTextContent("$98.00");
+    expect(box).toHaveTextContent("Your plan keeps 6 unit(s)");
+    fireEvent.click(within(box).getByRole("button", { name: /Offer 4 unit\(s\) to liquidity providers/ }));
+    await vi.waitFor(() => expect(createExit).toHaveBeenCalledWith({ plan_id: "plan-1", units: 4 }));
+  });
+
+  it("asks for what is overdue before a plan's units are offered", async () => {
     positions.mockResolvedValue({
-      items: [{ plan_id: "plan-1", property_id: "prop-9", property_title: "Harbour Gate", units: 10 }],
+      items: [
+        {
+          plan_id: "plan-1",
+          property_title: "Harbour Gate",
+          units: 10,
+          free_units: 10,
+          unit_price: "100.00",
+          remaining_principal: "700.00",
+          overdue_amount: "145.60",
+        },
+      ],
       total: 1,
     });
     mount();
     fireEvent.click(await screen.findByText("Liquidity Provider Exit"));
-    expect(await screen.findByTestId("exit-plan-positions")).toHaveTextContent(
-      /Liquidity providers buy fully paid units only/,
-    );
+    const box = await screen.findByTestId("plan-lp-exit");
+    expect(box).toHaveTextContent("$145.60 of this plan's installments are overdue");
+    expect(within(box).getByRole("button", { name: /to liquidity providers/ })).toBeDisabled();
   });
 });

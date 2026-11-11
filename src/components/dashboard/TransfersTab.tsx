@@ -79,7 +79,9 @@ const day = (iso?: string | null) =>
 const what = (t: TransferRow) =>
   t.asset === "units"
     ? `${(t.units ?? 0).toLocaleString()} unit${t.units === 1 ? "" : "s"} · ${t.property_title ?? "Property"}`
-    : `${money(t.amount)} wallet balance`;
+    : t.asset === "plan"
+      ? `${(t.units ?? 0).toLocaleString()} unit(s) on an installment plan · ${t.property_title ?? "Property"}`
+      : `${money(t.amount)} wallet balance`;
 
 export function TransfersTab() {
   const { user } = useAuth();
@@ -87,7 +89,7 @@ export function TransfersTab() {
   const [params, setParams] = useSearchParams();
   const [filter, setFilter] = useState<Filter>("all");
   const [open, setOpen] = useState(false);
-  const [initialAsset, setInitialAsset] = useState<"units" | "balance">("units");
+  const [initialAsset, setInitialAsset] = useState<"units" | "plan" | "balance">("units");
   const [cancelling, setCancelling] = useState<TransferRow | null>(null);
 
   const verified = !!user?.email_verified && user?.kyc_status === "verified";
@@ -125,7 +127,7 @@ export function TransfersTab() {
   const shown = rows.filter((t) =>
     filter === "all" ? true : filter === "waiting" ? isOpen(t) : t.direction === filter,
   );
-  const newTransfer = (asset: "units" | "balance") => {
+  const newTransfer = (asset: "units" | "plan" | "balance") => {
     setInitialAsset(asset);
     setOpen(true);
   };

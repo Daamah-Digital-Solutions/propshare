@@ -83,13 +83,20 @@ class InstallmentPlan(Base):
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )
+    # 0042: a part of a running plan that changed hands is a plan of its own; this is the plan
+    # it was taken from
+    parent_plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("installment_plans.id", ondelete="SET NULL")
+    )
+    # 0042: when the current holder took the plan over and the price per unit they got in at
+    # (empty: they started it, or took it over before 0042 — the secondary trade tells)
+    holder_since: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    entry_price: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
 
 
 class InstallmentPayment(Base):
     __tablename__ = "installment_payments"
-    __table_args__ = (
-        UniqueConstraint("plan_id", "seq", name="installment_payments_plan_seq_key"),
-    )
+    __table_args__ = (UniqueConstraint("plan_id", "seq", name="installment_payments_plan_seq_key"),)
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()

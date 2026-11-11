@@ -1431,10 +1431,13 @@ export type TransferStatus = "scheduled" | "waiting" | "delivered" | "cancelled"
 export type TransferOccasion = "birthday" | "graduation" | "wedding" | "new_baby" | "holiday" | "other";
 
 export interface TransferInput {
-  asset: "units" | "balance";
+  /** plan: units of a running installment plan of yours (`plan_id`); the recipient carries on
+   * paying their share of its installments */
+  asset: "units" | "balance" | "plan";
   recipient_email: string;
   recipient_name?: string;
   property_id?: string;
+  plan_id?: string;
   units?: number;
   amount?: string;
   /** ISO date; today when left out */
@@ -1453,14 +1456,55 @@ export interface TransferOptions {
     free_units: number;
     unit_price: string;
   }[];
+  /** running installment plans, part (or all) of which can be sent */
+  plans?: TransferPlanOption[];
   balance: string;
   fee_pct: string;
   claim_days: number;
   max_days_ahead: number;
 }
 
+export interface TransferPlanOption {
+  plan_id: string;
+  property_id: string;
+  property_title: string;
+  units: number;
+  free_units: number;
+  unit_price: string;
+  /** a plan's units go only when nothing on it is overdue */
+  overdue_amount: string;
+  /** a Nova Sukuk pledge not released yet */
+  pledged: boolean;
+}
+
+/** One payment of a plan (or of the part of a plan that changes hands). */
+export interface PlanPartPayment {
+  seq: number;
+  kind: string;
+  due_date: string;
+  base_amount: string;
+  fee_amount: string;
+  total_amount: string;
+  status: string;
+}
+
+/** Units of a running plan sent to another person: what they take on. */
+export interface TransferPlanQuote {
+  plan_id: string;
+  units: number;
+  plan_units: number;
+  vested_units: number;
+  value: string;
+  paid_principal: string;
+  remaining_principal: string;
+  remaining_fees: string;
+  installments_left: number;
+  next_due: string | null;
+  schedule: PlanPartPayment[];
+}
+
 export interface TransferQuote {
-  asset: "units" | "balance";
+  asset: "units" | "balance" | "plan";
   recipient_email: string;
   recipient_name: string | null;
   property_id: string | null;
@@ -1476,6 +1520,8 @@ export interface TransferQuote {
   message: string | null;
   occasion: TransferOccasion | null;
   claim_days: number;
+  /** units of an installment plan: the recipient's share of the payments */
+  plan?: TransferPlanQuote | null;
 }
 
 export interface TransferRow {
@@ -1484,7 +1530,9 @@ export interface TransferRow {
   direction: "sent" | "received";
   counterparty: string;
   recipient_email: string | null;
-  asset: "units" | "balance";
+  asset: "units" | "balance" | "plan";
+  plan_id?: string | null;
+  new_plan_id?: string | null;
   property_id: string | null;
   property_title: string | null;
   units: number | null;
@@ -1577,6 +1625,8 @@ export interface InstallmentPlan {
   listing_id?: string | null;
   /** when the holder took the plan over from another investor (earlier payments were theirs) */
   acquired_at?: string | null;
+  /** part of another plan that changed hands: the plan it was taken from */
+  parent_plan_id?: string | null;
 }
 /** A running plan as a position: equity = value - remaining_principal = cost + gain. */
 export interface PlanPosition {
@@ -1968,11 +2018,14 @@ export interface SecondaryListing {
   unit_price_ref: string | null;
   status: string; // active | sold | cancelled
   created_at: string | null;
-  /** an installment plan position: sold whole, the buyer takes the plan over */
+  /** an installment plan position: the whole plan or some of its units; a buyer can take
+   * some of the units still listed */
   plan_id?: string | null;
   position?: ListingPosition | null;
   /** a position: what the buyer pays the seller now; once sold, what it was sold for */
   cash?: string | null;
+  /** the seller's own listings: what the parts sold so far brought */
+  sold_cash?: string | null;
 }
 
 /** One remaining installment of a position. */
@@ -1990,7 +2043,10 @@ export interface PositionInstallment {
  * the buyer then pays the schedule. */
 export interface ListingPosition {
   plan_id: string;
+  /** the units these figures are for: the plan's, or part of them */
   units: number;
+  /** the plan's units */
+  plan_units?: number;
   vested_units: number;
   locked_price: string;
   /** the price per unit the seller got in at (the plan's locked price, or what they bought
@@ -2023,6 +2079,20 @@ export interface MyPosition extends ListingPosition {
   /** pledged | lockup | listed: why it cannot be listed now (null = it can) */
   blocked: string | null;
   lockup_until: string | null;
+  /** units that can still be sold or sent (the rest are listed or offered to a provider) */
+  free_units?: number;
+  listed_units?: number;
+  lp_exit_units?: number;
+  /** overdue on the plan: part of it changes hands only once that is paid */
+  overdue_amount?: string;
+}
+
+/** What buying `units` of a listed installment position comes to. */
+export interface PositionQuote extends ListingPosition {
+  listing_id: string;
+  units_remaining: number;
+  /** the whole plan: it becomes the buyer's */
+  whole: boolean;
 }
 
 export interface SecondaryTrade {
@@ -2085,12 +2155,12 @@ export const secondaryApi = {
   mine(): Promise<{ items: SecondaryListing[]; total: number }> {
     return apiRequest("/api/v1/secondary/listings/mine");
   },
-  /** List units you own, or a whole installment plan position (`plan_id`). The SERVER
-   * validates ownership/lock-up/price bounds. */
+  /** List units you own, or an installment plan position (`plan_id`; `units` for part of
+   * the plan, all of it without). The SERVER validates ownership/lock-up/price bounds. */
   create(
     input:
       | { property_id: string; units: number; price_per_unit: number }
-      | { plan_id: string; price_per_unit: number },
+      | { plan_id: string; price_per_unit: number; units?: number },
   ): Promise<SecondaryListing> {
     return apiRequest<SecondaryListing>("/api/v1/secondary/listings", {
       method: "POST",
@@ -2117,6 +2187,13 @@ export const secondaryApi = {
       },
       headers: { "Idempotency-Key": idempotencyKey },
     });
+  },
+  /** What buying `units` of a listed installment position comes to: the cash now and the
+   * schedule taken over, at the part's amounts. Writes nothing. */
+  quote(listingId: string, units: number): Promise<PositionQuote> {
+    return apiRequest<PositionQuote>(
+      `/api/v1/secondary/listings/${listingId}/quote?units=${encodeURIComponent(units)}`,
+    );
   },
   /** The caller's running installment plans as positions they could sell. */
   positions(): Promise<{ items: MyPosition[]; total: number }> {
@@ -2157,6 +2234,35 @@ export interface LpExitRequest {
   status: string; // open | filled | cancelled | expired
   created_at: string | null;
   expires_at: string | null;
+  /** units of a running installment plan (lp_price is then the cash paid now) */
+  plan_id?: string | null;
+  position?: LpPlanUnits | null;
+}
+
+/** Units of a running installment plan offered to providers, at the provider's price: the
+ * discounted value less the share of the principal still to pay, which the provider takes over. */
+export interface LpPlanUnits {
+  plan_id: string;
+  units: number;
+  plan_units: number;
+  vested_units: number;
+  lp_unit_price: string;
+  lp_value: string;
+  paid_principal: string;
+  remaining_principal: string;
+  remaining_fees: string;
+  cash: string;
+  liquidity_fee: string;
+  seller_net: string;
+  installments_left: number;
+  next_due: string | null;
+  schedule: PlanPartPayment[];
+}
+
+export interface LpPlanQuote extends LpPlanUnits {
+  request_id: string;
+  units_remaining: number;
+  whole: boolean;
 }
 
 export interface LpPosition {
@@ -2168,6 +2274,8 @@ export interface LpPosition {
   spread_at_entry: string | null;
   status: string;
   created_at: string | null;
+  /** the installment plan taken with the units */
+  plan_id?: string | null;
 }
 
 export interface LpPoolTier {
@@ -2187,7 +2295,9 @@ export interface LiquiditySettings {
 
 export const liquidityApi = {
   /** Seller: list an instant-exit request (LP-funded buyout at the liquidity discount). */
-  createExitRequest(input: { property_id: string; units: number }): Promise<LpExitRequest> {
+  createExitRequest(
+    input: { property_id: string; units: number } | { plan_id: string; units: number },
+  ): Promise<LpExitRequest> {
     return apiRequest<LpExitRequest>("/api/v1/liquidity/exit-requests", {
       method: "POST",
       body: input,
@@ -2205,12 +2315,24 @@ export const liquidityApi = {
     return apiRequest(`/api/v1/liquidity/exit-requests/${id}/cancel`, { method: "POST" });
   },
   /** LP: fund a request (atomic buyback). Requires the liquidity_provider role + KYC. */
-  fund(requestId: string, units: number, idempotencyKey: string): Promise<LpPosition> {
+  fund(
+    requestId: string,
+    units: number,
+    idempotencyKey: string,
+    /** installment-plan units only: the cash shown, so a changed amount is never charged */
+    expectedCash?: string,
+  ): Promise<LpPosition> {
     return apiRequest<LpPosition>(`/api/v1/liquidity/exit-requests/${requestId}/fund`, {
       method: "POST",
-      body: { units },
+      body: { units, ...(expectedCash === undefined ? {} : { expected_cash: expectedCash }) },
       headers: { "Idempotency-Key": idempotencyKey },
     });
+  },
+  /** What funding `units` of a request for installment-plan units comes to. Writes nothing. */
+  quotePlan(requestId: string, units: number): Promise<LpPlanQuote> {
+    return apiRequest<LpPlanQuote>(
+      `/api/v1/liquidity/exit-requests/${requestId}/quote?units=${encodeURIComponent(units)}`,
+    );
   },
   /** LP ACTIVE acquisition history (audit — NOT current holdings). */
   positions(): Promise<{ items: LpPosition[]; total: number }> {

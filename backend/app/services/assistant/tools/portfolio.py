@@ -4,9 +4,10 @@ everything, the user presses the last button).
 
 Nothing here lists, sells or pays. ``prepare_sale`` applies the listing endpoint's rules
 (ownership, units already reserved, lock-up, price bounds, verification) and works out what
-the seller receives and what a buyer pays on top, for units held outright and for a whole
-installment plan position (0034: the buyer pays the seller what was paid plus the increase
-on all its units, and takes over the rest of the plan); ``prepare_installment_payment`` finds
+the seller receives and what a buyer pays on top, for units held outright and for an
+installment plan position, whole or (0042) some of its units (0034: the buyer pays the seller
+what was paid on those units plus their increase, and takes over their share of the rest of
+the plan); ``prepare_installment_payment`` finds
 the next unpaid installment and checks the wallet covers it. The server turns each result into a
 card whose link opens the platform's own form, pre-filled, where the user confirms.
 """
@@ -45,9 +46,10 @@ _HELD_BACK_WHY = {
     "family_pending": "promised to a family member who has not registered yet",
     "gift": "in a scheduled gift",
     "installment_plan": (
-        "on an installment plan that is still running (they are sold with the plan, whole, as "
-        "one position: the buyer pays you what you paid plus the price increase and takes "
-        "over the remaining installments)"
+        "on an installment plan that is still running (they go with their installments: the "
+        "whole plan or some of its units, on the secondary market, to a liquidity provider or "
+        "to another person; a buyer pays you what you paid on them plus the price increase "
+        "and takes over their share of the remaining installments)"
     ),
     "pledged": "pledged to Nova Finance for a Nova Sukuk certificate",
     "transfer": "sent to another person in a transfer that has not been delivered yet",
@@ -98,8 +100,8 @@ class SalePrepIn(BaseModel):
         default=None,
         ge=1,
         le=1_000_000,
-        description="Units to list for sale; leave empty for an installment position (it is "
-        "sold whole)",
+        description="Units to list for sale. For an installment position: how many of the "
+        "plan's units (empty = all the plan's units that are free)",
     )
     price_per_unit: float | None = Field(
         default=None,
@@ -110,8 +112,8 @@ class SalePrepIn(BaseModel):
     position: bool | None = Field(
         default=None,
         description="true = sell the installment plan position the user has in that property "
-        "(every unit of the plan, with its remaining installments going to the buyer). Empty: "
-        "decided from what the user holds there",
+        "(the plan's units, or `units` of them, with their share of the remaining installments "
+        "going to the buyer). Empty: decided from what the user holds there",
     )
 
 
@@ -132,14 +134,16 @@ class SalePrepOut(ToolOutput):
     ready: bool  # nothing blocks the Create Listing button
     notes: list[str]
     as_of: str
-    # the sale of an installment plan position (kind = position): the whole plan changes
-    # hands; you_receive is what the buyer pays the seller now (the position's value at the
+    # the sale of an installment plan position (kind = position): the whole plan, or `units`
+    # of its `plan_units` (0042: a plan of their own for the buyer, with their share of every
+    # payment); you_receive is what the buyer pays the seller now (the position's value at the
     # asking price less the principal still to pay = cost + gain), and the buyer then pays
     # remaining_principal on the plan's dates. cost = what the user has put in (the
     # installments paid, or what they paid to take the plan over plus their installments
     # since); gain = the price change on every unit since they got in (negative = a loss)
     kind: str = "units"  # units | position
     plan_id: str | None = None
+    plan_units: int | None = None
     position_value: str | None = None
     cost: str | None = None
     remaining_principal: str | None = None
@@ -207,7 +211,7 @@ async def _prepare_sale(session, ctx: AgentContext, args) -> dict:
         )
     if as_position:
         return await _prepare_position_sale(
-            session, ctx, prop, here, price, reference, sett, fee_pct, held, info
+            session, ctx, prop, here, price, reference, sett, fee_pct, held, info, a.units
         )
     units = a.units or held["sellable_units"]
     if a.units is None:
@@ -267,9 +271,10 @@ def _bound_notes(sett: dict, reference: decimal.Decimal, price: decimal.Decimal)
 
 
 async def _prepare_position_sale(
-    session, ctx, prop, here, price, reference, sett, fee_pct, held, info
+    session, ctx, prop, here, price, reference, sett, fee_pct, held, info, units=None
 ) -> dict:
-    """The sale of a whole installment plan position at ``price`` per unit."""
+    """The sale of an installment plan position at ``price`` per unit: all the plan's free
+    units, or ``units`` of them (0042)."""
     blocking: list[str] = []
     if len(here) > 1:
         info.append(
@@ -279,7 +284,27 @@ async def _prepare_position_sale(
     pos = here[0]
     plan = await session.get(InstallmentPlan, pos["plan_id"])
     payments = await installment_service._payments_for(session, plan.id)
-    fig = await installment_service.holder_position(session, plan, payments, price)
+    free = int(pos.get("free_units", plan.units_total))
+    if units is None:
+        units = free
+        if free < plan.units_total:
+            info.append(
+                f"{plan.units_total - free} of the plan's units are already offered (listed, "
+                f"or to a liquidity provider), so this prepares the {free} that are free."
+            )
+    if not 1 <= units <= max(free, 1):
+        blocking.append(f"You can sell between 1 and {free} of this plan's units now.")
+        units = max(1, min(units, plan.units_total))
+    whole = units == plan.units_total
+    if not whole and decimal.Decimal(str(pos.get("overdue_amount") or "0")) > 0:
+        blocking.append(
+            f"{pos['overdue_amount']} of this plan's installments are overdue: pay them first "
+            "to sell part of the plan (the whole plan can still be sold)."
+        )
+    entry = await installment_service.holder_entry(session, plan)
+    fig = installment_service.part_figures(
+        plan, payments, units, price, entry[1] if entry else None
+    )
     cash = fig["equity"]
     if pos["blocked"] == "pledged":
         blocking.append(
@@ -295,7 +320,7 @@ async def _prepare_position_sale(
             "This position is already listed for sale; cancel that listing to change its price."
         )
     if cash <= 0:
-        floor = _q(fig["remaining_principal"] / plan.units_total)
+        floor = _q(fig["remaining_principal"] / units)
         blocking.append(
             f"At that price the position is worth {fig['value']:.2f}, which does not cover the "
             f"{fig['remaining_principal']:.2f} still to pay on it: ask more than {floor:.2f} "
@@ -312,19 +337,29 @@ async def _prepare_position_sale(
         if move < 0
         else "with no price change on top"
     )
-    info.append(
-        f"The whole position is sold: {plan.units_total} units, {plan.vested_units} of them "
-        f"yours already. The buyer pays you what you have put in ({fig['cost']:.2f}) {change}, "
-        f"then pays the {fig['installments_left']} remaining installment(s) "
-        f"({fig['remaining_principal']:.2f})."
-    )
+    if whole:
+        info.append(
+            f"The whole position is sold: {plan.units_total} units, {plan.vested_units} of them "
+            f"yours already. The buyer pays you what you have put in ({fig['cost']:.2f}) "
+            f"{change}, then pays the {fig['installments_left']} remaining installment(s) "
+            f"({fig['remaining_principal']:.2f})."
+        )
+    else:
+        info.append(
+            f"Part of the plan is sold: {units} of its {plan.units_total} units. The buyer pays "
+            f"you what you have put in on them ({fig['cost']:.2f}) {change}, then pays their "
+            f"share of the {fig['installments_left']} remaining installment(s) "
+            f"({fig['remaining_principal']:.2f}) as a plan of their own. You keep "
+            f"{plan.units_total - units} unit(s), and each of your remaining installments goes "
+            "down by the buyer's share."
+        )
     buyer_fee = _q(max(cash, decimal.Decimal(0)) * fee_pct / decimal.Decimal(100))
     vs_reference = _q((price - reference) / reference * 100) if reference else decimal.Decimal(0)
     return {
         "property_title": prop.title,
         "property_id": str(prop.id),
         "property_slug": prop.slug,
-        "units": plan.units_total,
+        "units": units,
         "price_per_unit": f"{price:.2f}",
         "reference_price": f"{reference:.2f}",
         "vs_reference_pct": f"{vs_reference:.2f}",
@@ -339,6 +374,7 @@ async def _prepare_position_sale(
         "as_of": _now(),
         "kind": "position",
         "plan_id": str(plan.id),
+        "plan_units": plan.units_total,
         "position_value": f"{fig['value']:.2f}",
         "cost": f"{fig['cost']:.2f}",
         "remaining_principal": f"{fig['remaining_principal']:.2f}",
@@ -351,9 +387,10 @@ register(
     ToolSpec(
         "prepare_sale",
         "Prepare a secondary-market listing of what the signed-in user holds: units they own "
-        "outright, or a whole installment plan position (units on a running plan are sold "
-        "with the plan: the buyer pays the seller what was paid plus the price increase on "
-        "all its units, and takes over the remaining installments). Checks sellable units, "
+        "outright, or an installment plan position, whole or `units` of it (units on a "
+        "running plan go with their installments: the buyer pays the seller what was paid on "
+        "them plus their price increase, and takes over their share of the remaining "
+        "installments). Checks sellable units, "
         "lock-up, price limits and verification, and works out what the seller receives (the "
         "buyer pays the resale fee on top). The user then sees a sale card whose button opens "
         "the listing form pre-filled, stopping at their own Create Listing click.",

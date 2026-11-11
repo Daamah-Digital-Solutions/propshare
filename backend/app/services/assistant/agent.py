@@ -615,8 +615,10 @@ def _card_for(name: str, result: dict[str, Any], tokens: list[dict[str, Any]]) -
         }
     if name == "prepare_sale":
         position = result.get("kind") == "position"
-        if position:  # the whole plan is sold: the form opens on that position
+        if position:  # the form opens on that position, with the units when part of it
             query = {"tab": "sell", "plan": result["plan_id"]}
+            if result.get("plan_units") and result["units"] < result["plan_units"]:
+                query["units"] = result["units"]
         else:
             query = {"tab": "sell", "property": result["property_id"], "units": result["units"]}
         query["price"] = result["price_per_unit"]

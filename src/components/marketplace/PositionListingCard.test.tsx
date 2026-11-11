@@ -1,6 +1,8 @@
 /**
- * A listing that offers a whole installment plan (client meeting 2026-10-01: the buyer pays
- * the seller what was paid plus the increase, and continues the remaining installments).
+ * A listing that offers an installment plan (client meeting 2026-10-01: the buyer pays the
+ * seller what was paid plus the increase, and continues the remaining installments). Since
+ * 2026-11-08 a buyer can take some of the units: the card then shows the server's quote for
+ * that part (its share of every payment) before anything is bought.
  * The card shows the server's figures as they are, asks the buyer to accept the installments
  * before the button works, and sends back the amount it showed so that a position that
  * changed meanwhile is never bought unseen.
@@ -10,14 +12,21 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SecondaryListing } from "@/lib/api";
 
-const { buy, toastError, toastSuccess } = vi.hoisted(() => ({
+const { buy, quote, toastError, toastSuccess } = vi.hoisted(() => ({
   buy: vi.fn(),
+  quote: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
 }));
 vi.mock("@/lib/api", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
-  return { ...real, secondaryApi: { buy: (...a: unknown[]) => buy(...a) } };
+  return {
+    ...real,
+    secondaryApi: {
+      buy: (...a: unknown[]) => buy(...a),
+      quote: (...a: unknown[]) => quote(...a),
+    },
+  };
 });
 vi.mock("sonner", () => ({ toast: { error: toastError, success: toastSuccess } }));
 
@@ -79,6 +88,7 @@ function mount(listing: SecondaryListing = LISTING) {
 describe("PositionListingCard", () => {
   beforeEach(() => {
     buy.mockReset();
+    quote.mockReset();
     toastError.mockReset();
     toastSuccess.mockReset();
   });
@@ -87,18 +97,20 @@ describe("PositionListingCard", () => {
     mount();
     const card = screen.getByTestId("position-listing");
     expect(card).toHaveTextContent("Installment position");
-    expect(card).toHaveTextContent("10 · 3 paid for");
+    expect(card).toHaveTextContent("Units for sale10 of 10 on the plan");
+    expect(card).toHaveTextContent("You can buy some of them");
     expect(card).toHaveTextContent("You pay the seller now$400.00");
     expect(card).toHaveTextContent("Then 2 installment(s)$728.00"); // 700 principal + 28 fees
     expect(card).toHaveTextContent("next Nov 1, 2026");
 
     fireEvent.click(screen.getByRole("button", { name: /view & buy/i }));
     const sheet = await screen.findByTestId("position-buy");
-    expect(sheet).toHaveTextContent("Position value (10 × $110)$1,100.00");
+    expect(sheet).toHaveTextContent("Value (10 × $110)$1,100.00");
     expect(sheet).toHaveTextContent("−$700.00");
     expect(sheet).toHaveTextContent(
-      "= $300.00 paid on the plan + $100.00 price increase on all 10 units since it started",
+      "= $300.00 paid on these units + $100.00 price increase on 10 units since the plan started",
     );
+    expect(sheet).toHaveTextContent("All the plan's units: the plan itself becomes yours.");
     expect(sheet).toHaveTextContent("Purchase Fee (1%)+$4.00");
     expect(sheet).toHaveTextContent("Charged from your wallet now$404.00");
     // the schedule the buyer takes over, with its dates
@@ -121,7 +133,7 @@ describe("PositionListingCard", () => {
     await waitFor(() => expect(buy).toHaveBeenCalledTimes(1));
     const [listingId, units, key, expectedCash, expectedFee] = buy.mock.calls[0];
     expect(listingId).toBe("lst-9");
-    expect(units).toBe(10); // the whole position, never a part of it
+    expect(units).toBe(10); // every unit listed, unless the buyer chooses fewer
     expect(typeof key).toBe("string");
     expect(expectedCash).toBe("400.00");
     expect(expectedFee).toBe("4.00"); // the fee shown is confirmed with the amount
@@ -156,7 +168,7 @@ describe("PositionListingCard", () => {
     } as SecondaryListing);
     fireEvent.click(screen.getByRole("button", { name: /view & buy/i }));
     const sheet = await screen.findByTestId("position-buy");
-    expect(sheet).toHaveTextContent("= $300.00 paid on the plan + $100.00 price increase");
+    expect(sheet).toHaveTextContent("= $300.00 paid on these units + $100.00 price increase");
     expect(sheet).not.toHaveTextContent("$350.00");
   });
 
@@ -166,5 +178,48 @@ describe("PositionListingCard", () => {
     expect(
       await screen.findByText(/1 already due: charged at the next automatic charge/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows the part a buyer chooses, from the server's quote, and buys that part", async () => {
+    // 3 of the 10: 3 x 110 = 330, less 30% of the 700 = 210 -> 120 to the seller
+    quote.mockResolvedValue({
+      ...LISTING.position!,
+      units: 3,
+      plan_units: 10,
+      vested_units: 0,
+      value: "330.00",
+      paid_principal: "90.00",
+      remaining_principal: "210.00",
+      remaining_fees: "8.40",
+      gain: "30.00",
+      cash: "120.00",
+      resale_fee: "1.20",
+      total_now: "121.20",
+      listing_id: "lst-9",
+      units_remaining: 10,
+      whole: false,
+      schedule: [
+        { seq: 4, kind: "installment", due_date: "2026-11-01", base_amount: "105.00", fee_amount: "4.20", total_amount: "109.20", status: "scheduled" },
+        { seq: 5, kind: "final", due_date: "2026-12-01", base_amount: "105.00", fee_amount: "4.20", total_amount: "109.20", status: "scheduled" },
+      ],
+    });
+    buy.mockResolvedValue({ trade_id: "t-1", units: 3, total_charged: "121.20" });
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: /view & buy/i }));
+    const sheet = await screen.findByTestId("position-buy");
+    fireEvent.change(within(sheet).getByTestId("position-units"), { target: { value: "3" } });
+    await waitFor(() => expect(quote).toHaveBeenCalledWith("lst-9", 3));
+    await waitFor(() => expect(sheet).toHaveTextContent("Value (3 × $110)$330.00"));
+    expect(sheet).toHaveTextContent("Part of the plan: these units become an installment plan in your name");
+    expect(sheet).toHaveTextContent("You pay the seller now$120.00");
+    expect(sheet).toHaveTextContent("Charged from your wallet now$121.20");
+    const rows = within(sheet).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent("Month 4Nov 1, 2026$109.20");
+    expect(rows[3]).toHaveTextContent("Total still to pay$218.40");
+    fireEvent.click(within(sheet).getByRole("checkbox"));
+    fireEvent.click(within(sheet).getByRole("button", { name: /Pay \$121\.20 for 3 unit\(s\)/ }));
+    await waitFor(() => expect(buy).toHaveBeenCalledTimes(1));
+    const [listingId, units, , expectedCash, expectedFee] = buy.mock.calls[0];
+    expect([listingId, units, expectedCash, expectedFee]).toEqual(["lst-9", 3, "120.00", "1.20"]);
   });
 });

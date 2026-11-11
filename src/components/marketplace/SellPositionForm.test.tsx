@@ -1,7 +1,8 @@
 /**
- * Selling a running installment plan as one position: the form previews "value at my price,
- * less what is still to pay = what I receive", refuses a price that does not cover what is
- * still to pay, says why a plan cannot be listed, and lists the plan only on the click.
+ * Selling a running installment plan as a position, whole or (2026-11-08) some of its units:
+ * the form previews "value at my price, less what is still to pay on those units = what I
+ * receive", refuses a price that does not cover what is still to pay, asks for what is overdue
+ * before part of a plan is sold, says why a plan cannot be listed, and lists only on the click.
  */
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -90,7 +91,7 @@ describe("SellPositionForm", () => {
     expect(row).toHaveTextContent("Bought at $100 · now $110");
     // at the current price: 1,100 - 700 = 400 = the 300 paid + 100 increase on all 10 units
     expect(row).toHaveTextContent("You receive$400.00");
-    expect(row).toHaveTextContent("= $300.00 you put in + $100.00 price increase on all 10 units");
+    expect(row).toHaveTextContent("= $300.00 you put in + $100.00 price increase on 10 units");
     expect(row).toHaveTextContent("Installment fees you paid are not returned");
     expect(row).toHaveTextContent("The buyer pays a 1% fee on top");
     expect(create).not.toHaveBeenCalled();
@@ -110,7 +111,7 @@ describe("SellPositionForm", () => {
     const row = await screen.findByTestId("position-row");
     fireEvent.change(within(row).getByLabelText(/asking price per unit/i), { target: { value: "110.555" } });
     // 110.56 a unit: 1,105.60 - 700, not 1,105.55 - 700
-    expect(row).toHaveTextContent("Position value (10 × $110.56)$1,105.60");
+    expect(row).toHaveTextContent("Value (10 × $110.56)$1,105.60");
     expect(row).toHaveTextContent("You receive$405.60");
     fireEvent.click(within(row).getByRole("button", { name: /list this position/i }));
     await waitFor(() => expect(create).toHaveBeenCalledWith({ plan_id: "plan-1", price_per_unit: 110.56 }));
@@ -136,7 +137,7 @@ describe("SellPositionForm", () => {
     expect(row).toHaveTextContent("Bought at $110 · now $121");
     // 10 x 121 - 700 = 510 = the 400 put in + 110 (11 a unit on all 10 units)
     expect(row).toHaveTextContent("You receive$510.00");
-    expect(row).toHaveTextContent("= $400.00 you put in + $110.00 price increase on all 10 units");
+    expect(row).toHaveTextContent("= $400.00 you put in + $110.00 price increase on 10 units");
   });
 
   it("says why a position cannot be listed instead of offering the form", async () => {
@@ -169,5 +170,34 @@ describe("SellPositionForm", () => {
     expect(within(rows[0]).getByLabelText(/asking price per unit/i)).toHaveValue(115);
     expect(within(rows[1]).queryByTestId("position-prepared-banner")).toBeNull();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("sells some of the plan's units at their share of what is still to pay", async () => {
+    positions.mockResolvedValue({ items: [POSITION], total: 1 });
+    create.mockResolvedValue({ listing_id: "lst-1", position: { cash: "120.00" } });
+    mount();
+    const row = await screen.findByTestId("position-row");
+    fireEvent.change(within(row).getByTestId("sell-position-units"), { target: { value: "3" } });
+    // 3 x 110 = 330, less 3/10 of the 700 still to pay = 210 -> 120
+    expect(row).toHaveTextContent("Value (3 × $110)$330.00");
+    expect(row).toHaveTextContent("−$210.00");
+    expect(row).toHaveTextContent("You receive$120.00");
+    expect(row).toHaveTextContent("you keep 7 unit(s)");
+    fireEvent.click(within(row).getByRole("button", { name: /list 3 unit\(s\)/i }));
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith({ plan_id: "plan-1", price_per_unit: 110, units: 3 }),
+    );
+  });
+
+  it("asks for what is overdue before part of the plan is sold, not the whole", async () => {
+    positions.mockResolvedValue({ items: [{ ...POSITION, overdue_amount: "145.60" }], total: 1 });
+    mount();
+    const row = await screen.findByTestId("position-row");
+    fireEvent.change(within(row).getByTestId("sell-position-units"), { target: { value: "3" } });
+    expect(within(row).getByTestId("sell-position-overdue")).toHaveTextContent("$145.60");
+    expect(within(row).getByRole("button", { name: /list 3 unit\(s\)/i })).toBeDisabled();
+    fireEvent.change(within(row).getByTestId("sell-position-units"), { target: { value: "10" } });
+    expect(within(row).queryByTestId("sell-position-overdue")).toBeNull();
+    expect(within(row).getByRole("button", { name: /list this position/i })).toBeEnabled();
   });
 });

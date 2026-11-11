@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, liquidityApi, secondaryApi, type MyPosition } from "@/lib/api";
+import PlanLiquidityExit from "@/components/exit/PlanLiquidityExit";
 import { money } from "@/lib/money";
 import {
   useCreateExitRequest,
@@ -490,18 +491,26 @@ function SelectStep({
             : "You have no sellable units yet. Invest in a property first, or wait for a lock-up to clear."}
         </div>
       )}
-      {/* units on a running installment plan are not in the list above: the plan is sold whole */}
+      {/* units on a running installment plan are not in the list above: they go with their
+          installments (the whole plan, or some of its units) */}
       {plans.length > 0 && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 p-3" data-testid="exit-plan-positions">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <CalendarClock className="h-4 w-4 text-primary" /> Units on an installment plan
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Units you are still paying for are sold with their plan, as one position, on the secondary
-            market: the buyer pays you the principal you have paid plus the price change on all the units,
-            and takes over the remaining installments.
-            {method === "liquidity" && " Liquidity providers buy fully paid units only."}
+            {method === "liquidity"
+              ? "Units you are still paying for go with their installments: offer the whole plan or some of its units. The provider pays you their discounted value less their share of what is still to pay, and takes that share over; your plan keeps the rest."
+              : "Units you are still paying for are sold with their installments, on the secondary market: the whole plan or some of its units. The buyer pays you the principal you have paid on them plus the price change, and takes over their installments."}
           </p>
+          {method === "liquidity" ? (
+            <PlanLiquidityExit
+              plans={plans}
+              discountPct={rates.lpDiscountPct}
+              feePct={rates.lpFeePct}
+              onDone={onLeave}
+            />
+          ) : (
           <div className="mt-2 flex flex-wrap gap-2">
             {plans.map((plan) => (
               <Button
@@ -518,6 +527,7 @@ function SelectStep({
               </Button>
             ))}
           </div>
+          )}
         </div>
       )}
       <div className="grid grid-cols-1 gap-2 max-h-[260px] overflow-y-auto pr-1">

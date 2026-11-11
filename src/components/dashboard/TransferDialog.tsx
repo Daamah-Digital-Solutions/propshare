@@ -23,13 +23,25 @@ import {
   type TransferRow,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import PlanPartSchedule from "@/components/marketplace/PlanPartSchedule";
 
 /**
  * Send property units or wallet balance to another person by email (client, 2026-10-28, as on
  * Capimax BRX), in three steps: fill it in, review and confirm (the server prices it: the
  * fee and what leaves the wallet now), and the outcome (delivered, waiting for the recipient,
  * or scheduled), with its TR- number. Nothing is sent before Confirm.
+ *
+ * Units of a running installment plan (client, 2026-11-08): some of the plan's units, or all,
+ * go with their share of every installment, which the recipient pays from then on. They go
+ * today, to a member whose email is confirmed and identity verified, and only when nothing on
+ * the plan is overdue; the review shows the installments the recipient takes over.
  */
+type Asset = "units" | "plan" | "balance";
+const ASSET_LABELS: Record<Asset, string> = {
+  units: "Transfer units",
+  plan: "Plan units",
+  balance: "Transfer balance",
+};
 
 const money = (v: string | number) =>
   Number(v).toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -60,12 +72,13 @@ export function TransferDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  initialAsset?: "units" | "balance";
+  initialAsset?: Asset;
 }) {
   const qc = useQueryClient();
   const [step, setStep] = useState<Step>("form");
-  const [asset, setAsset] = useState<"units" | "balance">(initialAsset);
+  const [asset, setAsset] = useState<Asset>(initialAsset);
   const [propertyId, setPropertyId] = useState("");
+  const [planId, setPlanId] = useState("");
   const [units, setUnits] = useState("");
   const [amount, setAmount] = useState("");
   const [email, setEmail] = useState("");
@@ -88,6 +101,10 @@ export function TransferDialog({
     () => (opts.data?.positions ?? []).filter((p) => p.free_units > 0),
     [opts.data],
   );
+  const plans = useMemo(
+    () => (opts.data?.plans ?? []).filter((p) => p.free_units > 0 && !p.pledged),
+    [opts.data],
+  );
 
   // a fresh form each time it opens
   useEffect(() => {
@@ -108,8 +125,17 @@ export function TransferDialog({
   useEffect(() => {
     if (!propertyId && positions.length) setPropertyId(positions[0].property_id);
   }, [positions, propertyId]);
+  useEffect(() => {
+    if (!planId && plans.length) setPlanId(plans[0].plan_id);
+  }, [plans, planId]);
+  // a plan's units go today
+  useEffect(() => {
+    if (asset === "plan") setDate(today());
+  }, [asset]);
 
   const pos = positions.find((p) => p.property_id === propertyId);
+  const plan = plans.find((p) => p.plan_id === planId);
+  const planOverdue = plan ? Number(plan.overdue_amount) : 0;
   const n = Math.floor(Number(units) || 0);
   const amt = Number(amount) || 0;
   const maxDate = useMemo(() => {
@@ -120,13 +146,21 @@ export function TransferDialog({
   const valid =
     /^\S+@\S+\.\S+$/.test(email.trim()) &&
     date >= today() &&
-    (asset === "units" ? !!pos && n >= 1 && n <= pos.free_units : amt > 0);
+    (asset === "units"
+      ? !!pos && n >= 1 && n <= pos.free_units
+      : asset === "plan"
+        ? !!plan && n >= 1 && n <= plan.free_units && planOverdue <= 0
+        : amt > 0);
 
   const payload = (): TransferInput => ({
     asset,
     recipient_email: email.trim(),
     recipient_name: name.trim() || undefined,
-    ...(asset === "units" ? { property_id: propertyId, units: n } : { amount: amt.toFixed(2) }),
+    ...(asset === "units"
+      ? { property_id: propertyId, units: n }
+      : asset === "plan"
+        ? { plan_id: planId, units: n }
+        : { amount: amt.toFixed(2) }),
     deliver_on: date,
     message: message.trim() || undefined,
     occasion: occasion === NO_OCCASION ? undefined : (occasion as TransferOccasion),
@@ -183,21 +217,24 @@ export function TransferDialog({
 
         {step === "form" && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="What to send">
-              {(["units", "balance"] as const).map((a) => (
+            <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="What to send">
+              {(["units", "plan", "balance"] as const).map((a) => (
                 <button
                   key={a}
                   type="button"
                   role="radio"
                   aria-checked={asset === a}
-                  disabled={a === "units" && !positions.length}
-                  onClick={() => setAsset(a)}
+                  disabled={(a === "units" && !positions.length) || (a === "plan" && !plans.length)}
+                  onClick={() => {
+                    setAsset(a);
+                    setUnits("");
+                  }}
                   className={cn(
                     "rounded-lg border p-2.5 text-sm transition-colors disabled:opacity-50",
                     asset === a ? "border-primary bg-primary/5 font-medium" : "border-border hover:border-primary/40",
                   )}
                 >
-                  {a === "units" ? "Transfer units" : "Transfer balance"}
+                  {ASSET_LABELS[a]}
                 </button>
               ))}
             </div>
@@ -208,7 +245,50 @@ export function TransferDialog({
               </p>
             )}
 
-            {asset === "units" ? (
+            {asset === "plan" ? (
+              plan && (
+                <div className="grid grid-cols-3 gap-3" data-testid="transfer-plan">
+                  <div className="col-span-2 space-y-1.5">
+                    <Label htmlFor="transfer-plan">Installment plan</Label>
+                    <Select value={planId} onValueChange={setPlanId}>
+                      <SelectTrigger id="transfer-plan" aria-label="Installment plan">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {plans.map((p) => (
+                          <SelectItem key={p.plan_id} value={p.plan_id}>
+                            {p.property_title} ({p.free_units} free)
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="transfer-plan-units">Units</Label>
+                    <Input
+                      id="transfer-plan-units"
+                      type="number"
+                      min={1}
+                      max={plan.free_units}
+                      step={1}
+                      value={units}
+                      onChange={(e) => setUnits(e.target.value)}
+                    />
+                  </div>
+                  <p className="col-span-3 text-xs text-muted-foreground">
+                    {plan.free_units} of the plan's {plan.units} units can be sent. They go with their share of
+                    every remaining installment, which the recipient pays from then on; your plan keeps the rest.
+                    They go today, and only to a member whose email is confirmed and identity verified.
+                  </p>
+                  {planOverdue > 0 && (
+                    <p className="col-span-3 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                      {money(planOverdue)} of this plan's installments are overdue. Pay them first, then you can send
+                      its units.
+                    </p>
+                  )}
+                </div>
+              )
+            ) : asset === "units" ? (
               positions.length > 0 && (
                 <div className="grid grid-cols-3 gap-3">
                   <div className="col-span-2 space-y-1.5">
@@ -290,6 +370,7 @@ export function TransferDialog({
                   min={today()}
                   max={maxDate}
                   value={date}
+                  disabled={asset === "plan"}
                   onChange={(e) => setDate(e.target.value)}
                 />
               </div>
@@ -335,8 +416,23 @@ export function TransferDialog({
               <dd className="font-medium">
                 {quote.asset === "units"
                   ? `${quote.units} unit${quote.units === 1 ? "" : "s"} of ${quote.property_title}`
-                  : money(quote.amount)}
+                  : quote.asset === "plan"
+                    ? `${quote.units} unit(s) of ${quote.property_title} on an installment plan`
+                    : money(quote.amount)}
               </dd>
+              {quote.asset === "plan" && quote.plan && (
+                <>
+                  <dt className="text-muted-foreground">Value</dt>
+                  <dd>
+                    {money(quote.plan.value)} ({money(quote.unit_price ?? 0)} a unit)
+                  </dd>
+                  <dt className="text-muted-foreground">Still to pay on them</dt>
+                  <dd>
+                    {money(quote.plan.remaining_principal)} plus {money(quote.plan.remaining_fees)} in fees, paid by
+                    the recipient
+                  </dd>
+                </>
+              )}
               {quote.asset === "units" && (
                 <>
                   <dt className="text-muted-foreground">Value</dt>
@@ -364,19 +460,38 @@ export function TransferDialog({
                 </>
               )}
             </dl>
-            <ul className="space-y-1.5 text-xs text-muted-foreground">
-              <li>
-                {quote.asset === "units"
-                  ? "The units are held from now: they cannot be sold or sent again."
-                  : "The amount leaves your wallet now and is held for the recipient."}
-              </li>
-              <li>
-                If the recipient has not confirmed their email and verified their identity, we invite
-                them; if they do not within {quote.claim_days} days, everything comes back to you,
-                fee included.
-              </li>
-              <li>You can cancel it on the Transfers tab until it is delivered.</li>
-            </ul>
+            {quote.asset === "plan" && quote.plan ? (
+              <>
+                <div>
+                  <p className="mb-2 text-sm font-medium">
+                    Installments the recipient takes over ({quote.plan.installments_left})
+                  </p>
+                  <PlanPartSchedule schedule={quote.plan.schedule} testId="transfer-plan-schedule" />
+                </div>
+                <ul className="space-y-1.5 text-xs text-muted-foreground">
+                  <li>
+                    The units become an installment plan in the recipient's name, with the same dates; your plan
+                    keeps {quote.plan.plan_units - (quote.units ?? 0)} unit(s) and each of its remaining
+                    installments goes down by their share.
+                  </li>
+                  <li>It goes out as soon as you confirm, and cannot be cancelled after that.</li>
+                </ul>
+              </>
+            ) : (
+              <ul className="space-y-1.5 text-xs text-muted-foreground">
+                <li>
+                  {quote.asset === "units"
+                    ? "The units are held from now: they cannot be sold or sent again."
+                    : "The amount leaves your wallet now and is held for the recipient."}
+                </li>
+                <li>
+                  If the recipient has not confirmed their email and verified their identity, we invite
+                  them; if they do not within {quote.claim_days} days, everything comes back to you,
+                  fee included.
+                </li>
+                <li>You can cancel it on the Transfers tab until it is delivered.</li>
+              </ul>
+            )}
           </div>
         )}
 

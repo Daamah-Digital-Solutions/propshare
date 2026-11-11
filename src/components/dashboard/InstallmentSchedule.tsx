@@ -400,7 +400,7 @@ function PlanCard({
                       ? `This position is in a lock-up until ${shortDate(plan.position.lockup_until ?? null)}: it can be listed for sale after that.`
                       : num(plan.position.equity) <= 0
                         ? "At today's unit price the position is worth less than what is still to pay on it, so it cannot be sold for now. Nothing more is owed because of that: installments are paid as before."
-                        : "You can list the whole position for sale: a buyer pays you your part (the principal you paid plus the price change; installment fees are not returned) and carries on with the remaining installments."}
+                        : "You can sell the whole position or some of its units: a buyer pays you your part (the principal you paid on them plus the price change; installment fees are not returned) and carries on with their installments. Units of it can also go to a liquidity provider, or to another person (Transfers)."}
                 {plan.acquired_at &&
                   ` You took this plan over on ${format(new Date(plan.acquired_at), "MMM dd, yyyy")}; payments before that were made by the previous holder.`}
               </p>

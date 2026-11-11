@@ -188,17 +188,22 @@ may apply after a purchase). Two exit paths exist:
 - Liquidity market: request an exit at the platform-quoted price (the current unit price less
   a discount and a fee) and a liquidity provider funds it, usually faster than waiting for a
   buyer.
-Units you are paying for through an installment plan that is still running are sold with the
-plan, whole, as one position on the secondary market: the buyer pays you the principal you
-have paid (the instalment fees you paid are not returned) plus the increase in the unit price
-on all the plan's units, and takes over the remaining instalments on their dates. If the unit
-price has fallen, the decrease is taken off instead. Example: a plan for units worth one
-thousand, with two hundred
-paid; the unit price has risen by a tenth, so the position is worth eleven hundred; the buyer
+Units you are paying for through an installment plan that is still running go with their
+instalments: you can sell the whole plan or some of its units (one, two, any number), on the
+secondary market or to a liquidity provider, or send them to another person. The buyer pays
+you the principal you have paid on those units (the instalment fees you paid are not
+returned) plus the increase in the unit price on them, and takes over their share of every
+remaining instalment on its date. If the unit price has fallen, the decrease is taken off
+instead. Example: a plan for units worth one thousand, with two hundred paid; the unit price
+has risen by a tenth, so the position is worth eleven hundred; for the whole plan the buyer
 pays you three hundred (the two hundred you paid plus the hundred gained) and then pays the
-remaining eight hundred as the schedule says. If you took the plan over from another investor,
-what you have paid means what you paid for it plus your own instalments since, and the
-increase is counted from the price you bought it at.
+remaining eight hundred as the schedule says. Selling three units of ten is three tenths of
+all of it: the buyer pays you three tenths of that, gets a plan of their own with the same
+dates where every instalment is three tenths of yours, and your plan keeps seven units with
+every instalment at seven tenths. A buyer can also take only some of the units you list. Part
+of a plan changes hands only when none of its instalments is overdue: pay those first. If you
+took the plan over from another investor, what you have paid means what you paid for it plus
+your own instalments since, and the increase is counted from the price you bought it at.
 A sale needs a buyer: no buyer, price or date is guaranteed. Both paths are used from your
 portfolio; the assistant can show your holdings, positions, listings and requests and prepare
 a listing for you, but the listing, sale or request is confirmed by you on that page.""",
@@ -222,10 +227,13 @@ before each one. If the wallet cannot cover an instalment on its due date, it is
 overdue and retried automatically once funds are there: there is no late fee and your units
 are not forfeited. Keep your wallet funded ahead of the due date. You can also pay the next
 instalment early; the assistant can show your plans and schedule and prepare that payment.
-The units of a running plan stay with the plan: they are not listed one by one, but you can
-sell the whole plan as a position at any time (see "How to exit"): the buyer pays you what you
-paid plus the price increase and carries on with the remaining instalments. Your Installments
-page shows what the position is worth today.""",
+The units of a running plan stay with their instalments: you can sell the whole plan, or
+some of its units, at any time (see "How to exit"): the buyer pays you what you paid on them
+plus the price increase and carries on with their share of the remaining instalments, as a
+plan of their own; your plan keeps the rest, with each instalment reduced by the part sold.
+Units of a plan can also go to a liquidity provider or, from Transfers, to another person, who
+then pays their share of the instalments. Your Installments page shows what the position is
+worth today.""",
     ),
     (
         "kyc-verification",
@@ -250,9 +258,11 @@ platform's price band, honour accepted offers, keep enough wallet balance to set
 the applicable fees shown at confirmation. Price manipulation, wash trading and artificial
 volume are prohibited and lead to suspension. A lock-up period may apply before units can be
 listed; the Sell form says when it ends. A position on an installment plan that is still running is
-listed and bought whole: the listing shows its price, what has been paid and the remaining
-instalments with their dates; the buyer confirms the amount paid to the seller, takes the plan
-over and pays those instalments from their wallet on their dates.""",
+listed whole or in part, and a buyer can take all the units listed or some of them: before
+buying, the buyer sees the units, what is paid to the seller now and the instalments taken
+over with their dates and amounts; the buyer confirms that amount, gets those units as a plan
+(the whole plan itself, or a plan of their own with the same dates) and pays its instalments
+from their wallet on their dates.""",
     ),
     (
         "platform-rules",
@@ -628,14 +638,18 @@ statement" تنزّل للفترة التي تختارها، بصيغة PDF أو
   مستعجلًا. يمكنك إلغاء عرض لم يُبَع.
 - سوق السيولة: تطلب الخروج بالسعر الذي تحدده المنصة (سعر الوحدة الحالي ناقص خصم ورسوم) ويموّله
   مزوّد سيولة، عادةً أسرع من انتظار مشترٍ.
-الوحدات التي تسددها بخطة أقساط ما زالت جارية تُباع مع الخطة كلها كمركز واحد في السوق الثانوي:
-يدفع لك المشتري أصل ما سددته (رسوم التقسيط التي دفعتها لا تُرد) مضافًا إليه زيادة سعر الوحدة
-على كل وحدات الخطة، ثم يكمل هو الأقساط المتبقية في مواعيدها. وإذا انخفض سعر الوحدة يُخصم
+الوحدات التي تسددها بخطة أقساط ما زالت جارية تنتقل مع أقساطها: يمكنك بيع الخطة كلها أو بعض
+وحداتها (وحدة أو اثنتين أو أي عدد)، في السوق الثانوي أو لمزوّد سيولة، أو إرسالها لشخص آخر. يدفع
+لك المشتري أصل ما سددته على هذه الوحدات (رسوم التقسيط التي دفعتها لا تُرد) مضافًا إليه زيادة
+سعر الوحدة عليها، ثم يكمل هو نصيبها من كل قسط متبقٍ في موعده. وإذا انخفض سعر الوحدة يُخصم
 الانخفاض بدل الزيادة. مثال: خطة لوحدات قيمتها ألف، سُدِّد منها مئتان؛ ارتفع سعر الوحدة بمقدار
-العُشر فصارت قيمة المركز ألفًا ومئة؛ يدفع لك المشتري ثلاثمئة (المئتان اللتان سددتهما والمئة
-التي زادت) ثم يسدد الثمانمئة المتبقية حسب الجدول. وإذا كنت قد اشتريت الخطة من مستثمر آخر
-فالمقصود بما سددته هو ما دفعته ثمنًا لها مضافًا إليه أقساطك بعد ذلك، وتُحسب الزيادة من السعر
-الذي اشتريت به.
+العُشر فصارت قيمة المركز ألفًا ومئة؛ عند بيع الخطة كلها يدفع لك المشتري ثلاثمئة (المئتان
+اللتان سددتهما والمئة التي زادت) ثم يسدد الثمانمئة المتبقية حسب الجدول. وبيع ثلاث وحدات من عشر
+هو ثلاثة أعشار كل شيء: يدفع لك المشتري ثلاثة أعشار ذلك، وتصير له خطة باسمه بنفس المواعيد كل قسط
+فيها ثلاثة أعشار قسطك، وتبقى لخطتك سبع وحدات وكل قسط فيها سبعة أعشار. ويمكن للمشتري أيضًا أن
+يأخذ بعض الوحدات المعروضة فقط. ولا ينتقل جزء من خطة إلا إذا لم يكن عليها قسط متأخر: سدّده أولًا.
+وإذا كنت قد اشتريت الخطة من مستثمر آخر فالمقصود بما سددته هو ما دفعته ثمنًا لها مضافًا إليه
+أقساطك بعد ذلك، وتُحسب الزيادة من السعر الذي اشتريت به.
 البيع يحتاج مشتريًا: لا ضمان لمشترٍ أو سعر أو موعد. المساران من محفظتك؛ يستطيع المساعد عرض
 حيازاتك ومراكزك وعروضك وطلباتك وتجهيز عرض البيع لك، لكن العرض أو البيع أو الطلب تؤكده أنت في
 تلك الصفحة.""",
@@ -656,9 +670,11 @@ statement" تنزّل للفترة التي تختارها، بصيغة PDF أو
 متأخرًا ويُعاد خصمه تلقائيًا عند توفر الرصيد: لا توجد غرامة تأخير ولا تُسحب منك وحداتك. احرص على
 شحن محفظتك قبل موعد الاستحقاق. ويمكنك أيضًا دفع القسط التالي مبكرًا؛ يستطيع المساعد عرض خططك
 وجدولك وتجهيز هذه الدفعة.
-وحدات الخطة الجارية تبقى مع الخطة: لا تُعرض وحدةً وحدة، لكن يمكنك بيع الخطة كلها كمركز واحد في
-أي وقت (انظر «كيف تخرج»): يدفع لك المشتري ما سددته مضافًا إليه زيادة السعر ويكمل هو الأقساط
-المتبقية. صفحة الأقساط تعرض قيمة مركزك اليوم.""",
+وحدات الخطة الجارية تبقى مع أقساطها: يمكنك بيع الخطة كلها أو بعض وحداتها في أي وقت (انظر
+«كيف تخرج»): يدفع لك المشتري ما سددته عليها مضافًا إليه زيادة السعر ويكمل هو نصيبها من الأقساط
+المتبقية كخطة باسمه، وتبقى لخطتك بقية الوحدات وكل قسط فيها أقل بقدر الجزء المبيع. ويمكن أيضًا أن
+تنتقل وحدات الخطة إلى مزوّد سيولة أو، من «التحويلات»، إلى شخص آخر يسدد نصيبها من الأقساط. صفحة
+الأقساط تعرض قيمة مركزك اليوم.""",
     ),
     (
         "kyc-verification",
@@ -679,10 +695,10 @@ statement" تنزّل للفترة التي تختارها، بصيغة PDF أو
         """عند بيع أو شراء الوحدات بين المستثمرين: اعرض بسعر عادل ضمن نطاق أسعار المنصة، التزم
 بالعروض المقبولة، احتفظ برصيد كافٍ في المحفظة للتسوية، وادفع الرسوم المعروضة عند التأكيد. التلاعب
 بالأسعار والتداول الوهمي وافتعال الأحجام ممنوعة وتؤدي إلى الإيقاف. قد توجد فترة حظر قبل إمكانية
-عرض الوحدات؛ يوضح نموذج البيع موعد انتهائها. مركز خطة الأقساط الجارية يُعرض ويُشترى كاملًا:
-يوضح العرض سعره
-والمسدَّد منه والأقساط المتبقية بتواريخها؛ يؤكد المشتري المبلغ الذي يدفعه للبائع، ويستلم الخطة،
-ويسدد تلك الأقساط من محفظته في مواعيدها.""",
+عرض الوحدات؛ يوضح نموذج البيع موعد انتهائها. مركز خطة الأقساط الجارية يُعرض كاملًا أو جزءًا منه،
+ويمكن للمشتري أخذ كل الوحدات المعروضة أو بعضها: قبل الشراء يرى المشتري عدد الوحدات وما يدفعه
+للبائع الآن والأقساط التي يتولاها بتواريخها ومبالغها؛ يؤكد المشتري ذلك المبلغ، ويستلم الوحدات
+كخطة (الخطة نفسها، أو خطة باسمه بنفس المواعيد)، ويسدد أقساطها من محفظته في مواعيدها.""",
     ),
     (
         "platform-rules",

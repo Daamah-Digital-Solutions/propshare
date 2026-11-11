@@ -157,7 +157,7 @@ describe("InstallmentSchedule: a running plan is a position with a value", () =>
     // listed is not "you can list": it says what happens until it sells
     const note = within(block).getByTestId("plan-position-note");
     expect(note).toHaveTextContent(/This position is listed for sale\. Until it sells, its installments are still charged/);
-    expect(note).not.toHaveTextContent(/You can list the whole position/);
+    expect(note).not.toHaveTextContent(/You can sell the whole position/);
   });
 
   it("measures a plan that was bought from what its buyer paid, not from the first holder's price", async () => {

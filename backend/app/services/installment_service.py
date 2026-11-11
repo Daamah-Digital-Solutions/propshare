@@ -190,6 +190,7 @@ def serialize_plan(
         "failure_reason": plan.failure_reason,
         "created_at": plan.created_at,
         "completed_at": plan.completed_at,
+        "parent_plan_id": plan.parent_plan_id,
         "payments": [serialize_payment(p) for p in sorted(payments, key=lambda x: x.seq)],
     }
 
@@ -260,7 +261,13 @@ async def holder_entry(
 ) -> tuple[dt.datetime, decimal.Decimal] | None:
     """When the plan's current holder took it over from another investor, and the price per
     unit they bought it at (None = they started the plan: their price is the one it locked).
-    Payments made before that were the previous holder's."""
+    Payments made before that were the previous holder's.
+
+    0042: a plan that changes hands records both on itself (``holder_since``/``entry_price``,
+    also for a part that became a plan of its own, and for a provider or a recipient who took
+    it outside the market); before that only the secondary trade told."""
+    if plan.holder_since is not None and plan.entry_price is not None:
+        return plan.holder_since, decimal.Decimal(plan.entry_price)
     row = (
         await session.execute(
             select(SecondaryTrade.created_at, SecondaryTrade.price_per_unit)
@@ -281,6 +288,500 @@ async def holder_position(
     """``position_figures`` for the plan's current holder, from their own entry price."""
     entry = await holder_entry(session, plan)
     return position_figures(plan, payments, price, entry[1] if entry else None)
+
+
+# --- a part of a running plan changes hands (0042) ---------------------------- #
+# Client (2026-11-08): the holder of a running plan can sell or send part of it (one unit, two,
+# any number) on the secondary market, to a liquidity provider or to another person; the rest
+# stays theirs. With ``units`` out of ``units_total`` (the SHARE), the new holder gets that share
+# of everything: of what was paid (what they pay the seller for, plus or minus the price
+# change), and of every payment still to come, as a plan of their own in their name with the
+# same number of payments on the same dates. The seller's plan keeps the rest. Amounts are
+# rounded to the cent and the last payment of each kind takes the rounding, so the two plans
+# add up EXACTLY to the original: paid, still to pay, fees and units.
+class SplitPayment:
+    """One payment of the part being taken: its share of the original payment."""
+
+    __slots__ = (
+        "seq",
+        "kind",
+        "due_date",
+        "status",
+        "paid_at",
+        "base_amount",
+        "fee_amount",
+        "total_amount",
+        "vest_units",
+    )
+
+    def __init__(self, **values: object) -> None:
+        for k, v in values.items():
+            setattr(self, k, v)
+
+
+def overdue_payments(
+    payments: list[InstallmentPayment], today: dt.date | None = None
+) -> list[InstallmentPayment]:
+    """The plan's payments that are late: missed (``overdue``), or due before today and still
+    unpaid. A payment due today is not late yet (the daily run charges it)."""
+    today = today or _utcnow().date()
+    return [
+        p for p in payments if p.status != "paid" and (p.status == "overdue" or p.due_date < today)
+    ]
+
+
+def require_no_overdue(payments: list[InstallmentPayment], *, whose: str = "your") -> None:
+    """A part of a plan (or, outside the market, the whole plan) changes hands only when no
+    installment is late: the holder pays what is late first."""
+    late = overdue_payments(payments)
+    if late:
+        total = _q(sum((p.total_amount for p in late), decimal.Decimal("0")))
+        if whose == "your":
+            message = (
+                f"{len(late)} installment(s) of this plan are overdue ({total}). Pay them "
+                "first, then you can sell or send part of the plan."
+            )
+        else:
+            message = (
+                "The seller has overdue installments on this plan, so part of it cannot change "
+                "hands until they are paid."
+            )
+        raise AppError(
+            "PLAN_OVERDUE",
+            message,
+            status_code=409,
+            details={"overdue": len(late), "overdue_amount": str(total)},
+        )
+
+
+def _share_of(values: list[decimal.Decimal], share: decimal.Decimal) -> list[decimal.Decimal]:
+    """The part's share of each amount, to the cent. Every one is rounded on its own and the
+    LAST takes the rounding, so the parts add up to the share of the total. (If that ever left
+    the last outside 0..its amount, the rounding is carried along instead.)"""
+    if not values:
+        return []
+    target = _q(sum(values, decimal.Decimal("0")) * share)
+    parts = [_q(v * share) for v in values[:-1]]
+    last = target - sum(parts, decimal.Decimal("0"))
+    if decimal.Decimal("0") <= last <= values[-1]:
+        return [*parts, last]
+    out: list[decimal.Decimal] = []
+    running = done = decimal.Decimal("0")
+    for v in values:
+        running += v
+        upto = _q(running * share)
+        out.append(upto - done)
+        done = upto
+    return out
+
+
+def _vest_share(vests: list[int], units: int, total: int) -> list[int]:
+    """The part's units vesting on each payment: the share of the units vested so far, rounded
+    down, payment by payment. Never more than the payment vests; adds up to ``units``."""
+    out: list[int] = []
+    running = done = 0
+    for v in vests:
+        running += v
+        upto = units * running // total
+        out.append(upto - done)
+        done = upto
+    if out and done != units:  # a plan whose vesting does not add up: the last payment completes it
+        out[-1] += units - done
+    return out
+
+
+def split_figures(
+    plan: InstallmentPlan, payments: list[InstallmentPayment], units: int
+) -> list[SplitPayment]:
+    """The part's payments: ``units`` of the plan's ``units_total``, every payment shared out.
+    Paid payments and payments still to come are shared out separately, so the part's paid
+    total and its still-to-pay total are each the exact share of the plan's."""
+    ordered = sorted(payments, key=lambda p: p.seq)
+    if units == plan.units_total:
+        return [
+            SplitPayment(
+                seq=p.seq,
+                kind=p.kind,
+                due_date=p.due_date,
+                status=p.status,
+                paid_at=p.paid_at,
+                base_amount=p.base_amount,
+                fee_amount=p.fee_amount,
+                total_amount=p.total_amount,
+                vest_units=p.vest_units,
+            )
+            for p in ordered
+        ]
+    share = decimal.Decimal(units) / decimal.Decimal(plan.units_total)
+    vests = _vest_share([int(p.vest_units) for p in ordered], units, plan.units_total)
+    out = {
+        p.seq: SplitPayment(
+            seq=p.seq,
+            kind=p.kind,
+            due_date=p.due_date,
+            status=p.status,
+            paid_at=p.paid_at,
+            vest_units=vest,
+        )
+        for p, vest in zip(ordered, vests, strict=True)
+    }
+    for group in (
+        [p for p in ordered if p.status == "paid"],
+        [p for p in ordered if p.status != "paid"],
+    ):
+        bases = _share_of([p.base_amount for p in group], share)
+        fees = _share_of([p.fee_amount for p in group], share)
+        for p, base, fee in zip(group, bases, fees, strict=True):
+            row = out[p.seq]
+            row.base_amount = base
+            row.fee_amount = fee
+            row.total_amount = base + fee
+    return [out[p.seq] for p in ordered]
+
+
+def part_figures(
+    plan: InstallmentPlan,
+    payments: list[InstallmentPayment],
+    units: int,
+    price: decimal.Decimal,
+    entry_price: decimal.Decimal | None = None,
+) -> dict:
+    """``position_figures`` for ``units`` of the plan: what that part is worth at ``price``,
+    its share of what was paid and of what is still to pay, and its schedule (the payments
+    still to come, at the part's amounts). The whole plan gives ``position_figures``."""
+    if units == plan.units_total:
+        fig = position_figures(plan, payments, price, entry_price)
+        fig["plan_units"] = plan.units_total
+        return fig
+    rows = split_figures(plan, payments, units)
+    part = InstallmentPlan(
+        id=plan.id,
+        units_total=units,
+        unit_price=plan.unit_price,
+        vested_units=sum(r.vest_units for r in rows if r.status == "paid"),
+    )
+    fig = position_figures(part, rows, price, entry_price)  # type: ignore[arg-type]
+    fig["plan_units"] = plan.units_total
+    return fig
+
+
+async def committed_units(session: AsyncSession, plan_id: uuid.UUID) -> dict[str, int]:
+    """Units of a running plan already offered elsewhere: on its secondary-market listing and
+    in open liquidity-provider exit requests. They cannot be offered again, or sent."""
+    from app.models import LpExitRequest
+
+    listed = await session.scalar(
+        select(func.coalesce(func.sum(SecondaryListing.units_remaining), 0)).where(
+            SecondaryListing.plan_id == plan_id, SecondaryListing.status == "active"
+        )
+    )
+    lp_open = await session.scalar(
+        select(func.coalesce(func.sum(LpExitRequest.units_remaining), 0)).where(
+            LpExitRequest.plan_id == plan_id, LpExitRequest.status == "open"
+        )
+    )
+    return {"listed": int(listed or 0), "lp_exit": int(lp_open or 0)}
+
+
+async def free_plan_units(session: AsyncSession, plan: InstallmentPlan) -> int:
+    """Units of the plan its holder can still sell or send."""
+    held = await committed_units(session, plan.id)
+    return max(0, plan.units_total - held["listed"] - held["lp_exit"])
+
+
+def _ledger_move(
+    session: AsyncSession,
+    *,
+    plan: InstallmentPlan,
+    from_id: uuid.UUID,
+    to_id: uuid.UUID,
+    units: int,
+    price: decimal.Decimal,
+    reasons: tuple[str, str],
+    fee_rate: decimal.Decimal,
+    ref_id: uuid.UUID | None,
+) -> None:
+    """The units vested so far change hands (Σ per property conserved)."""
+    if units <= 0:
+        return
+    session.add(
+        OwnershipLedger(
+            user_id=from_id,
+            property_id=plan.property_id,
+            investment_id=None,
+            units=-units,
+            unit_price=price,
+            reason=reasons[0],
+            ref_id=ref_id,
+        )
+    )
+    session.add(
+        OwnershipLedger(
+            user_id=to_id,
+            property_id=plan.property_id,
+            investment_id=None,
+            units=units,
+            unit_price=price,
+            reason=reasons[1],
+            fee_rate=fee_rate,
+            ref_id=ref_id,
+        )
+    )
+
+
+async def split_plan(
+    session: AsyncSession,
+    *,
+    plan: InstallmentPlan,
+    payments: list[InstallmentPayment],
+    units: int,
+    to_user_id: uuid.UUID,
+    entry_price: decimal.Decimal,
+    ledger_price: decimal.Decimal,
+    reasons: tuple[str, str],
+    ref_id: uuid.UUID | None = None,
+    actor_id: uuid.UUID | None = None,
+) -> tuple[InstallmentPlan, list[InstallmentPayment]]:
+    """Take ``units`` of a running plan out of it, as a new plan in ``to_user_id``'s name.
+
+    The new plan has the same payments on the same dates, each at its share (``split_figures``):
+    those already paid as paid, the rest to be charged from the new holder's wallet, who is
+    reminded of them. The units vested so far under the part move in the ledger
+    (``reasons``: the seller's row, the new holder's). The seller's plan keeps the rest of every
+    payment and of the units. Nothing is charged here: the caller moves the money. The caller
+    holds the plan's payment rows, the plan and the property (``_lock_plan_rows`` then the
+    property), and has checked who may do this."""
+    if plan.status != "active":
+        raise AppError("PLAN_NOT_RUNNING", "This plan is not running.", status_code=409)
+    if not 1 <= units < plan.units_total:
+        raise AppError(
+            "INVALID_UNITS",
+            f"Choose between 1 and {plan.units_total - 1} unit(s) to take out of this plan.",
+            status_code=422,
+            details={"units_total": plan.units_total},
+        )
+    require_no_overdue(payments)
+    rows = split_figures(plan, payments, units)
+    moved_vested = sum(r.vest_units for r in rows if r.status == "paid")
+    if await _holding(session, plan.investor_id, plan.property_id) < moved_vested:
+        # the ledger and the plan disagree: refuse rather than move units that are not there
+        raise AppError(
+            "INVALID_STATE",
+            "This plan cannot be divided right now. Please contact support.",
+            status_code=409,
+        )
+    now = _utcnow()
+    fee_rate = await settings_service.get_management_fee_pct(session)
+    share = decimal.Decimal(units) / decimal.Decimal(plan.units_total)
+    discount = _q(decimal.Decimal(plan.discount_amount or 0) * share)
+    child = InstallmentPlan(
+        id=uuid.uuid4(),
+        investor_id=to_user_id,
+        property_id=plan.property_id,
+        units_total=units,
+        unit_price=plan.unit_price,
+        down_payment_pct=plan.down_payment_pct,
+        duration_months=plan.duration_months,
+        fee_rate=plan.fee_rate,
+        # the new holder carries the CURRENT platform management-fee rate (Decision 2)
+        management_fee_rate=fee_rate,
+        vested_units=moved_vested,
+        status="active",
+        payment_method=plan.payment_method,
+        discount_amount=discount,
+        parent_plan_id=plan.id,
+        holder_since=now,
+        entry_price=_q(entry_price),
+        created_at=now,
+        updated_at=now,
+    )
+    session.add(child)
+    await session.flush()  # the new plan exists before its payments point at it
+    by_seq = {r.seq: r for r in rows}
+    child_payments: list[InstallmentPayment] = []
+    for p in sorted(payments, key=lambda x: x.seq):
+        r = by_seq[p.seq]
+        cp = InstallmentPayment(
+            id=uuid.uuid4(),
+            plan_id=child.id,
+            seq=p.seq,
+            kind=p.kind,
+            due_date=p.due_date,
+            base_amount=r.base_amount,
+            fee_amount=r.fee_amount,
+            total_amount=r.total_amount,
+            vest_units=r.vest_units,
+            status="paid" if p.status == "paid" else "scheduled",
+            paid_at=p.paid_at if p.status == "paid" else None,
+            reminder_sent_at=None,
+        )
+        session.add(cp)
+        child_payments.append(cp)
+        # the seller keeps the rest of the payment
+        p.base_amount = p.base_amount - r.base_amount
+        p.fee_amount = p.fee_amount - r.fee_amount
+        p.total_amount = p.total_amount - r.total_amount
+        p.vest_units = p.vest_units - r.vest_units
+    from_id = plan.investor_id
+    plan.units_total = plan.units_total - units
+    plan.vested_units = plan.vested_units - moved_vested
+    plan.discount_amount = decimal.Decimal(plan.discount_amount or 0) - discount
+    plan.updated_at = now
+    _ledger_move(
+        session,
+        plan=plan,
+        from_id=from_id,
+        to_id=to_user_id,
+        units=moved_vested,
+        price=ledger_price,
+        reasons=reasons,
+        fee_rate=fee_rate,
+        ref_id=ref_id,
+    )
+    await session.flush()
+    await write_audit(
+        session,
+        action="installment.plan.split",
+        entity_type="installment_plan",
+        entity_id=str(child.id),
+        actor_id=actor_id,
+        after={
+            "from_plan_id": str(plan.id),
+            "from_user_id": str(from_id),
+            "to_user_id": str(to_user_id),
+            "units": units,
+            "seller_units_left": plan.units_total,
+            "vested_moved": moved_vested,
+            "entry_price": str(_q(entry_price)),
+            "reasons": list(reasons),
+        },
+    )
+    return child, child_payments
+
+
+async def hand_over_plan(
+    session: AsyncSession,
+    *,
+    plan: InstallmentPlan,
+    payments: list[InstallmentPayment],
+    to_user_id: uuid.UUID,
+    entry_price: decimal.Decimal,
+    ledger_price: decimal.Decimal,
+    reasons: tuple[str, str],
+    ref_id: uuid.UUID | None = None,
+    actor_id: uuid.UUID | None = None,
+) -> InstallmentPlan:
+    """The whole running plan becomes ``to_user_id``'s (a liquidity provider, or the recipient
+    of a transfer): the units vested so far move in the ledger and the unpaid payments keep their
+    dates and amounts, charged from the new holder's wallet. Same locks as ``split_plan``."""
+    if plan.status != "active":
+        raise AppError("PLAN_NOT_RUNNING", "This plan is not running.", status_code=409)
+    require_no_overdue(payments)
+    vested = int(plan.vested_units or 0)
+    if await _holding(session, plan.investor_id, plan.property_id) < vested:
+        raise AppError(
+            "INVALID_STATE",
+            "This plan cannot change hands right now. Please contact support.",
+            status_code=409,
+        )
+    now = _utcnow()
+    fee_rate = await settings_service.get_management_fee_pct(session)
+    from_id = plan.investor_id
+    _ledger_move(
+        session,
+        plan=plan,
+        from_id=from_id,
+        to_id=to_user_id,
+        units=vested,
+        price=ledger_price,
+        reasons=reasons,
+        fee_rate=fee_rate,
+        ref_id=ref_id,
+    )
+    plan.investor_id = to_user_id
+    plan.management_fee_rate = fee_rate
+    plan.holder_since = now
+    plan.entry_price = _q(entry_price)
+    plan.updated_at = now
+    for p in payments:
+        if p.status != "paid":
+            p.status = "scheduled"
+            p.reminder_sent_at = None
+    await session.flush()
+    await write_audit(
+        session,
+        action="installment.plan.handed_over",
+        entity_type="installment_plan",
+        entity_id=str(plan.id),
+        actor_id=actor_id,
+        after={
+            "from_user_id": str(from_id),
+            "to_user_id": str(to_user_id),
+            "units": plan.units_total,
+            "vested_moved": vested,
+            "entry_price": str(_q(entry_price)),
+            "reasons": list(reasons),
+        },
+    )
+    return plan
+
+
+async def take_plan_units(
+    session: AsyncSession,
+    *,
+    plan: InstallmentPlan,
+    payments: list[InstallmentPayment],
+    units: int,
+    to_user_id: uuid.UUID,
+    entry_price: decimal.Decimal,
+    ledger_price: decimal.Decimal,
+    reasons: tuple[str, str],
+    ref_id: uuid.UUID | None = None,
+    actor_id: uuid.UUID | None = None,
+) -> InstallmentPlan:
+    """``units`` of the plan change hands: all of them hand the plan over, fewer split it.
+    Returns the plan the new holder now has."""
+    if units == plan.units_total:
+        return await hand_over_plan(
+            session,
+            plan=plan,
+            payments=payments,
+            to_user_id=to_user_id,
+            entry_price=entry_price,
+            ledger_price=ledger_price,
+            reasons=reasons,
+            ref_id=ref_id,
+            actor_id=actor_id,
+        )
+    child, _ = await split_plan(
+        session,
+        plan=plan,
+        payments=payments,
+        units=units,
+        to_user_id=to_user_id,
+        entry_price=entry_price,
+        ledger_price=ledger_price,
+        reasons=reasons,
+        ref_id=ref_id,
+        actor_id=actor_id,
+    )
+    return child
+
+
+def schedule_rows(rows: list) -> list[dict]:
+    """A schedule (payments, or a part's payments) as the API gives it: money as text."""
+    return [
+        {
+            "seq": p.seq,
+            "kind": p.kind,
+            "due_date": p.due_date,
+            "base_amount": str(p.base_amount),
+            "fee_amount": str(p.fee_amount),
+            "total_amount": str(p.total_amount),
+            "status": p.status,
+        }
+        for p in rows
+    ]
 
 
 async def _active_listing_id(session: AsyncSession, plan_id: uuid.UUID) -> uuid.UUID | None:

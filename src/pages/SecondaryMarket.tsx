@@ -43,7 +43,7 @@ import { ApiError, secondaryApi, type SecondaryListing } from "@/lib/api";
 // Tabs the page opens from ?tab= (the assistant links /secondary-market?tab=sell).
 const MARKET_TABS = ["buy", "sell", "activity"];
 // Parameters of a sale prepared elsewhere: ?tab=sell&property=<id>&units=N&price=P for units,
-// ?tab=sell&plan=<plan id>&price=P for a whole installment position
+// ?tab=sell&plan=<plan id>[&units=N]&price=P for an installment position (N: part of it)
 const SALE_KEYS = ["property", "units", "price", "plan"];
 
 function timeAgo(iso: string | null): string {
@@ -74,7 +74,11 @@ const SecondaryMarket = () => {
     const price = Number(searchParams.get("price"));
     const asking = Number.isFinite(price) && price > 0 ? price : undefined;
     if (planId) {
-      setPositionPrefill({ planId, price: asking });
+      setPositionPrefill({
+        planId,
+        price: asking,
+        units: Number.isInteger(units) && units > 0 ? units : undefined,
+      });
     } else if (propertyId) {
       setSalePrefill({
         propertyId,

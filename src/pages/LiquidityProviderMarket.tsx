@@ -36,6 +36,7 @@ import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { ApiError, liquidityApi, type LpExitRequest } from "@/lib/api";
+import PlanUnitsFund from "@/components/liquidity/PlanUnitsFund";
 import { useAuth } from "@/contexts/AuthContext";
 
 const num = (s: string | null | undefined) => Number(s ?? 0);
@@ -246,8 +247,14 @@ export default function LiquidityProviderMarket() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {requests.map((req) => {
                   const gross = num(req.gross);
-                  const lpPrice = num(req.lp_price);
-                  const discount = gross > 0 ? ((gross - lpPrice) / gross) * 100 : 0;
+                  // units of an installment plan: the cash now, then their installments
+                  const plan = req.position ?? null;
+                  const lpPrice = plan ? num(plan.cash) : num(req.lp_price);
+                  const discount = plan
+                    ? num(req.discount_pct)
+                    : gross > 0
+                      ? ((gross - lpPrice) / gross) * 100
+                      : 0;
                   return (
                     <Card key={req.request_id} className="border-primary/10 hover:border-primary/30 transition-colors">
                       <CardContent className="p-5 space-y-4">
@@ -263,15 +270,28 @@ export default function LiquidityProviderMarket() {
                               </div>
                             </div>
                           </div>
-                          <Badge variant="outline" className="border-primary/30 text-primary">
-                            <Clock className="w-3 h-3 mr-1" /> {timeLeft(req.expires_at)}
-                          </Badge>
+                          <div className="flex flex-col items-end gap-1">
+                            <Badge variant="outline" className="border-primary/30 text-primary">
+                              <Clock className="w-3 h-3 mr-1" /> {timeLeft(req.expires_at)}
+                            </Badge>
+                            {plan && (
+                              <Badge variant="outline" className="border-accent/30 bg-accent/10 text-foreground">
+                                On an installment plan
+                              </Badge>
+                            )}
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-3 gap-3 text-sm">
                           <div>
-                            <div className="text-xs text-muted-foreground">You pay</div>
+                            <div className="text-xs text-muted-foreground">{plan ? "You pay now" : "You pay"}</div>
                             <div className="font-semibold">${lpPrice.toLocaleString()}</div>
+                            {plan && (
+                              <div className="text-[11px] text-muted-foreground">
+                                then {plan.installments_left} installment(s): $
+                                {(num(plan.remaining_principal) + num(plan.remaining_fees)).toLocaleString()}
+                              </div>
+                            )}
                           </div>
                           <div>
                             <div className="text-xs text-muted-foreground">Units</div>
@@ -407,7 +427,19 @@ export default function LiquidityProviderMarket() {
       {/* Review / fund dialog */}
       <Dialog open={!!selected} onOpenChange={(o) => !o && (setSelected(null), setFundUnits(""))}>
         <DialogContent className="max-w-lg">
-          {selected && (
+          {selected && selected.position && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Provide liquidity — {selected.property_title ?? "Property"}</DialogTitle>
+                <DialogDescription>
+                  Units on an installment plan. Pricing is server-set: what you pay now and the installments
+                  you take over are shown before you confirm.
+                </DialogDescription>
+              </DialogHeader>
+              <PlanUnitsFund request={selected} onDone={() => (setSelected(null), setFundUnits(""))} />
+            </>
+          )}
+          {selected && !selected.position && (
             <>
               <DialogHeader>
                 <DialogTitle>Provide liquidity — {selected.property_title ?? "Property"}</DialogTitle>

@@ -10,10 +10,12 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class TransferIn(BaseModel):
-    asset: Literal["units", "balance"]
+    # plan (0042): units of a running installment plan of the sender's (``plan_id``)
+    asset: Literal["units", "balance", "plan"]
     recipient_email: EmailStr
     recipient_name: str | None = Field(default=None, max_length=120)
     property_id: uuid.UUID | None = None
+    plan_id: uuid.UUID | None = None
     units: int | None = Field(default=None, ge=1)
     amount: str | None = Field(default=None, max_length=20)
     # today when left out; up to a year ahead
@@ -34,8 +36,22 @@ class TransferPositionOut(BaseModel):
     unit_price: str
 
 
+class TransferPlanOut(BaseModel):
+    """A running installment plan of the sender's, part (or all) of which can be sent."""
+
+    plan_id: uuid.UUID
+    property_id: uuid.UUID
+    property_title: str
+    units: int
+    free_units: int
+    unit_price: str
+    overdue_amount: str  # a plan's units go only when nothing is overdue
+    pledged: bool  # a Nova Sukuk pledge not released yet: cannot be sent
+
+
 class TransferOptionsOut(BaseModel):
     positions: list[TransferPositionOut]
+    plans: list[TransferPlanOut] = []
     balance: str
     fee_pct: str
     claim_days: int
@@ -59,6 +75,32 @@ class TransferQuoteOut(BaseModel):
     message: str | None
     occasion: str | None
     claim_days: int
+    # units of an installment plan: the recipient's share of the payments
+    plan: TransferPlanQuoteOut | None = None
+
+
+class TransferPlanPaymentOut(BaseModel):
+    seq: int
+    kind: str
+    due_date: datetime.date
+    base_amount: str
+    fee_amount: str
+    total_amount: str
+    status: str
+
+
+class TransferPlanQuoteOut(BaseModel):
+    plan_id: uuid.UUID
+    units: int
+    plan_units: int
+    vested_units: int
+    value: str
+    paid_principal: str
+    remaining_principal: str
+    remaining_fees: str
+    installments_left: int
+    next_due: datetime.date | None
+    schedule: list[TransferPlanPaymentOut]
 
 
 class TransferOut(BaseModel):
@@ -70,6 +112,8 @@ class TransferOut(BaseModel):
     asset: str
     property_id: uuid.UUID | None
     property_title: str | None
+    plan_id: uuid.UUID | None = None
+    new_plan_id: uuid.UUID | None = None
     units: int | None
     unit_price: str | None
     amount: str
@@ -88,3 +132,6 @@ class TransferOut(BaseModel):
 
 class TransferListOut(BaseModel):
     items: list[TransferOut]
+
+
+TransferQuoteOut.model_rebuild()

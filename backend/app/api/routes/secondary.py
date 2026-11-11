@@ -4,6 +4,8 @@
                                         position (plan_id) (KYC-gated).
 - GET    /secondary/listings            browse active listings (optional ?property_id).
 - POST   /secondary/listings/{id}/cancel  cancel your own active listing.
+- GET    /secondary/listings/{id}/quote?units=N  what buying N units of a listed installment
+                                        position comes to: cash, fee, the schedule taken over.
 - POST   /secondary/listings/{id}/buy   buy units off a listing (KYC-gated,
                                         Idempotency-Key required, wallet-funded).
 - GET    /secondary/listings/mine       your own listings (any status).
@@ -35,6 +37,7 @@ from app.schemas.secondary import (
     ListingOut,
     MyPositionListOut,
     MyPositionOut,
+    PositionQuoteOut,
     SecondarySettingsOut,
     TradeOut,
 )
@@ -51,6 +54,7 @@ async def create_listing(body: ListingCreateIn, session: SessionDep, principal: 
             seller_id=principal.user_id,
             plan_id=body.plan_id,
             price_per_unit=body.price_per_unit,
+            units=body.units,
         )
         return ListingOut(**result)
     assert body.property_id is not None and body.units is not None  # the schema's rule
@@ -84,6 +88,16 @@ async def cancel_listing(listing_id: uuid.UUID, session: SessionDep, principal: 
         session, seller_id=principal.user_id, listing_id=listing_id
     )
     return CancelOut(**result)
+
+
+@router.get("/listings/{listing_id}/quote", response_model=PositionQuoteOut)
+async def quote_position(
+    listing_id: uuid.UUID, units: int, session: SessionDep, principal: PrincipalDep
+):
+    result = await secondary_service.quote_position(
+        session, buyer_id=principal.user_id, listing_id=listing_id, units=units
+    )
+    return PositionQuoteOut(**result)
 
 
 @router.post("/listings/{listing_id}/buy", response_model=TradeOut)

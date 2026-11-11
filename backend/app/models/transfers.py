@@ -33,14 +33,23 @@ class Transfer(Base):
     )
     recipient_email: Mapped[str] = mapped_column(Text, nullable=False)
     recipient_name: Mapped[str | None] = mapped_column(Text)
-    asset: Mapped[str] = mapped_column(Text, nullable=False)  # units | balance
+    asset: Mapped[str] = mapped_column(Text, nullable=False)  # units | balance | plan
     property_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("properties.id")
     )
     property_title: Mapped[str | None] = mapped_column(Text)
     units: Mapped[int | None] = mapped_column(Integer)
     unit_price: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
-    # balance: the amount sent; units: their value at the unit price when sent (a record)
+    # 0042, asset plan: units of the sender's running plan (``plan_id``); the recipient got them
+    # as the plan ``new_plan_id``
+    plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("installment_plans.id")
+    )
+    new_plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("installment_plans.id")
+    )
+    # balance: the amount sent; units: their value at the unit price when sent (a record);
+    # plan: what the part is worth less the installments that come with it
     amount: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     fee: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False, server_default="0")
     fee_pct: Mapped[decimal.Decimal] = mapped_column(

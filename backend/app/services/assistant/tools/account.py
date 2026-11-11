@@ -621,7 +621,8 @@ class HoldingOut(ToolOutput):
 
 
 class PositionOut(ToolOutput):
-    """A running installment plan as a position the user could sell, whole."""
+    """A running installment plan as a position the user could sell or send, whole or in part
+    (0042: some of its units, which take their share of every remaining payment with them)."""
 
     plan_id: str
     property_title: str | None
@@ -642,6 +643,10 @@ class PositionOut(ToolOutput):
     you_would_receive: str  # value - remaining_principal = cost + gain, at the current price
     listed: bool  # already offered on the secondary market
     blocked: str | None  # pledged | lockup | listed: why it cannot be listed now, if anything
+    # units of the plan that can still be sold or sent (the rest are listed, or offered to a
+    # liquidity provider), and what is overdue on it (a part changes hands only without)
+    free_units: int = 0
+    overdue_amount: str = "0.00"
 
 
 class HoldingsOut(ToolOutput):
@@ -655,10 +660,12 @@ _HELD_BACK_NOTE = (
     "now. held_back says why the rest cannot be listed one by one: listed = already on sale in "
     "an active listing; lp_exit = in an open liquidity-provider exit request; family_pending = "
     "promised to a family member who has not registered yet; gift = in a scheduled gift; "
-    "installment_plan = vested under an installment plan that is still running: these are sold "
-    "with the plan, whole, as one POSITION (see positions; prepare_sale with position=true): "
-    "the buyer pays the seller what the seller put in plus the price change on all the plan's "
-    "units since (you_would_receive = cost + gain) and takes over the remaining installments. "
+    "installment_plan = vested under an installment plan that is still running: these go with "
+    "the plan as a POSITION, the whole plan or some of its units (see positions: free_units; "
+    "prepare_sale with position=true and units): the buyer pays the seller what the seller put "
+    "in on them plus their price change since (you_would_receive = cost + gain) and takes over "
+    "their share of the remaining installments; units of a plan can also go to a liquidity "
+    "provider or to another person, and only when none of its installments is overdue. "
     "A position already includes its vested units, which are also in items: never add a "
     "position to its holding (for the total value use get_my_portfolio). cost counts the "
     "principal paid, not the installment fees, which are not returned by a sale; "
@@ -717,6 +724,8 @@ async def _get_my_holdings(session: AsyncSession, ctx: AgentContext, args) -> di
             "you_would_receive": p["cash"],
             "listed": p["listing_id"] is not None,
             "blocked": p["blocked"],
+            "free_units": p.get("free_units", p["units"]),
+            "overdue_amount": p.get("overdue_amount", "0.00"),
         }
         for p in (await secondary_service.my_positions(session, uid))[:20]
     ]
@@ -729,7 +738,8 @@ register(
         "Units the signed-in user holds per property: the unit price now, what it was at launch "
         "and what the holding cost; how many can be sold now and, for the rest, why not "
         "(already listed, in an exit request, on an installment plan still running, a pledge, "
-        "a lock-up); the running installment plans as positions that can be sold whole (what "
+        "a lock-up); the running installment plans as positions that can be sold whole or in "
+        "part (what "
         "the user would receive, what the buyer takes over); plus the reference printed on "
         "each property's investment certificate.",
         NoArgs,
@@ -748,7 +758,7 @@ class ListingOut(ToolOutput):
     price_per_unit: str
     status: str
     created_at: str | None
-    # an installment plan position (sold whole): what the buyer pays the seller, and the
+    # an installment plan position (the plan or some of its units): what the buyer pays, and the
     # principal the buyer takes over
     is_position: bool = False
     buyer_pays_you: str | None = None

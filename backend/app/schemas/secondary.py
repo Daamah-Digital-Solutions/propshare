@@ -18,7 +18,8 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class ListingCreateIn(BaseModel):
-    # ordinary units: property_id + units. An installment position: plan_id (sold whole).
+    # ordinary units: property_id + units. An installment position: plan_id, with units for
+    # part of the plan (0042; none = all its units).
     property_id: uuid.UUID | None = None
     units: int | None = Field(default=None, gt=0, le=10_000_000)
     plan_id: uuid.UUID | None = None
@@ -27,8 +28,8 @@ class ListingCreateIn(BaseModel):
     @model_validator(mode="after")
     def _one_kind(self) -> ListingCreateIn:
         if self.plan_id is not None:
-            if self.property_id is not None or self.units is not None:
-                raise ValueError("an installment position is listed by plan_id alone")
+            if self.property_id is not None:
+                raise ValueError("an installment position is listed by plan_id (and units)")
         elif self.property_id is None or self.units is None:
             raise ValueError("send property_id and units, or plan_id")
         return self
@@ -48,7 +49,8 @@ class PositionOut(BaseModel):
     """An installment plan as a position, valued at ``price`` per unit."""
 
     plan_id: uuid.UUID
-    units: int
+    units: int  # the units these figures are for: the plan's, or (0042) part of them
+    plan_units: int | None = None  # the plan's units
     vested_units: int
     locked_price: str  # the unit price the plan was started at
     price: str  # the price per unit the figures below use
@@ -82,11 +84,14 @@ class ListingOut(BaseModel):
     unit_price_ref: str | None
     status: str
     created_at: str | None
-    # an installment position (sold whole; the buyer takes the plan over)
+    # an installment position: the whole plan or (0042) some of its units; a buyer can take
+    # some of the units still listed
     plan_id: uuid.UUID | None = None
     position: PositionOut | None = None
     # a position: what the buyer pays the seller now, or what it was sold for
     cash: str | None = None
+    # the seller's own listings: what the parts sold so far brought
+    sold_cash: str | None = None
 
 
 class ListingListOut(BaseModel):
@@ -160,6 +165,20 @@ class MyPositionOut(PositionOut):
     listing_id: uuid.UUID | None
     blocked: str | None
     lockup_until: dt.datetime | None
+    # 0042: units of the plan that can still be sold or sent (the rest are listed, or offered
+    # to a liquidity provider), and what is overdue on it (a part changes hands only without)
+    free_units: int = 0
+    listed_units: int = 0
+    lp_exit_units: int = 0
+    overdue_amount: str = "0.00"
+
+
+class PositionQuoteOut(PositionOut):
+    """What buying ``units`` of a listed position comes to (0042)."""
+
+    listing_id: uuid.UUID
+    units_remaining: int
+    whole: bool
 
 
 class MyPositionListOut(BaseModel):

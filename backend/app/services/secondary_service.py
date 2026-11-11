@@ -21,7 +21,11 @@ Idempotency: ``secondary_trades.idempotency_key`` UNIQUE — a buyer's request r
 returns the same trade and never double-buys.
 
 Positions on an installment plan (0034). Units vested under a running plan cannot be listed
-one by one (they are held with the plan), but the plan itself can change hands, whole:
+one by one (they are held with the plan), but the plan itself can change hands — whole, or
+(0042) in part: a seller can list some of the plan's units and a buyer can take some of the
+units listed. A part becomes a plan of its own in the buyer's name with the same dates and its
+share of every payment (``installment_service.split_plan``); the seller keeps the rest. A part
+changes hands only when the seller has no overdue installment. Whole:
 
   * **List**: the holder offers the POSITION (every unit of the plan, paid for or not) at a
     price per unit, like any listing (same lock-up and price bounds against the property's
@@ -128,6 +132,8 @@ async def reservation_breakdown(
             LpExitRequest.seller_id == user_id,
             LpExitRequest.property_id == property_id,
             LpExitRequest.status == "open",
+            # 0042: a request for units of a running plan holds them on the plan, not here
+            LpExitRequest.plan_id.is_(None),
         )
     )
     # Phase 10: units this user has promised to not-yet-registered family members
@@ -370,6 +376,8 @@ def _position_out(fig: dict, fee_pct: decimal.Decimal) -> dict:
     return {
         "plan_id": fig["plan_id"],
         "units": fig["units"],
+        # 0042: the plan's units when the figures are for part of it
+        "plan_units": fig.get("plan_units", fig["units"]),
         "vested_units": fig["vested_units"],
         "locked_price": str(fig["locked_price"]),
         "entry_price": str(fig["entry_price"]),
@@ -386,18 +394,7 @@ def _position_out(fig: dict, fee_pct: decimal.Decimal) -> dict:
         "installments_left": fig["installments_left"],
         "overdue": fig["overdue"],
         "next_due": fig["next_due"],
-        "schedule": [
-            {
-                "seq": p.seq,
-                "kind": p.kind,
-                "due_date": p.due_date,
-                "base_amount": str(p.base_amount),
-                "fee_amount": str(p.fee_amount),
-                "total_amount": str(p.total_amount),
-                "status": p.status,
-            }
-            for p in fig["schedule"]
-        ],
+        "schedule": installment_service.schedule_rows(fig["schedule"]),
     }
 
 
@@ -407,9 +404,12 @@ async def create_position_listing(
     seller_id: uuid.UUID,
     plan_id: uuid.UUID,
     price_per_unit: float,
+    units: int | None = None,
     now: dt.datetime | None = None,
 ) -> dict:
-    """Offer a running installment plan for sale as one position, at a price per unit."""
+    """Offer a running installment plan for sale as one position, at a price per unit: all
+    its units (``units`` empty), or some of them (0042). A buyer can take some of the units
+    listed; each part they take becomes a plan of their own."""
     price = _price(price_per_unit)
     # lock order of the installment module: the plan's payments, the plan, then the property
     plan, payments = await installment_service._lock_plan_rows(session, plan_id)
@@ -446,12 +446,35 @@ async def create_position_listing(
             details={"listing_id": str(already)},
         )
 
+    units = plan.units_total if units is None else int(units)
+    if not 1 <= units <= plan.units_total:
+        raise AppError(
+            "INVALID_UNITS",
+            f"This plan has {plan.units_total} unit(s): list between 1 and {plan.units_total}.",
+            status_code=422,
+            details={"units_total": plan.units_total},
+        )
+    free = await installment_service.free_plan_units(session, plan)
+    if units > free:
+        raise AppError(
+            "PLAN_UNITS_COMMITTED",
+            f"You can list up to {free} unit(s) of this plan now: the rest are offered to a "
+            "liquidity provider.",
+            status_code=409,
+            details={"free_units": free, "requested": units},
+        )
+    if units < plan.units_total:
+        installment_service.require_no_overdue(payments)
+
     sett = await settings_service.get_secondary_settings(session)
     await _check_lockup(session, sett, seller_id, plan.property_id, now)
     _check_price_bounds(sett, prop.unit_price, price)
-    fig = await installment_service.holder_position(session, plan, payments, price)
+    entry = await installment_service.holder_entry(session, plan)
+    fig = installment_service.part_figures(
+        plan, payments, units, price, entry[1] if entry else None
+    )
     if fig["equity"] <= 0:
-        floor = _q(fig["remaining_principal"] / plan.units_total)
+        floor = _q(fig["remaining_principal"] / units)
         raise AppError(
             "PRICE_TOO_LOW",
             f"At {price} a unit the position is worth {fig['value']}, which does not cover the "
@@ -468,8 +491,8 @@ async def create_position_listing(
         property_id=plan.property_id,
         investment_id=None,
         plan_id=plan.id,
-        units_for_sale=plan.units_total,
-        units_remaining=plan.units_total,
+        units_for_sale=units,
+        units_remaining=units,
         price_per_unit=price,
         status="active",
     )
@@ -484,7 +507,8 @@ async def create_position_listing(
         after={
             "plan_id": str(plan.id),
             "property_id": str(plan.property_id),
-            "units": plan.units_total,
+            "units": units,
+            "plan_units": plan.units_total,
             "price_per_unit": str(price),
             "value": str(fig["value"]),
             "remaining_principal": str(fig["remaining_principal"]),
@@ -505,14 +529,15 @@ async def _buy_position(
     idempotency_key: str,
     expected_fee: str | None = None,
 ) -> dict:
-    """One buyer takes a whole installment position. The caller holds the listing row lock
+    """A buyer takes an installment position: the whole plan (it becomes theirs), or (0042)
+    some of its units, which become a plan of their own. The caller holds the listing row lock
     and has checked that the listing is active and not the buyer's own."""
-    if units != listing.units_remaining:
+    if units > listing.units_remaining:
         raise AppError(
-            "WHOLE_POSITION",
-            f"This is an installment position: it is sold whole ({listing.units_remaining} units).",
-            status_code=422,
-            details={"units": listing.units_remaining},
+            "INSUFFICIENT_UNITS",
+            f"Only {listing.units_remaining} unit(s) of this plan are for sale.",
+            status_code=409,
+            details={"units_remaining": listing.units_remaining, "requested": units},
         )
     gone = AppError("LISTING_NOT_ACTIVE", "This position is no longer for sale.", status_code=409)
     assert listing.plan_id is not None
@@ -527,11 +552,17 @@ async def _buy_position(
     ).scalar_one()
     if await _nova_pledged(session, plan.id):
         raise AppError("UNITS_PLEDGED", _PLEDGED_MESSAGE, status_code=409)
+    if units > plan.units_total:  # the listing outgrew the plan: a guard, not a path
+        raise gone
+    whole = units == plan.units_total
+    if not whole:
+        installment_service.require_no_overdue(payments, whose="seller")
 
     sett = await settings_service.get_secondary_settings(session)
     fee_pct = decimal.Decimal(str(sett["resale_fee_pct"] or "0"))
-    # the plan's own figures (what a buyer is shown), not the seller's cost and gain
-    fig = installment_service.position_figures(plan, payments, listing.price_per_unit)
+    # the plan's own figures (what a buyer is shown), not the seller's cost and gain; for part
+    # of the plan, that part's share of them
+    fig = installment_service.part_figures(plan, payments, units, listing.price_per_unit)
     cash = fig["equity"]
     if cash <= 0:  # the seller only ever pays the remainder down: a guard, not a path
         raise gone
@@ -557,7 +588,7 @@ async def _buy_position(
             status_code=409,
             details={"position": _json_ready(_position_out(fig, fee_pct))},
         )
-    vested = int(plan.vested_units or 0)
+    vested = int((plan.vested_units if whole else fig["vested_units"]) or 0)
     if await _net_holding(session, seller_id, plan.property_id) < vested:
         # the ledger and the plan disagree: refuse rather than move units that are not there
         raise AppError(
@@ -593,9 +624,24 @@ async def _buy_position(
         actor_id=buyer_id,
     )
 
+    now = _utcnow()
+    bought_plan = plan
+    if not whole:
+        # 0042: the part becomes the buyer's own plan; the seller's plan keeps the rest
+        bought_plan, _ = await installment_service.split_plan(
+            session,
+            plan=plan,
+            payments=payments,
+            units=units,
+            to_user_id=buyer_id,
+            entry_price=listing.price_per_unit,
+            ledger_price=listing.price_per_unit,
+            reasons=("secondary_sale", "secondary_purchase"),
+            actor_id=buyer_id,
+        )
     # The units vested so far change hands (Σ per property conserved); the rest vest to the
     # buyer as the buyer pays for them.
-    if vested > 0:
+    if whole and vested > 0:
         session.add(
             OwnershipLedger(
                 user_id=seller_id,
@@ -620,30 +666,34 @@ async def _buy_position(
 
     # The plan is the buyer's from here: the unpaid installments keep their dates and
     # amounts, are charged from the buyer's wallet and remind the buyer.
-    now = _utcnow()
-    plan.investor_id = buyer_id
-    plan.management_fee_rate = buyer_fee_rate
-    plan.updated_at = now
-    for p in payments:
-        if p.status != "paid":
-            p.status = "scheduled"
-            p.reminder_sent_at = None
+    if whole:
+        plan.investor_id = buyer_id
+        plan.management_fee_rate = buyer_fee_rate
+        plan.holder_since = now
+        plan.entry_price = listing.price_per_unit
+        plan.updated_at = now
+        for p in payments:
+            if p.status != "paid":
+                p.status = "scheduled"
+                p.reminder_sent_at = None
 
-    listing.units_remaining = 0
-    listing.status = "sold"
-    listing.sold_at = now
+    listing.units_remaining = listing.units_remaining - units
+    if listing.units_remaining == 0:
+        listing.status = "sold"
+        listing.sold_at = now
 
     trade = SecondaryTrade(
         listing_id=listing.id,
         property_id=plan.property_id,
         seller_id=seller_id,
         buyer_id=buyer_id,
-        units=plan.units_total,
+        units=units,
         price_per_unit=listing.price_per_unit,
         gross=cash,
         resale_fee=resale_fee,
         total_charged=total_charged,
-        plan_id=plan.id,
+        # the plan the buyer got: the seller's (whole), or the part's own (0042)
+        plan_id=bought_plan.id,
         position_value=fig["value"],
         paid_principal=fig["paid_principal"],
         assumed_principal=fig["remaining_principal"],
@@ -661,10 +711,12 @@ async def _buy_position(
         actor_id=buyer_id,
         after={
             "listing_id": str(listing.id),
-            "plan_id": str(plan.id),
+            "plan_id": str(bought_plan.id),
+            "from_plan_id": str(plan.id),
             "property_id": str(plan.property_id),
             "seller_id": str(seller_id),
-            "units": plan.units_total,
+            "units": units,
+            "whole": whole,
             "vested_units": vested,
             "price_per_unit": str(listing.price_per_unit),
             "position_value": str(fig["value"]),
@@ -676,15 +728,23 @@ async def _buy_position(
         },
     )
     left = fig["installments_left"]
+    if whole:
+        seller_msg = (
+            f"You sold your installment position in {prop.title} ({units} unit(s)) "
+            f"for {cash}. The buyer pays the remaining installments from now on."
+        )
+    else:
+        seller_msg = (
+            f"You sold {units} unit(s) of your installment plan in {prop.title} for {cash}. "
+            f"Your plan keeps {plan.units_total} unit(s); each of its remaining installments "
+            "is smaller by the part the buyer now pays."
+        )
     await notification_service.notify(
         session,
         user_id=seller_id,
         type="secondary",
-        title="Installment position sold",
-        message=(
-            f"You sold your installment position in {prop.title} ({plan.units_total} unit(s)) "
-            f"for {cash}. The buyer pays the remaining installments from now on."
-        ),
+        title="Installment position sold" if whole else "Part of your installment plan sold",
+        message=seller_msg,
         email_category="investment_updates",
     )
     next_due = f" The next one is due on {fig['next_due'].isoformat()}." if fig["next_due"] else ""
@@ -694,14 +754,54 @@ async def _buy_position(
         type="secondary",
         title="Installment position bought",
         message=(
-            f"You took over an installment position in {prop.title}: {plan.units_total} "
+            f"You took over an installment position in {prop.title}: {units} "
             f"unit(s), {vested} of them yours already. {left} installment(s) remain "
             f"({fig['remaining_principal']} plus fees), charged from your wallet on their "
-            f"dates.{next_due}"
+            f"dates.{next_due} The plan and its schedule are in your dashboard."
         ),
         email_category="investment_updates",
     )
     return _trade_result(trade)
+
+
+async def quote_position(
+    session: AsyncSession, *, buyer_id: uuid.UUID, listing_id: uuid.UUID, units: int
+) -> dict:
+    """What buying ``units`` of a listed installment position comes to, before buying (0042):
+    the cash to the seller, the resale fee, and the schedule the buyer would take over, at the
+    part's amounts. Nothing is held."""
+    listing = await session.get(SecondaryListing, listing_id)
+    if listing is None or listing.plan_id is None:
+        raise AppError("NOT_FOUND", "Listing not found", status_code=404)
+    if listing.status != "active":
+        raise AppError(
+            "LISTING_NOT_ACTIVE", "This listing is no longer available.", status_code=409
+        )
+    if listing.seller_id == buyer_id:
+        raise AppError(
+            "CANNOT_BUY_OWN_LISTING", "You cannot buy your own listing.", status_code=409
+        )
+    plan = await session.get(InstallmentPlan, listing.plan_id)
+    if plan is None or plan.status != "active" or plan.investor_id != listing.seller_id:
+        raise AppError(
+            "LISTING_NOT_ACTIVE", "This position is no longer for sale.", status_code=409
+        )
+    if not 1 <= units <= min(listing.units_remaining, plan.units_total):
+        raise AppError(
+            "INSUFFICIENT_UNITS",
+            f"Choose between 1 and {listing.units_remaining} unit(s).",
+            status_code=422,
+            details={"units_remaining": listing.units_remaining, "requested": units},
+        )
+    payments = await installment_service._payments_for(session, plan.id)
+    if units < plan.units_total:
+        installment_service.require_no_overdue(payments, whose="seller")
+    fig = installment_service.part_figures(plan, payments, units, listing.price_per_unit)
+    out = _position_out(fig, await _fee_pct(session))
+    out["listing_id"] = listing.id
+    out["units_remaining"] = listing.units_remaining
+    out["whole"] = units == plan.units_total
+    return out
 
 
 def _json_ready(position: dict) -> dict:
@@ -952,12 +1052,14 @@ async def _position_of(
     if plan is None or plan.status != "active" or plan.investor_id != listing.seller_id:
         return None
     payments = await installment_service._payments_for(session, plan.id)
-    if for_seller:
-        fig = await installment_service.holder_position(
-            session, plan, payments, listing.price_per_unit
-        )
-    else:
-        fig = installment_service.position_figures(plan, payments, listing.price_per_unit)
+    units = min(listing.units_remaining, plan.units_total)
+    if units < 1:
+        return None
+    entry = await installment_service.holder_entry(session, plan) if for_seller else None
+    # the units still for sale (0042: a listing can offer part of the plan, and be bought in parts)
+    fig = installment_service.part_figures(
+        plan, payments, units, listing.price_per_unit, entry[1] if entry else None
+    )
     return _position_out(fig, fee_pct)
 
 
@@ -1002,9 +1104,9 @@ async def list_my_listings(session: AsyncSession, seller_id: uuid.UUID) -> list[
     sold_for = dict(
         (
             await session.execute(
-                select(SecondaryTrade.listing_id, SecondaryTrade.gross).where(
-                    SecondaryTrade.seller_id == seller_id, SecondaryTrade.plan_id.is_not(None)
-                )
+                select(SecondaryTrade.listing_id, func.sum(SecondaryTrade.gross))
+                .where(SecondaryTrade.seller_id == seller_id, SecondaryTrade.plan_id.is_not(None))
+                .group_by(SecondaryTrade.listing_id)
             )
         ).all()
     )
@@ -1016,8 +1118,10 @@ async def list_my_listings(session: AsyncSession, seller_id: uuid.UUID) -> list[
             else None
         )
         row = _listing_result(listing, prop, position)
-        if listing.plan_id is not None and listing.id in sold_for:
+        if listing.plan_id is not None and listing.id in sold_for and listing.status != "active":
             row["cash"] = str(sold_for[listing.id])
+        if listing.plan_id is not None and listing.id in sold_for:
+            row["sold_cash"] = str(sold_for[listing.id])
         out.append(row)
     return out
 
@@ -1061,9 +1165,18 @@ async def my_positions(session: AsyncSession, user_id: uuid.UUID) -> list[dict]:
         fig = await installment_service.holder_position(session, plan, payments, prop.unit_price)
         listing_id = await installment_service._active_listing_id(session, plan.id)
         blocked, unlock = await position_block(session, plan, listing_id)
+        committed = await installment_service.committed_units(session, plan.id)
+        overdue = installment_service.overdue_payments(payments)
         out.append(
             {
                 **_position_out(fig, fee_pct),
+                # 0042: part of the plan can be sold or sent: how many units are free now
+                "free_units": max(0, plan.units_total - committed["listed"] - committed["lp_exit"]),
+                "listed_units": committed["listed"],
+                "lp_exit_units": committed["lp_exit"],
+                "overdue_amount": str(
+                    _q(sum((p.total_amount for p in overdue), decimal.Decimal("0")))
+                ),
                 "property_id": str(plan.property_id),
                 "property_title": prop.title,
                 "property_location": prop.location,
@@ -1169,7 +1282,8 @@ def _listing_result(
 ) -> dict:
     return {
         "listing_id": listing.id,
-        # an installment plan position (sold whole; the buyer takes the plan over)
+        # an installment plan position: the whole plan or (0042) some of its units; a buyer
+        # can take some of the units still listed
         "plan_id": listing.plan_id,
         "position": position,
         # a position: what the buyer pays the seller (its price is per unit, but the sale is

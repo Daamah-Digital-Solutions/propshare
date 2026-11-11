@@ -18,6 +18,15 @@ email, now or on a date up to a year ahead. The engine:
 
 Every transfer has a number, ``TR-`` and ten characters; the member's Transfers tab, the
 admin's Transfers desk, the wallet statement and the unit movements all show it.
+
+Units of a running installment plan (0042, asset ``plan``): the sender gives some of the plan's
+units, or all, to another person, who pays their share of the installments still to come (the
+part becomes the recipient's own plan with the same dates; all of it, the plan itself). The
+recipient takes on payments, so such a transfer goes out at once and only to someone whose
+email is confirmed and identity verified; it never waits or runs on a later date. It is free of
+units-of-the-ledger holds (it is delivered in the same request) and changes hands only when no
+installment of the plan is overdue. The fee is on what the units are worth less the principal
+that comes with them.
 """
 
 from __future__ import annotations
@@ -33,12 +42,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.errors import AppError
-from app.models import KycVerification, Property, User, Wallet
+from app.models import InstallmentPlan, KycVerification, Property, User, Wallet
 from app.models.base import TransactionType
 from app.models.investments import OwnershipLedger
 from app.models.transfers import OPEN, Transfer
 from app.services import (
     account_service,
+    installment_service,
     notification_service,
     secondary_service,
     settings_service,
@@ -84,6 +94,11 @@ def describe(t: Transfer) -> str:
     """What was sent, as people read it: "5 units of Marina Loft" or "$250.00"."""
     if t.asset == "units":
         return f"{t.units} unit{'s' if t.units != 1 else ''} of {t.property_title or 'a property'}"
+    if t.asset == "plan":
+        return (
+            f"{t.units} unit{'s' if t.units != 1 else ''} of {t.property_title or 'a property'} "
+            "on an installment plan"
+        )
     return _money(t.amount)
 
 
@@ -156,8 +171,41 @@ async def options(session: AsyncSession, user_id: uuid.UUID) -> dict:
                 "unit_price": str(_q(decimal.Decimal(unit_price or 0))),
             }
         )
+    plans = []
+    for plan in (
+        (
+            await session.execute(
+                select(InstallmentPlan)
+                .where(InstallmentPlan.investor_id == user_id, InstallmentPlan.status == "active")
+                .order_by(InstallmentPlan.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    ):
+        prop = await session.get(Property, plan.property_id)
+        if prop is None:
+            continue
+        payments = await installment_service._payments_for(session, plan.id)
+        late = installment_service.overdue_payments(payments)
+        plans.append(
+            {
+                "plan_id": plan.id,
+                "property_id": plan.property_id,
+                "property_title": prop.title,
+                "units": plan.units_total,
+                "free_units": await installment_service.free_plan_units(session, plan),
+                "unit_price": str(_q(decimal.Decimal(prop.unit_price or 0))),
+                "overdue_amount": str(
+                    _q(sum((p.total_amount for p in late), decimal.Decimal("0")))
+                ),
+                "pledged": await secondary_service._nova_pledged(session, plan.id),
+            }
+        )
     return {
         "positions": positions,
+        # 0042: running installment plans, part of which can be sent
+        "plans": plans,
         "balance": str(_q(await _balance(session, user_id))),
         "fee_pct": str(await settings_service.get_transfer_fee_pct(session)),
         "claim_days": CLAIM_DAYS,
@@ -225,6 +273,8 @@ async def _check(session: AsyncSession, *, sender: User, data: dict, lock: bool)
             fee=fee,
             charged=fee,  # what leaves the wallet now
         )
+    elif asset == "plan":
+        out.update(await _check_plan(session, sender=sender, data=data, lock=lock, out=out))
     elif asset == "balance":
         try:
             amount = _q(decimal.Decimal(str(data.get("amount") or "0")))
@@ -244,7 +294,9 @@ async def _check(session: AsyncSession, *, sender: User, data: dict, lock: bool)
             charged=amount + fee,
         )
     else:
-        raise AppError("INVALID_ASSET", "Choose units or wallet balance.", status_code=422)
+        raise AppError(
+            "INVALID_ASSET", "Choose units, plan units or wallet balance.", status_code=422
+        )
     balance = await _balance(session, sender.id)
     if out["charged"] > balance:
         raise AppError(
@@ -254,6 +306,83 @@ async def _check(session: AsyncSession, *, sender: User, data: dict, lock: bool)
             status_code=422,
         )
     return out
+
+
+async def _check_plan(
+    session: AsyncSession, *, sender: User, data: dict, lock: bool, out: dict
+) -> dict:
+    """``_check`` for units of a running installment plan (0042): the sender's plan, units it
+    has free, nothing overdue, today, and a recipient who can take payments on."""
+    units = int(data.get("units") or 0)
+    if units <= 0:
+        raise AppError("UNITS_REQUIRED", "Enter how many units to send.", status_code=422)
+    try:
+        plan_id = uuid.UUID(str(data.get("plan_id")))
+    except (TypeError, ValueError) as exc:
+        raise AppError("NOT_FOUND", "Installment plan not found.", status_code=404) from exc
+    if lock:
+        # the installment module's lock order: the plan's payments, the plan, the property
+        plan, payments = await installment_service._lock_plan_rows(session, plan_id)
+    else:
+        plan = await session.get(InstallmentPlan, plan_id)
+        payments = await installment_service._payments_for(session, plan_id) if plan else []
+    if plan is None or plan.investor_id != sender.id:
+        raise AppError("NOT_FOUND", "Installment plan not found.", status_code=404)
+    if plan.status != "active":
+        raise AppError(
+            "PLAN_NOT_RUNNING",
+            "This plan is no longer running. A paid-off plan's units are ordinary units: send "
+            "them like any others.",
+            status_code=409,
+        )
+    q = select(Property).where(Property.id == plan.property_id)
+    prop = (await session.execute(q.with_for_update() if lock else q)).scalar_one()
+    if await secondary_service._nova_pledged(session, plan.id):
+        raise AppError("UNITS_PLEDGED", secondary_service._PLEDGED_MESSAGE, status_code=409)
+    if out["deliver_on"] != _utcnow().date():
+        raise AppError(
+            "PLAN_TRANSFER_TODAY",
+            "Units of an installment plan are sent today: their installments go on, so they "
+            "cannot wait for a later date.",
+            status_code=422,
+        )
+    installment_service.require_no_overdue(payments)
+    free = await installment_service.free_plan_units(session, plan)
+    if units > free:
+        raise AppError(
+            "INSUFFICIENT_UNITS",
+            f"You can send up to {free} unit{'s' if free != 1 else ''} of this plan now (the "
+            "rest are listed or offered to a liquidity provider).",
+            status_code=422,
+            details={"free": free, "requested": units},
+        )
+    recipient = await account_service.confirmed_by_address(session, out["recipient_email"])
+    if not await _ready(session, recipient):
+        raise AppError(
+            "RECIPIENT_NOT_READY",
+            "Units of an installment plan can only go to a member whose email is confirmed and "
+            "identity verified, because they take over the installments. Ask them to finish "
+            "that first.",
+            status_code=422,
+        )
+    unit_price = _q(decimal.Decimal(prop.unit_price or 0))
+    fig = installment_service.part_figures(plan, payments, units, unit_price)
+    # what is given: the units' value less the principal that comes with them
+    amount = max(fig["equity"], decimal.Decimal("0.00"))
+    fee = _q(amount * out["fee_pct"] / _HUNDRED)
+    return {
+        "asset": "plan",
+        "plan_id": plan.id,
+        "property_id": prop.id,
+        "property_title": prop.title,
+        "units": units,
+        "plan_units": plan.units_total,
+        "unit_price": unit_price,
+        "amount": amount,
+        "fee": fee,
+        "charged": fee,
+        "plan_figures": fig,
+    }
 
 
 async def _sender(session: AsyncSession, sender_id: uuid.UUID) -> User:
@@ -290,6 +419,27 @@ async def quote(session: AsyncSession, *, sender_id: uuid.UUID, data: dict) -> d
         "message": c["message"],
         "occasion": c["occasion"],
         "claim_days": CLAIM_DAYS,
+        "plan": _plan_quote(c),
+    }
+
+
+def _plan_quote(c: dict) -> dict | None:
+    """For units of a plan: what the recipient takes on (their share of the payments)."""
+    fig = c.get("plan_figures")
+    if fig is None:
+        return None
+    return {
+        "plan_id": c["plan_id"],
+        "units": c["units"],
+        "plan_units": c["plan_units"],
+        "vested_units": fig["vested_units"],
+        "value": str(fig["value"]),
+        "paid_principal": str(fig["paid_principal"]),
+        "remaining_principal": str(fig["remaining_principal"]),
+        "remaining_fees": str(fig["remaining_fees"]),
+        "installments_left": fig["installments_left"],
+        "next_due": fig["next_due"],
+        "schedule": installment_service.schedule_rows(fig["schedule"]),
     }
 
 
@@ -341,6 +491,7 @@ async def create(
         asset=c["asset"],
         property_id=c["property_id"],
         property_title=c["property_title"],
+        plan_id=c.get("plan_id"),
         units=c["units"],
         unit_price=c["unit_price"],
         amount=c["amount"],
@@ -408,6 +559,16 @@ async def _deliver(session: AsyncSession, t: Transfer, *, now: dt.datetime) -> s
     if recipient is not None and recipient.id == t.sender_id:
         await _close(session, t, "failed", "The recipient is the sender.", now=now)
         return t.status
+    if t.asset == "plan" and not await _ready(session, recipient):
+        # installments do not wait: such a transfer never parks (checked when it is made)
+        await _close(
+            session,
+            t,
+            "failed",
+            "The recipient's account is not ready to take over installments.",
+            now=now,
+        )
+        return t.status
     if not await _ready(session, recipient):
         if t.status != "waiting":
             t.status = "waiting"
@@ -427,6 +588,8 @@ async def _deliver(session: AsyncSession, t: Transfer, *, now: dt.datetime) -> s
         async with session.begin_nested():
             if t.asset == "units":
                 await _move_units(session, t, recipient.id)
+            elif t.asset == "plan":
+                await _move_plan(session, t, recipient.id)
             else:
                 await wallet_service.credit(
                     session,
@@ -498,6 +661,41 @@ async def _move_units(session: AsyncSession, t: Transfer, recipient_id: uuid.UUI
             ref_id=t.id,
         )
     )
+    await session.flush()
+
+
+async def _move_plan(session: AsyncSession, t: Transfer, recipient_id: uuid.UUID) -> None:
+    """Units of the sender's running plan become the recipient's: a new plan of their own
+    with its share of every payment, or (all its units) the plan itself."""
+    assert t.plan_id is not None
+    plan, payments = await installment_service._lock_plan_rows(session, t.plan_id)
+    if plan is None or plan.investor_id != t.sender_id or plan.status != "active":
+        raise AppError("PLAN_NOT_RUNNING", "The plan is no longer running.", status_code=409)
+    prop = (
+        await session.execute(
+            select(Property).where(Property.id == plan.property_id).with_for_update()
+        )
+    ).scalar_one()
+    if int(t.units or 0) > await installment_service.free_plan_units(session, plan):
+        raise AppError(
+            "UNITS_NO_LONGER_HELD",
+            "The plan no longer has these units free.",
+            status_code=409,
+        )
+    price = _q(decimal.Decimal(prop.unit_price or 0))
+    taken = await installment_service.take_plan_units(
+        session,
+        plan=plan,
+        payments=payments,
+        units=int(t.units or 0),
+        to_user_id=recipient_id,
+        entry_price=price,
+        ledger_price=price,
+        reasons=("transfer_out", "transfer_in"),
+        ref_id=t.id,
+        actor_id=t.sender_id,
+    )
+    t.new_plan_id = taken.id
     await session.flush()
 
 
@@ -860,15 +1058,32 @@ async def _tell_waiting(session: AsyncSession, t: Transfer) -> None:
 async def _tell_delivered(session: AsyncSession, t: Transfer, recipient_id: uuid.UUID) -> None:
     sender = await _name(session, t.sender_id)
     where = "your holdings" if t.asset == "units" else "your wallet"
+    if t.asset == "plan":
+        plan = await session.get(InstallmentPlan, t.new_plan_id) if t.new_plan_id else None
+        left = []
+        if plan is not None:
+            left = [
+                p
+                for p in await installment_service._payments_for(session, plan.id)
+                if p.status != "paid"
+            ]
+        owed = _q(sum((p.total_amount for p in left), decimal.Decimal("0")))
+        next_due = min((p.due_date for p in left), default=None)
+        body = (
+            f"{describe(t)} is now yours (transfer {t.reference}), as an installment plan in "
+            f"your name: {len(left)} installment(s) remain ({_money(owed)} with fees), charged "
+            "from your wallet on their dates."
+            + (f" The next one is due on {next_due.isoformat()}." if next_due else "")
+            + " The plan and its schedule are in your dashboard."
+        )
+    else:
+        body = f"{describe(t)} is now in {where} (transfer {t.reference})."
     await notification_service.notify(
         session,
         user_id=recipient_id,
         type="transfer",
         title=f"You received a transfer from {sender}",
-        message=(
-            f"{describe(t)} is now in {where} (transfer {t.reference})."
-            + (f' Their message: "{t.message}"' if t.message else "")
-        ),
+        message=body + (f' Their message: "{t.message}"' if t.message else ""),
         email_category="investment_updates",
     )
     await notification_service.notify(
@@ -896,6 +1111,9 @@ async def serialize(session: AsyncSession, t: Transfer, *, viewer_id: uuid.UUID)
         "asset": t.asset,
         "property_id": t.property_id,
         "property_title": t.property_title,
+        # 0042: units of an installment plan: the sender's plan, and the plan the recipient got
+        "plan_id": t.plan_id if sent else None,
+        "new_plan_id": t.new_plan_id if not sent else None,
         "units": t.units,
         "unit_price": str(t.unit_price) if t.unit_price is not None else None,
         "amount": str(t.amount),
