@@ -19,6 +19,7 @@ import { RefreshCcw, Percent, TrendingUp, ArrowRight, Info } from "lucide-react"
 import { useReinvest } from "@/contexts/ReinvestContext";
 import { useToast } from "@/hooks/use-toast";
 import { investApi } from "@/lib/api";
+import { useNumberDraft } from "@/hooks/useNumberDraft";
 
 interface ReinvestReturnsProps {
   availableReturns?: number;
@@ -168,6 +169,13 @@ interface ReinvestDialogProps {
 }
 
 const ReinvestDialog = ({ returns, discountPct, amount, setReinvestAmount, handleReinvest }: ReinvestDialogProps) => {
+  // the amount can be cleared and retyped: corrected to the returns available on leaving it
+  const amountField = useNumberDraft({
+    value: amount,
+    onValueChange: setReinvestAmount,
+    min: returns > 0 ? 0.01 : 0,
+    max: Math.max(returns, 0),
+  });
   return (
     <DialogContent className="sm:max-w-md">
       <DialogHeader>
@@ -200,14 +208,11 @@ const ReinvestDialog = ({ returns, discountPct, amount, setReinvestAmount, handl
             className="w-full"
           />
           <div className="relative">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+            <span className="absolute start-4 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
             <Input
               type="number"
-              value={amount}
-              onChange={(e) =>
-                setReinvestAmount(Math.min(Math.max(Number(e.target.value), 0), returns))
-              }
-              className="pl-8 text-lg font-semibold"
+              {...amountField.inputProps}
+              className={`ps-8 text-lg font-semibold${amountField.invalid ? " border-destructive" : ""}`}
             />
           </div>
         </div>

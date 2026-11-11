@@ -34,6 +34,7 @@ import { toast } from "sonner";
 import { ApiError, liquidityApi, secondaryApi, type MyPosition } from "@/lib/api";
 import PlanLiquidityExit from "@/components/exit/PlanLiquidityExit";
 import { money } from "@/lib/money";
+import { useNumberDraft } from "@/hooks/useNumberDraft";
 import {
   useCreateExitRequest,
   useCreateListing,
@@ -465,6 +466,14 @@ function SelectStep({
   onContinue: () => void;
 }) {
   const estimate = position ? exitSummary(method, position, units, rates) : null;
+  // units can be cleared and retyped: corrected to 1..owned on leaving the field
+  const unitsField = useNumberDraft({
+    value: units,
+    onValueChange: onUnitsChange,
+    min: 1,
+    max: Math.max(1, position?.units ?? 1),
+    integer: true,
+  });
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -600,11 +609,8 @@ function SelectStep({
               type="number"
               min={1}
               max={position.units}
-              value={units}
-              onChange={(e) =>
-                onUnitsChange(Math.min(position.units, Math.max(1, parseInt(e.target.value) || 1)))
-              }
-              className="w-24"
+              {...unitsField.inputProps}
+              className={cn("w-24", unitsField.invalid && "border-destructive")}
             />
           </div>
 

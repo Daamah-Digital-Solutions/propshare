@@ -58,6 +58,7 @@ import {
 import { payMethod, type PayMethodId } from "@/lib/paymentMethods";
 import { money as fmtMoney, unitPrice as fmtUnitPrice } from "@/lib/money";
 import { fundingBar, fundingText } from "@/lib/funding";
+import { useNumberDraft } from "@/hooks/useNumberDraft";
 
 interface PropertyData {
   propertyValue: number;
@@ -115,6 +116,13 @@ const InstallmentCalculator = ({
   initialDuration,
 }: InstallmentCalculatorProps) => {
   const [selectedPayment, setSelectedPayment] = useState<PayMethodId>("wallet");
+  // the amount can be cleared and retyped: it is corrected (to min / max) on leaving the field
+  const amountField = useNumberDraft({
+    value: investmentAmount,
+    onValueChange: setInvestmentAmount,
+    min: propertyData.minInvestment,
+    max: propertyData.maxInvestment,
+  });
   const [sukuk, setSukuk] = useState<SukukDraft>(EMPTY_SUKUK_DRAFT);
   // crypto: the coin (and its network) the down payment is sent in, chosen here
   const [coin, setCoin] = useState<string | null>(null);
@@ -474,22 +482,23 @@ const InstallmentCalculator = ({
 
           {/* Custom Amount Input */}
           <div className="mt-4 relative">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+            <span className="absolute start-4 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
             <input
               type="number"
-              value={investmentAmount}
-              onChange={(e) => {
-                const value = Math.min(Math.max(Number(e.target.value), propertyData.minInvestment), propertyData.maxInvestment);
-                setInvestmentAmount(value);
-              }}
-              className="w-full pl-8 pr-4 py-3 bg-secondary border border-border rounded-xl text-foreground text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary"
+              {...amountField.inputProps}
+              min={propertyData.minInvestment}
+              max={propertyData.maxInvestment}
+              className={`w-full ps-8 pe-4 py-3 bg-secondary border rounded-xl text-foreground text-lg font-semibold focus:outline-none focus:ring-2 ${
+                amountField.invalid ? "border-destructive focus:ring-destructive" : "border-border focus:ring-primary"
+              }`}
             />
           </div>
           {unitPrice > 0 && (
             <p className="mt-2 text-xs text-muted-foreground" data-testid="plan-units-hint">
               Units cost {fmtUnitPrice(unitPrice)} each. This amount covers{" "}
               <span className="font-medium text-foreground">
-                {wholeUnits.toLocaleString("en-US")} whole unit{wholeUnits === 1 ? "" : "s"}
+                {wholeUnits.toLocaleString("en-US")}{" "}
+                {wholeUnits === 1 ? "whole unit" : "whole units"}
               </span>
               {planAmount !== investmentAmount && wholeUnits > 0 ? ` (${fmtMoney(planAmount)})` : ""}: the
               plan is for those.
