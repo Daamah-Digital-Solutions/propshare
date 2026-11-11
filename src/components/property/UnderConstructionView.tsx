@@ -325,7 +325,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
             <Link to="/marketplace" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6">
               <ArrowLeft size={16} /> Back to Marketplace
             </Link>
-            <div className="grid lg:grid-cols-2 gap-8 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2 mb-3">
                   <Badge className="bg-background/70 text-foreground border-border">
@@ -376,7 +376,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
           </div>
         </section>
 
-        <div className="container mx-auto px-4 py-10 grid lg:grid-cols-3 gap-8">
+        <div className="container mx-auto px-4 py-10 grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Main content */}
           <div className="lg:col-span-2 min-w-0 space-y-6">
             <Tabs defaultValue="overview" className="w-full">

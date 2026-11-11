@@ -312,9 +312,9 @@ const AccountSettings = () => {
                     />
                   </label>
                 </div>
-                <div>
-                  <h3 className="font-medium text-foreground">{fullName || "Your Name"}</h3>
-                  <p className="text-sm text-muted-foreground">{profile?.email}</p>
+                <div className="min-w-0">
+                  <h3 className="font-medium text-foreground break-words">{fullName || "Your Name"}</h3>
+                  <p className="text-sm text-muted-foreground break-all">{profile?.email}</p>
                 </div>
               </div>
 
@@ -523,9 +523,9 @@ const AccountSettings = () => {
                   ) : (
                     <AlertCircle className="h-5 w-5 text-amber-500" />
                   )}
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-medium text-foreground">Email {emailVerified ? "Verified" : "Not Verified"}</p>
-                    <p className="text-sm text-muted-foreground">{profile?.email}</p>
+                    <p className="text-sm text-muted-foreground break-all">{profile?.email}</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center justify-end gap-2">

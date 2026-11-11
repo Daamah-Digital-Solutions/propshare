@@ -373,7 +373,7 @@ const PropertyDetails = () => {
             <span>Back to Properties</span>
           </Link>
 
-          <div className="grid lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Left Column - Property Info */}
             {/* min-w-0 lets this grid column shrink below its content's min width on phones,
                 otherwise the 5-tab strip widens the whole page and it scrolls sideways. */}

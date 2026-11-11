@@ -36,6 +36,7 @@ export function MainLayout({ children }: MainLayoutProps) {
     <SidebarProvider defaultOpen={true}>
       <div className="min-h-screen flex w-full bg-background">
         <AppSidebar />
+        {/* min-w-0 (in SidebarInset): a wide row inside never makes the page wider than the phone */}
         <SidebarInset className="flex-1 flex flex-col">
           {/* Top Header */}
           <header className="h-14 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-40 flex items-center justify-between px-3 sm:px-4 gap-2 sm:gap-4 overflow-hidden">
