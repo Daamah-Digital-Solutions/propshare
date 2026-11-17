@@ -48,6 +48,8 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   /** Optional: pre-select a position (e.g. when launched from a property page). */
   initialPositionId?: string | number;
+  /** Optional: open on this method, past the choice (e.g. from the liquidity market). */
+  initialMethod?: ExitMethod;
 }
 
 type Step = "method" | "select" | "summary" | "done";
@@ -118,7 +120,7 @@ function exitSummary(method: ExitMethod, position: OwnedPosition, units: number,
   };
 }
 
-export function ExitFlowDialog({ open, onOpenChange, initialPositionId }: Props) {
+export function ExitFlowDialog({ open, onOpenChange, initialPositionId, initialMethod }: Props) {
   const [step, setStep] = useState<Step>("method");
   const [method, setMethod] = useState<ExitMethod | null>(null);
   const [position, setPosition] = useState<OwnedPosition | null>(null);
@@ -141,13 +143,13 @@ export function ExitFlowDialog({ open, onOpenChange, initialPositionId }: Props)
 
   useEffect(() => {
     if (!open) return;
-    setStep("method");
-    setMethod(null);
+    setStep(initialMethod ? "select" : "method");
+    setMethod(initialMethod ?? null);
     const pre = positions.find((p) => String(p.id) === String(initialPositionId));
     setPosition(pre ?? null);
     setUnits(pre ? Math.max(1, Math.floor(pre.units * 0.25)) : 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialPositionId]);
+  }, [open, initialPositionId, initialMethod]);
 
   const summary = useMemo(
     () => (position && method ? exitSummary(method, position, units, rates) : null),

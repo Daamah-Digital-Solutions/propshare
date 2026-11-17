@@ -16,6 +16,7 @@ import {
   Sparkles,
   Layers,
   BarChart3,
+  Tag,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { ApiError, liquidityApi, type LpExitRequest } from "@/lib/api";
 import PlanUnitsFund from "@/components/liquidity/PlanUnitsFund";
+import { ExitButton } from "@/components/exit/ExitButton";
 import { useAuth } from "@/contexts/AuthContext";
 
 const num = (s: string | null | undefined) => Number(s ?? 0);
@@ -149,6 +151,27 @@ export default function LiquidityProviderMarket() {
       </section>
 
       <div className="container mx-auto px-4 py-8 space-y-8">
+        {/* A member selling: the instant exit starts here too (Trade → Liquidity Provider Market) */}
+        {isAuthenticated && !isLp && (
+          <Card className="border-border" data-testid="lp-sell">
+            <CardContent className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold">Selling your units?</p>
+                <p className="text-sm text-muted-foreground">
+                  Send them to our liquidity providers: you see what you will receive before you confirm.
+                </p>
+              </div>
+              <ExitButton
+                size="sm"
+                variant="default"
+                label="Sell to a liquidity provider"
+                initialMethod="liquidity"
+                icon={Tag}
+              />
+            </CardContent>
+          </Card>
+        )}
+
         {/* Who can fund: sign in / switch role / apply — instead of an empty page */}
         {!isLp && (
           <Card className="border-primary/30 bg-primary/5" data-testid="lp-access">

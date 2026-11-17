@@ -4,7 +4,7 @@ import * as SliderPrimitive from "@radix-ui/react-slider";
 import { cn } from "@/lib/utils";
 
 // The page's direction (the site sets <html dir="rtl"> in Arabic): a slider follows it, so its
-// minimum sits on the right in Arabic, where the "Min" label is.
+// minimum sits on the right in Arabic, where its label is.
 function usePageDir(): "ltr" | "rtl" {
   const read = () => (document.documentElement.dir === "rtl" ? "rtl" : "ltr");
   const [dir, setDir] = React.useState<"ltr" | "rtl">(read);

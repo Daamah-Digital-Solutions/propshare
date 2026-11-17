@@ -2,10 +2,13 @@ import { useState } from "react";
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { LogOut, type LucideIcon } from "lucide-react";
 import { ExitFlowDialog } from "./ExitFlowDialog";
+import type { ExitMethod } from "./exitStore";
 import { cn } from "@/lib/utils";
 
 interface ExitButtonProps extends Omit<ButtonProps, "onClick"> {
   initialPositionId?: string | number;
+  /** Open the flow on this method, past the choice. */
+  initialMethod?: ExitMethod;
   label?: string;
   icon?: LucideIcon;
   iconOnly?: boolean;
@@ -13,6 +16,7 @@ interface ExitButtonProps extends Omit<ButtonProps, "onClick"> {
 
 export function ExitButton({
   initialPositionId,
+  initialMethod,
   label = "Exit",
   icon: Icon = LogOut,
   iconOnly = false,
@@ -34,7 +38,7 @@ export function ExitButton({
         <Icon className="h-4 w-4" />
         {!iconOnly && <span>{label}</span>}
       </Button>
-      <ExitFlowDialog open={open} onOpenChange={setOpen} initialPositionId={initialPositionId} />
+      <ExitFlowDialog open={open} onOpenChange={setOpen} initialPositionId={initialPositionId} initialMethod={initialMethod} />
     </>
   );
 }
