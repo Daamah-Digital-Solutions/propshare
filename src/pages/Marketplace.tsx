@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import PropertyFilters from "@/components/marketplace/PropertyFilters";
+import { inRange, PRICE_MAX, topLabel, YIELD_MAX } from "@/lib/marketFilters";
 import PropertyGrid from "@/components/marketplace/PropertyGrid";
 import { Button } from "@/components/ui/button";
 import { Search, SlidersHorizontal, Grid3X3, List, Hammer, Building2, Loader2 } from "lucide-react";
@@ -73,8 +74,8 @@ const Marketplace = () => {
     status: "all",
     propertyStatus: "all",
     ownershipModel: "all",
-    priceRange: [0, 30000000],
-    yieldRange: [0, 15],
+    priceRange: [0, PRICE_MAX],
+    yieldRange: [0, YIELD_MAX],
     sortBy: "newest",
   });
 
@@ -118,12 +119,10 @@ const Marketplace = () => {
       result = result.filter((p) => deriveOwnershipModel(p) === filters.ownershipModel);
     }
 
-    result = result.filter(
-      (p) => p.price >= filters.priceRange[0] && p.price <= filters.priceRange[1]
-    );
-    result = result.filter(
-      (p) => p.yield >= filters.yieldRange[0] && p.yield <= filters.yieldRange[1]
-    );
+    // a slider at its top has no upper limit: nothing is hidden by a filter nobody touched
+    result = result.filter((p) => {
+      return inRange(p.price, filters.priceRange, PRICE_MAX) && inRange(p.yield, filters.yieldRange, YIELD_MAX);
+    });
 
     switch (filters.sortBy) {
       case "price-low":
@@ -356,7 +355,7 @@ const Marketplace = () => {
           {/* ROI Range - Mobile */}
           <div className="mb-6 lg:hidden">
             <div className="flex items-center justify-between text-sm text-muted-foreground mb-2">
-              <span>ROI Range: {filters.yieldRange[0]}% – {filters.yieldRange[1]}%</span>
+              <span>ROI Range: {filters.yieldRange[0]}% – {topLabel(filters.yieldRange[1], YIELD_MAX, (n) => `${n}%`)}</span>
             </div>
             <div className="px-1">
               <Slider
@@ -368,7 +367,7 @@ const Marketplace = () => {
                   }))
                 }
                 min={0}
-                max={15}
+                max={YIELD_MAX}
                 step={0.5}
                 className="w-full"
               />

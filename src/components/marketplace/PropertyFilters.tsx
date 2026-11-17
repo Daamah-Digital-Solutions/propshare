@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Link } from "react-router-dom";
 import { X, RotateCcw } from "lucide-react";
 import type { Filters } from "@/pages/Marketplace";
+import { PRICE_MAX, topLabel, YIELD_MAX } from "@/lib/marketFilters";
 
 interface PropertyFiltersProps {
   filters: Filters;
@@ -26,8 +27,8 @@ const PropertyFilters = ({
       status: "all",
       propertyStatus: "all",
       ownershipModel: "all",
-      priceRange: [0, 30000000],
-      yieldRange: [0, 15],
+      priceRange: [0, PRICE_MAX],
+      yieldRange: [0, YIELD_MAX],
       sortBy: "newest",
     });
   };
@@ -40,9 +41,9 @@ const PropertyFilters = ({
     filters.propertyStatus !== "all" ||
     filters.ownershipModel !== "all" ||
     filters.priceRange[0] > 0 ||
-    filters.priceRange[1] < 30000000 ||
+    filters.priceRange[1] < PRICE_MAX ||
     filters.yieldRange[0] > 0 ||
-    filters.yieldRange[1] < 15;
+    filters.yieldRange[1] < YIELD_MAX;
 
   return (
     <div className="bg-card rounded-2xl border border-border p-5">
@@ -272,14 +273,14 @@ const PropertyFilters = ({
                 }))
               }
               min={0}
-              max={30000000}
+              max={PRICE_MAX}
               step={100000}
               className="w-full"
             />
           </div>
           <div className="flex justify-between text-sm text-muted-foreground mt-2">
             <span>${(filters.priceRange[0] / 1000000).toFixed(1)}M</span>
-            <span>${(filters.priceRange[1] / 1000000).toFixed(1)}M</span>
+            <span>{topLabel(filters.priceRange[1], PRICE_MAX, (n) => `$${(n / 1000000).toFixed(1)}M`)}</span>
           </div>
         </div>
 
@@ -298,14 +299,14 @@ const PropertyFilters = ({
                 }))
               }
               min={0}
-              max={15}
+              max={YIELD_MAX}
               step={0.5}
               className="w-full"
             />
           </div>
           <div className="flex justify-between text-sm text-muted-foreground mt-2">
             <span>{filters.yieldRange[0]}%</span>
-            <span>{filters.yieldRange[1]}%</span>
+            <span>{topLabel(filters.yieldRange[1], YIELD_MAX, (n) => `${n}%`)}</span>
           </div>
         </div>
       </div>
