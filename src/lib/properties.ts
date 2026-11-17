@@ -68,6 +68,23 @@ const daysUntil = (iso: string | null): number => {
   return ms > 0 ? Math.ceil(ms / 86_400_000) : 0;
 };
 
+/**
+ * The return a property card shows (client, 2026-11-17): the TOTAL expected return, as the
+ * property page and the Listing Editor show it, not the rental yield alone. When a listing
+ * has no total, it is the rental yield plus the capital appreciation (as the editor computes
+ * it), then the rental yield, then the target yield.
+ */
+export const cardReturn = (
+  s: Pick<PropertySummary, "total_return" | "expected_yield" | "capital_appreciation" | "target_yield">,
+): number => {
+  if (s.total_return !== null && s.total_return !== undefined) return Number(s.total_return);
+  const rent = s.expected_yield ?? s.target_yield;
+  if (rent !== null && rent !== undefined && s.capital_appreciation !== null && s.capital_appreciation !== undefined) {
+    return Math.round((Number(rent) + Number(s.capital_appreciation)) * 100) / 100;
+  }
+  return Number(rent ?? 0);
+};
+
 /** Backend summary → marketplace card `Property`. */
 export const toMarketplaceProperty = (s: PropertySummary): Property => ({
   id: s.id,
@@ -78,7 +95,7 @@ export const toMarketplaceProperty = (s: PropertySummary): Property => ({
   image: assetUrl(s.image ?? ""),
   price: assetValue(s),
   minInvestment: s.minimum_investment,
-  yield: s.expected_yield ?? s.target_yield ?? 0,
+  yield: cardReturn(s),
   funded: fundedPct(s),
   type: coerceType(s.property_type),
   status: coerceStatus(s.status, s.funding_progress),

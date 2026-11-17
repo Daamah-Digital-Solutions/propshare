@@ -4,7 +4,7 @@ import { ArrowRight, MapPin, TrendingUp, Clock, Building2, Loader2 } from "lucid
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { assetUrl, propertyApi } from "@/lib/api";
-import { assetValue } from "@/lib/properties";
+import { assetValue, cardReturn } from "@/lib/properties";
 import { fundedPct, fundingBar, fundingText } from "@/lib/funding";
 
 interface Property {
@@ -133,7 +133,7 @@ const FeaturedProperties = () => {
     image: assetUrl(s.image ?? ""),
     price: assetValue(s),
     minInvestment: s.minimum_investment,
-    yield: s.expected_yield ?? s.target_yield ?? 0,
+    yield: cardReturn(s),
     funded: fundedPct(s),
     type: READY_MODELS.has(s.model) ? "ready" : "construction",
     status: s.status === "funded" ? "funded" : s.funding_progress >= 90 ? "funding" : "open",
