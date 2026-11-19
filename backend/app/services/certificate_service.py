@@ -41,6 +41,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import InvestmentCertificate, OwnershipLedger, Property
 from app.models.identity import User
+from app.models.installments import InstallmentPlan
 from app.services.doc_lang import (
     DocCanvas,
     current,
@@ -129,11 +130,14 @@ def _fit_centred(
 ) -> None:
     """Draw centred text, shrinking the font just enough that a long value never overflows."""
     size = base_size
-    while size > 8 and text_width(text, font, size) > max_width:
+    while size > 8 and _drawn_width(text, font, size) > max_width:
         size -= 0.5
     c.setFillColor(color)
     c.setFont(font, size)
-    c.drawCentredString(cx, y, text)
+    if _tracking():  # centred by the width it is drawn at, the title's letter-spacing included
+        c.drawString(cx - _drawn_width(text, font, size) / 2, y, text)
+    else:
+        c.drawCentredString(cx, y, text)
 
 
 def _clip(text: str, font: str, size: float, max_width: float) -> str:
@@ -318,6 +322,95 @@ def _draw_brand(c: canvas.Canvas, cx: float) -> None:
         _spaced_centred(c, cx, 724, "Times-Bold", 15, "CAPIMAX PROPSHARE", 3.2, _GREEN_D)
 
 
+# Client (2026-11-18, every Capimax platform): whether the units are fully paid.
+PAYMENT_LABELS = {
+    "final": "FINAL · FULLY PAID",
+    "provisional": "PROVISIONAL · INSTALLMENTS OUTSTANDING",
+}
+
+
+def _payment_badge(c: canvas.Canvas, status: str) -> None:
+    """The label in a pill between the subtitle and the attestation: green when fully paid,
+    gold while installments are outstanding."""
+    text = tr(PAYMENT_LABELS[status])
+    font, size = "Helvetica-Bold", 7.6
+    width = _drawn_width(text, font, size) + 22
+    colour = _GREEN_D if status == "final" else _GOLD
+    c.saveState()
+    c.setStrokeColor(colour)
+    c.setLineWidth(0.9)
+    c.setFillColor(_CREAM)
+    c.roundRect(_CX - width / 2, 628, width, 13, 6.5, stroke=1, fill=1)
+    c.restoreState()
+    c.setFillColor(colour)
+    c.setFont(font, size)
+    if _tracking():
+        c.drawString(_CX - _drawn_width(text, font, size) / 2, 631.6, text)
+    else:
+        c.drawCentredString(_CX, 631.6, text)
+
+
+def _tracking() -> float:
+    """The letter-spacing an English certificate's title leaves on every later line (see the
+    footer's NB); a translation is drawn without it."""
+    return _TRACKING if current() == "en" else 0.0
+
+
+def _drawn_width(text: str, font: str, size: float) -> float:
+    return text_width(text, font, size) + _tracking() * max(len(text) - 1, 0)
+
+
+def _centred_line(c: canvas.Canvas, text: str, y: float, font: str, size: float) -> None:
+    """A body line centred by the width it is drawn at (the title's letter-spacing included)."""
+    c.setFillColor(_INK)
+    c.setFont(font, size)
+    if _tracking():
+        c.drawString(_CX - _drawn_width(text, font, size) / 2, y, text)
+    else:
+        c.drawCentredString(_CX, y, text)
+
+
+_SHARE_WIDTH = 440.0  # inside the frame, as wide as the fact panel below
+
+
+def _share_lines(text: str, name: str) -> tuple[float, list[str]]:
+    """The share sentence on at most two lines. When it does not fit on one, the SPV's name
+    starts the second line, whole; a name too long for that wraps, then the font shrinks a
+    little, and only a name too long for two small lines is cut. The panel's ISSUING SPV is cut
+    at its column, so this sentence is where the SPV's legal name is read in full."""
+    if _drawn_width(text, "Times-Roman", 12) <= _SHARE_WIDTH:
+        return 12.0, [text]
+    at = text.find(name) if name else -1
+    if at > 0:
+        lines = [text[:at].strip(), text[at:].strip()]
+        if all(_drawn_width(ln, "Times-Roman", 12) <= _SHARE_WIDTH for ln in lines):
+            return 12.0, lines
+
+    def wrap(size: float) -> list[str]:
+        lines: list[str] = []
+        cur = ""
+        for word in text.split():
+            trial = f"{cur} {word}".strip()
+            if not cur or _drawn_width(trial, "Times-Roman", size) <= _SHARE_WIDTH:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = word
+        return lines + [cur] if cur else lines
+
+    size = 12.0
+    lines = wrap(size)
+    while len(lines) > 2 and size > 9.5:
+        size -= 0.5
+        lines = wrap(size)
+    if len(lines) > 2:
+        tail = " ".join(lines[1:])
+        while tail and _drawn_width(tail + "…", "Times-Roman", size) > _SHARE_WIDTH:
+            tail = tail[:-1]
+        lines = [lines[0], tail.rstrip() + "…"]
+    return size, lines
+
+
 def render_certificate_pdf(
     *,
     holder: str,
@@ -332,10 +425,11 @@ def render_certificate_pdf(
     issued: str,
     verification_code: str,
     verify_url: str,
+    payment_status: str | None = None,
 ) -> bytes:
     """Draw the branded Capimax PropShare certificate (A4, classic styling). ``cert_ref`` is
     the certificate's number; its QR code opens ``verify_url``, where ``verification_code`` is
-    checked."""
+    checked. ``payment_status`` ('final' | 'provisional') prints its label under the title."""
     buf = io.BytesIO()
     c = DocCanvas(buf, pagesize=(_W, _H), pageCompression=0)
     c.setTitle(tr("Capimax PropShare — Certificate of Ownership"))
@@ -375,6 +469,8 @@ def render_certificate_pdf(
     c.setFillColor(_MUTED)
     c.setFont("Times-Italic", 12)
     c.drawCentredString(_CX, 648, tr("Fractional Real-Estate Ownership"))
+    if payment_status in PAYMENT_LABELS:
+        _payment_badge(c, payment_status)
 
     # Attestation.
     c.setFillColor(_INK)
@@ -384,20 +480,30 @@ def render_certificate_pdf(
     c.setStrokeColor(_GOLD_L)
     c.setLineWidth(0.8)
     c.line(_CX - 150, 576, _CX + 150, 576)
-    c.setFillColor(_INK)
-    c.setFont("Times-Roman", 12)
     holds_line = tr(f"is the registered holder of {units} fractional ownership units in")
-    c.drawCentredString(_CX, 552, holds_line)
+    _centred_line(c, holds_line, 552, "Times-Roman", 12)
     _fit_centred(c, _CX, 530, "Times-Bold", 14, property_title, 430, _GREEN)
-    c.setFillColor(_INK)
-    c.setFont("Times-Roman", 12)
     ledger_line = tr("as recorded in the Capimax PropShare ownership ledger.")
     if ownership == "-":  # a listing without a unit count has no share to state
-        c.drawCentredString(_CX, 510, ledger_line)
+        _centred_line(c, ledger_line, 510, "Times-Roman", 12)
     else:
-        # how much of the property the units are (client, 2026-10-01): OWNERSHIP STAKE below
-        c.drawCentredString(_CX, 511, tr(f"representing {ownership} of the property,"))
-        c.drawCentredString(_CX, 494, ledger_line)
+        # How much the units are (client, 2026-10-01; OWNERSHIP STAKE below). They are interests
+        # in the SPV that owns the property, not in the building itself (client, 2026-11-18): the
+        # share is of the SPV's total issued interests, and the SPV is named by its legal name.
+        named = spv.strip() not in ("", "-")
+        share = (
+            tr(f"representing {ownership} of the total issued interests in {spv},")
+            if named
+            else tr(f"representing {ownership} of the total issued interests in the issuing SPV,")
+        )
+        size, lines = _share_lines(share, spv if named else "")
+        if len(lines) == 1:
+            _centred_line(c, lines[0], 511, "Times-Roman", 12)
+            _centred_line(c, ledger_line, 494, "Times-Roman", 12)
+        else:
+            _centred_line(c, lines[0], 514, "Times-Roman", size)
+            _centred_line(c, lines[1], 499, "Times-Roman", size)
+            _centred_line(c, ledger_line, 483, "Times-Roman", 12)
 
     # Fact panel (2 columns x 4 rows).
     px, py, pw, ph = 82, 292, _W - 164, 170
@@ -546,22 +652,22 @@ def _holder_ref(user_id: uuid.UUID) -> str:
 def _signature(c: InvestmentCertificate) -> str:
     """A keyed digest of what the certificate states: printed on the verification page, it
     changes if any value is altered, and cannot be made up without the platform's key."""
-    payload = "|".join(
-        str(v)
-        for v in (
-            c.number,
-            c.verification_code,
-            c.holder_name,
-            c.holder_ref,
-            c.property_id,
-            c.property_title,
-            c.units,
-            c.ownership,
-            c.unit_price,
-            c.value,
-            c.issued_at.isoformat(),
-        )
-    )
+    values = [
+        c.number,
+        c.verification_code,
+        c.holder_name,
+        c.holder_ref,
+        c.property_id,
+        c.property_title,
+        c.units,
+        c.ownership,
+        c.unit_price,
+        c.value,
+        c.issued_at.isoformat(),
+    ]
+    if c.payment_status:  # from 0047 on; a certificate issued before keeps its signature
+        values.append(c.payment_status)
+    payload = "|".join(str(v) for v in values)
     key = ("investment-certificate|" + get_settings().jwt_secret).encode()
     return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
 
@@ -622,6 +728,21 @@ async def issued_number(
     )
 
 
+async def payment_status_of(
+    session: AsyncSession, user_id: uuid.UUID, property_id: uuid.UUID
+) -> str:
+    """'provisional' while the holder is still paying an installment plan on the property (its
+    units vest payment by payment), else 'final'."""
+    open_plans = await session.scalar(
+        select(func.count(InstallmentPlan.id)).where(
+            InstallmentPlan.investor_id == user_id,
+            InstallmentPlan.property_id == property_id,
+            InstallmentPlan.status == "active",
+        )
+    )
+    return "provisional" if open_plans else "final"
+
+
 async def current_certificate(
     session: AsyncSession,
     *,
@@ -642,7 +763,13 @@ async def current_certificate(
         # Nothing to certify. A certificate they had keeps its row as it is: its verification
         # page compares it with the ledger and shows it superseded (``verify``).
         raise AppError("NO_HOLDING", "You do not hold any units in this property.", status_code=404)
-    if current is not None and current.units == units and current.holder_name == holder:
+    stage = await payment_status_of(session, user_id, property_id)
+    if (
+        current is not None
+        and current.units == units
+        and current.holder_name == holder
+        and (current.payment_status or "final") == stage
+    ):
         return current
     prop = await session.get(Property, property_id)
     if prop is None:
@@ -672,6 +799,7 @@ async def current_certificate(
         value=(unit_price * units).quantize(decimal.Decimal("0.01")),
         signature="",
         issued_at=now,
+        payment_status=stage,
     )
     cert.signature = _signature(cert)
     session.add(cert)
@@ -699,6 +827,7 @@ async def current_certificate(
             "number": cert.number,
             "property_id": str(property_id),
             "units": units,
+            "payment_status": stage,
             "supersedes": current.number if current is not None else None,
         },
     )
@@ -732,6 +861,7 @@ def certificate_dict(c: InvestmentCertificate) -> dict:
         "spv_name": c.spv_name,
         "location": c.location,
         "status": c.status,
+        "payment_status": c.payment_status,
         "issued_at": c.issued_at,
     }
 
@@ -791,6 +921,7 @@ async def verify(session: AsyncSession, code: str, *, now: dt.datetime | None = 
         "signature": cert.signature,
         "issuer": "Capimax PropShare",
         "verified_at": now,
+        "payment_status": cert.payment_status,
     }
 
 
@@ -850,6 +981,7 @@ def render_for(cert: InvestmentCertificate) -> bytes:
         issued=long_date(cert.issued_at, "%b %d, %Y"),
         verification_code=cert.verification_code,
         verify_url=verify_url(cert.verification_code),
+        payment_status=cert.payment_status,
     )
 
 

@@ -45,6 +45,14 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     return _sessionmaker
 
 
+async def _before_commit(session: AsyncSession) -> None:
+    """Work every transaction does last: the certificate of each holding whose units moved
+    is issued now, not only when the holder opens Certificates (``certificate_auto``)."""
+    from app.services import certificate_auto
+
+    await certificate_auto.issue_pending(session)
+
+
 @asynccontextmanager
 async def session_scope() -> AsyncIterator[AsyncSession]:
     """Transactional session scope used by services in later phases."""
@@ -52,6 +60,7 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
     async with maker() as session:
         async with session.begin():
             yield session
+            await _before_commit(session)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -66,6 +75,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     async with maker() as session:
         try:
             yield session
+            await _before_commit(session)
             await session.commit()
         except Exception:
             await session.rollback()

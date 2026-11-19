@@ -7,7 +7,8 @@ card whose buttons download the files straight away, through the platform's own 
 endpoints (the same files the dashboard gives):
 
   * ``get_my_certificates``         the ownership certificate of each property held (PDF), all
-    of them in one ZIP, the share of the property, its number and the page its QR code opens;
+    of them in one ZIP, the share of the SPV that owns the property, its number and the page
+    its QR code opens;
   * ``get_my_installment_schedules`` each installment plan's schedule (PDF and Excel) with what
     is paid, what is left and the next payment.
 
@@ -164,7 +165,8 @@ register(
     ToolSpec(
         "get_my_certificates",
         "The signed-in user's ownership certificates: for one property (by name) or all they "
-        "hold, with the units, the share of the property and the certificate number. The user "
+        "hold, with the units, the share of the SPV that owns the property (the units are "
+        "interests in that company, not in the building) and the certificate number. The user "
         "gets a card that downloads the PDF certificate(s) right away, so use this whenever "
         "they ask for a certificate instead of sending them to a page.",
         MyDocumentsIn,

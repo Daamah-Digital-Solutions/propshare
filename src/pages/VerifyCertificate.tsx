@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ApiError, certificateApi, type CertificateVerification } from "@/lib/api";
+import { CertificatePaymentBadge } from "@/components/dashboard/CertificatePaymentBadge";
 
 /**
  * Certificate Verification (client, 2026-10-28, as on Capimax BRX): the page an investment
@@ -171,6 +172,7 @@ export default function VerifyCertificate() {
             {st.label}
           </Badge>
           <h1 className="text-2xl font-bold text-foreground">{data.number}</h1>
+          <CertificatePaymentBadge status={data.payment_status} className="px-3 py-1 text-xs" />
           <p className="max-w-xl text-muted-foreground">{statusLine(data)}</p>
         </CardContent>
       </Card>
@@ -210,7 +212,7 @@ export default function VerifyCertificate() {
             title="Holding stated"
             rows={[
               ["Units", data.units.toLocaleString("en-US")],
-              ["Share of the property", data.ownership],
+              ["Share of the SPV", data.ownership],
               ["Unit price on the issue date", money(data.unit_price)],
               ["Recorded value on the issue date", money(data.value)],
             ]}

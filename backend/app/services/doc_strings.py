@@ -81,6 +81,11 @@ TEXT: dict[str, tuple[str, str]] = {
     ),
     "Certificate of Ownership": ("شهادة ملكية", "Certificat de propriété"),
     "Fractional Real-Estate Ownership": ("ملكية عقارية جزئية", "Propriété immobilière fractionnée"),
+    "FINAL · FULLY PAID": ("نهائية · مدفوعة بالكامل", "DÉFINITIF · ENTIÈREMENT PAYÉ"),
+    "PROVISIONAL · INSTALLMENTS OUTSTANDING": (
+        "مؤقتة · أقساط متبقية",
+        "PROVISOIRE · VERSEMENTS RESTANTS",
+    ),
     "This is to certify that": ("نشهد بأن", "Nous certifions que"),
     "is the registered holder of {0} fractional ownership units in": (
         "هو المالك المسجل لعدد {0} من وحدات الملكية الجزئية في",
@@ -90,9 +95,13 @@ TEXT: dict[str, tuple[str, str]] = {
         "وفق المسجل في سجل الملكية لدى Capimax PropShare.",
         "comme inscrit au registre de propriété de Capimax PropShare.",
     ),
-    "representing {0} of the property,": (
-        "بما يمثل {0} من العقار،",
-        "soit {0} du bien,",
+    "representing {0} of the total issued interests in {1},": (
+        "بما يمثل {0} من إجمالي الحصص المصدرة في {1}،",
+        "soit {0} de l'ensemble des parts émises par {1},",
+    ),
+    "representing {0} of the total issued interests in the issuing SPV,": (
+        "بما يمثل {0} من إجمالي الحصص المصدرة في الشركة ذات الغرض الخاص المصدرة،",
+        "soit {0} de l'ensemble des parts émises par la SPV émettrice,",
     ),
     "Recorded value": ("القيمة المسجلة", "Valeur enregistrée"),
     "Units held": ("الوحدات المملوكة", "Parts détenues"),
@@ -335,6 +344,20 @@ TEXT: dict[str, tuple[str, str]] = {
     "Resale fee (one-time)": ("رسوم إعادة البيع (مرة واحدة)", "Frais de revente (une seule fois)"),
     "Secondary purchase — {0}": ("شراء ثانوي — {0}", "Achat secondaire — {0}"),
     "Secondary sale — {0}": ("بيع ثانوي — {0}", "Vente secondaire — {0}"),
+    # 0045: the seller's fee and a liquidity provider's share of the fees
+    "Seller fee — {0}": ("رسوم البائع — {0}", "Frais vendeur — {0}"),
+    "Your share of the buyer's fee (liquidity provider) — {0}": (
+        "حصتك من رسوم المشتري (مزود سيولة) — {0}",
+        "Votre part des frais de l'acheteur (fournisseur de liquidité) — {0}",
+    ),
+    "Your share of the seller's fee (liquidity provider) — {0}": (
+        "حصتك من رسوم البائع (مزود سيولة) — {0}",
+        "Votre part des frais du vendeur (fournisseur de liquidité) — {0}",
+    ),
+    "Liquidity provider fee share": (
+        "حصة مزود السيولة من الرسوم",
+        "Part des frais du fournisseur de liquidité",
+    ),
     "Transfer {0} to {1}": ("تحويل {0} إلى {1}", "Transfert {0} à {1}"),
     "Transfer {0} from {1}": ("تحويل {0} من {1}", "Transfert {0} de {1}"),
     "Transfer {0} returned": ("أعيد التحويل {0}", "Transfert {0} restitué"),

@@ -21,6 +21,7 @@ class MyCertificateOut(BaseModel):
     spv_name: str | None
     location: str | None
     status: str
+    payment_status: str | None = None  # final | provisional (None: issued before 0047)
     issued_at: dt.datetime
 
 
@@ -51,3 +52,4 @@ class CertificateVerificationOut(BaseModel):
     signature: str
     issuer: str
     verified_at: dt.datetime
+    payment_status: str | None = None  # final | provisional (None: issued before 0047)

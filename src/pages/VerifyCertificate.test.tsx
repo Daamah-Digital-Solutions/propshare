@@ -81,7 +81,7 @@ describe("VerifyCertificate", () => {
     expect(page).toHaveTextContent("Issuing SPVMarina Loft Holdings Ltd");
     expect(page).toHaveTextContent("JurisdictionUAE");
     expect(page).toHaveTextContent("Units1,250");
-    expect(page).toHaveTextContent("Share of the property2.5%");
+    expect(page).toHaveTextContent("Share of the SPV2.5%");
     expect(page).toHaveTextContent("Recorded value on the issue date$125,000.00");
   });
 

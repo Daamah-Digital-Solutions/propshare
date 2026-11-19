@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { CertificatePaymentBadge } from "./CertificatePaymentBadge";
 import {
   AlertTriangle,
   Building2,
@@ -232,6 +233,7 @@ export const InvestmentCertificates = () => {
                           <p className="text-xs text-muted-foreground mt-0.5">
                             {cert?.number ?? "Certificate issued on download"}
                           </p>
+                          {current && <CertificatePaymentBadge status={cert?.payment_status} className="mt-1 text-[10px]" />}
                           {cert && (
                             <Link
                               to={cert.verify_path}

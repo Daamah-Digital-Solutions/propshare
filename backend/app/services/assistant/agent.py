@@ -432,7 +432,7 @@ def _certificates_card(result: dict[str, Any]) -> dict[str, Any]:
                 "heading": it.get("property_title"),
                 "rows": [
                     ["Units", str(it["units"])],
-                    ["Share of the property", it["ownership_pct"]],
+                    ["Share of the SPV", it["ownership_pct"]],
                     ["Certificate number", it["certificate_number"]],
                     ["Verification code", it["verification_code"]],
                 ],

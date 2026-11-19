@@ -1,4 +1,4 @@
-"""Investment certificates (client, 2026-10-28) — DDL owned by alembic/0038.
+"""Investment certificates (client, 2026-10-28) — DDL owned by alembic/0038 and 0047.
 
 Each row is one certificate issued to a holder for their units in one property, with the secret
 code its QR leads to (``/verify/{verification_code}``). See ``certificate_service``.
@@ -47,6 +47,9 @@ class InvestmentCertificate(Base):
     unit_price: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     value: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     signature: Mapped[str] = mapped_column(Text, nullable=False)
+    # 'final' (fully paid) | 'provisional' (an installment plan on the property is still being
+    # paid); NULL on certificates issued before 0047
+    payment_status: Mapped[str | None] = mapped_column(Text)
     issued_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=_NOW
     )

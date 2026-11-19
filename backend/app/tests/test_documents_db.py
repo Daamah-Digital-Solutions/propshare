@@ -194,6 +194,11 @@ async def test_certificate_prints_the_registered_spv_never_a_made_up_one(client,
     _ledger(db, uid, pid, 3)
     pdf = (await client.get(f"/api/v1/investments/certificate/{pid}", headers=_h(tok))).content
     assert b"Marina Holdings SPV Ltd" in pdf and b"Prop SPV" not in pdf
+    # the share is of the SPV, named in the sentence (client, 2026-11-18), never of the property
+    # too long for one line: the SPV's name starts the second, whole
+    assert b"(representing 3% of the total issued interests in) Tj" in pdf
+    assert b"(Marina Holdings SPV Ltd,) Tj" in pdf
+    assert b"of the property" not in pdf
 
     bare = _seed_property(db, None, slug="cert-no-spv")
     _ledger(db, uid, bare, 2)
@@ -202,15 +207,17 @@ async def test_certificate_prints_the_registered_spv_never_a_made_up_one(client,
 
 
 async def test_certificate_states_the_share_and_where_it_is_verified(client, db):
-    """Client (2026-10-01): the certificate says how much of the property the units are. Client
-    (2026-10-28): it is verified on PropShare by its QR code, no longer at CIM Global Financial.
-    The dashboard is given the same share, which it used to round itself (20 of 42,000: 0.05%)."""
+    """Client (2026-10-01): the certificate says how much the units are; (2026-11-18) of the
+    SPV's total issued interests, not of the property. Client (2026-10-28): it is verified on
+    PropShare by its QR code, no longer at CIM Global Financial. The dashboard is given the same
+    share, which it used to round itself (20 of 42,000: 0.05%)."""
     tok, uid = await _user(client, db, "cert-verify@x.com")
     pid = _seed_property(db, None, slug="cert-verify")
     db("UPDATE properties SET total_units=42000 WHERE id=:p", p=pid)
     _ledger(db, uid, pid, 20)
     pdf = (await client.get(f"/api/v1/investments/certificate/{pid}", headers=_h(tok))).content
-    assert b"(representing 0.04762% of the property,) Tj" in pdf
+    # no SPV registered on this listing: the sentence still says the share is of the SPV
+    assert b"(representing 0.04762% of the total issued interests in the issuing SPV,) Tj" in pdf
     assert b"(as recorded in the Capimax PropShare ownership ledger.) Tj" in pdf
     code = db("SELECT verification_code FROM investment_certificates WHERE user_id=:u", u=uid)
     assert len(code) == 1

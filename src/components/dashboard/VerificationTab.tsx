@@ -109,7 +109,7 @@ export const VerificationTab = () => {
                       </p>
                     )}
                     <p className="text-sm text-muted-foreground">
-                      {c.units.toLocaleString()} units · {c.ownership} of the property
+                      {c.units.toLocaleString()} units · {c.ownership} of the SPV
                     </p>
                     <p className="text-sm text-muted-foreground">
                       Certificate <span className="font-medium text-foreground">{c.number}</span>

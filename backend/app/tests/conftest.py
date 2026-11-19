@@ -97,9 +97,13 @@ def _override_session(_test_db):
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
 
     async def _get_session() -> AsyncIterator:
+        # the same steps as app.core.db.get_session, on the test database
+        from app.core.db import _before_commit
+
         async with sessionmaker() as session:
             try:
                 yield session
+                await _before_commit(session)
                 await session.commit()
             except Exception:
                 await session.rollback()

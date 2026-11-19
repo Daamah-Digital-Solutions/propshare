@@ -75,8 +75,8 @@ describe("VerificationTab", () => {
     mount();
     const list = await screen.findByTestId("certificate-refs");
     expect(list).toHaveTextContent("Creek Tower");
-    expect(list).toHaveTextContent("20 units · 0.04762% of the property");
-    expect(list).toHaveTextContent("3 units · 0.3% of the property");
+    expect(list).toHaveTextContent("20 units · 0.04762% of the SPV");
+    expect(list).toHaveTextContent("3 units · 0.3% of the SPV");
     expect(list).toHaveTextContent("Certificate PSC-2026-K7M2Q9XA");
     expect(list).toHaveTextContent("Xq3vN8bKp2LmR5tY7wZa1c");
     const links = within(list).getAllByRole("link");
