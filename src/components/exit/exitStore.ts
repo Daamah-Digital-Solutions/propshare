@@ -67,8 +67,9 @@ function toExitRequest(l: SecondaryListing): ExitRequest {
     units: l.units_for_sale,
     pricePerUnit: price,
     estimatedProceeds: gross,
-    fee: 0, // seller receives the full gross; the resale fee is buyer-side
-    netProceeds: gross,
+    // the seller fee and the net are the server's, once the units sell (0045)
+    fee: Number(l.seller_fee ?? 0),
+    netProceeds: l.seller_net != null ? Number(l.seller_net) : gross,
     remainingUnits: l.units_remaining,
     settlementEta: l.status === "sold" ? "Settled" : "On sale",
     createdAt: l.created_at ?? new Date(0).toISOString(),

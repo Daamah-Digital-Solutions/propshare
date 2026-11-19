@@ -40,6 +40,7 @@ import { ApiError, liquidityApi, type LpExitRequest } from "@/lib/api";
 import PlanUnitsFund from "@/components/liquidity/PlanUnitsFund";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { useAuth } from "@/contexts/AuthContext";
+import LpDealSummary from "@/components/liquidity/LpDealSummary";
 
 const num = (s: string | null | undefined) => Number(s ?? 0);
 
@@ -127,6 +128,11 @@ export default function LiquidityProviderMarket() {
   }, [openData, positionsData]);
 
   const fundQty = parseInt(fundUnits) || 0;
+  // the provider's price for these units, as the server prices a fill (gross, then the discount)
+  const lpDeal = (unit: number, qty: number, discount: number) => {
+    const gross = Math.round(unit * qty * 100) / 100;
+    return Math.round(gross * (100 - discount) + Number.EPSILON) / 100;
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -142,7 +148,7 @@ export default function LiquidityProviderMarket() {
                 Liquidity Provider Market
               </h1>
               <p className="text-muted-foreground max-w-2xl">
-                Fund investor instant-exit requests at a transparent liquidity discount —
+                Fund investor instant-exit requests at a transparent, server-set price with no purchase fee —
                 acquire the ownership, earn rental as the new owner, and resell on the secondary market.
               </p>
             </div>
@@ -401,12 +407,22 @@ export default function LiquidityProviderMarket() {
               {
                 icon: Zap,
                 title: "How Instant Exits Work",
-                desc: "An investor lists an instant-exit request at a transparent liquidity discount. You fund it, acquire the ownership at that discounted price, and the investor receives funds immediately.",
+                desc: "An investor lists an instant-exit request at a transparent, server-set price. You fund it, acquire the ownership at that price, and the investor receives funds immediately.",
               },
               {
                 icon: TrendingUp,
                 title: "How Liquidity Generates Returns",
                 desc: "You earn as the new owner: rental distributions on the acquired units, plus the spread when you resell those units on the secondary market.",
+              },
+              {
+                icon: Sparkles,
+                title: "No Purchase or Resale Fees: a Share of Both",
+                desc: "You pay no fee when you buy from an investor here, and no seller fee when you resell those units on the secondary market. From each of the two deals you also get 0.5% of its value out of the fee the other side pays, credited to your wallet once the deal is settled and shown as its own line in your statement.",
+              },
+              {
+                icon: BarChart3,
+                title: "Returns and Price Moves",
+                desc: "While you hold the units you receive the returns due on them under the opportunity's terms. If you resell above what you paid, the difference is yours; below it, the difference is a loss. Example: units bought for $10,000 and resold for $11,000 bring $1,000 of price difference plus $105 of fee shares ($50 + $55).",
               },
               {
                 icon: Shield,
@@ -474,7 +490,7 @@ export default function LiquidityProviderMarket() {
               <div className="space-y-3 py-2">
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div className="p-3 rounded-lg bg-muted/40">
-                    <div className="text-xs text-muted-foreground">You pay / unit (discounted)</div>
+                    <div className="text-xs text-muted-foreground">You pay / unit</div>
                     <div className="font-semibold text-lg">
                       ${(num(selected.lp_price) / selected.units).toFixed(2)}
                     </div>
@@ -495,6 +511,9 @@ export default function LiquidityProviderMarket() {
                     onChange={(e) => setFundUnits(e.target.value)}
                   />
                 </div>
+                {fundQty > 0 && fundQty <= selected.units_remaining && (
+                  <LpDealSummary deal={lpDeal(num(selected.unit_price), fundQty, num(selected.discount_pct))} />
+                )}
                 <div className="text-xs text-muted-foreground p-3 rounded-lg border border-border">
                   <Shield className="w-3 h-3 inline mr-1 text-primary" />
                   Acquired ownership is recorded on the ownership ledger; you earn rental as the new

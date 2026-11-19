@@ -404,7 +404,7 @@ const Support = () => {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Yes! Use our Secondary Market to list your shares for sale. A 2% exit fee applies to all sales.
+                  Yes! Use our Secondary Market to list your shares for sale. A 0.5% seller fee is taken from the sale, and the buyer pays a 1.5% fee on top. Selling to a liquidity provider instead carries a 1.5% seller fee.
                 </p>
               </CardContent>
             </Card>

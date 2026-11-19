@@ -129,7 +129,8 @@ class PoolTierOut(BaseModel):
 
 class LiquiditySettingsOut(BaseModel):
     discount_pct: str
-    fee_pct: str
+    fee_pct: str  # the seller's fee when a provider buys
+    fee_share_pct: str = "0"  # the provider's share of it (percent of the deal)
     ttl_minutes: int
     band_pct: str
     passive_enabled: bool

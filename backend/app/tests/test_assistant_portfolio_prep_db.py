@@ -123,7 +123,11 @@ async def test_sale_is_prepared_up_to_create_listing(client, db, asession):
     )
     assert (out["reference_price"], out["vs_reference_pct"]) == ("100.00", "10.00")
     # the seller gets the full gross; the 1% resale fee is paid by the buyer on top
-    assert (out["you_receive"], out["buyer_fee"], out["buyer_pays"]) == ("550.00", "5.50", "555.50")
+    assert (out["you_receive"], out["buyer_fee"], out["buyer_pays"]) == (
+        "547.25",
+        "5.50",
+        "555.50",
+    )  # 550 less the 0.5% seller fee
     assert out["ready"] is True and out["notes"] == []
     card = _card_for("prepare_sale", out, [])
     assert card["kind"] == "sale" and card["ready"] is True

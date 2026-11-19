@@ -916,3 +916,23 @@ def test_the_assistant_no_longer_calls_phased_sales_unbuilt():
     # a library passage about a phased sale no longer gets a "not built" warning
     assert platform_gaps.notes_for("phased sale at different prices", []) == []
     assert platform_gaps.notes_for("is funding released to the developer in tranches?", [])
+
+
+@pytest.fixture(autouse=True)
+def _pre_0045_fees(_clean, db):
+    """The trading mechanics here are pinned at the rates they were written with: buyer 1%,
+    no seller fee, a 3% liquidity discount and a 2% fee, no provider share. The market fees
+    of 0045 (client, 2026-11-18) have their own tests (test_market_fees_db)."""
+    for key, value in (
+        ("secondary_resale_fee_pct", "1.0"),
+        ("secondary_seller_fee_pct", "0"),
+        ("liquidity_fee_pct", "2.0"),
+        ("lp_fee_share_pct", "0"),
+        ("liquidity_discount_pct", "3.0"),
+    ):
+        db(
+            "INSERT INTO platform_settings (key, value) VALUES (:k, :v) "
+            "ON CONFLICT (key) DO UPDATE SET value = :v",
+            k=key,
+            v=value,
+        )

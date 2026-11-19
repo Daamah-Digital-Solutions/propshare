@@ -39,6 +39,8 @@ _SETTING_SPECS: dict[str, str] = {
     "platform_fee_pct": "pct",
     "management_fee_pct": "pct",
     "secondary_resale_fee_pct": "pct",
+    "secondary_seller_fee_pct": "pct",
+    "lp_fee_share_pct": "pct",
     "liquidity_discount_pct": "pct",
     "liquidity_fee_pct": "pct",
     "lp_exit_price_band_pct": "pct",
@@ -162,14 +164,18 @@ DEFAULTS: dict[str, str] = {
     # from the seller's earliest acquisition; price bounds as a % of unit_price
     # (empty = open / no bound). These MUST mirror the 0009 seeds because the test
     # fixture truncates platform_settings.
-    "secondary_resale_fee_pct": "1.0",
+    # Market fees (0045, client 2026-11-18): the buyer's fee (resale), the seller's, and the
+    # liquidity provider's share of the fees of its deals. See market_fees.
+    "secondary_resale_fee_pct": "1.5",
+    "secondary_seller_fee_pct": "0.5",
+    "lp_fee_share_pct": "0.5",
     "secondary_lockup_days": "0",
     "secondary_price_min_pct": "",
     "secondary_price_max_pct": "",
     # Liquidity provider (Phase 9). One source of truth for the LP-exit fee + discount;
     # PASSIVE pool is hard-locked OFF until its economics are real.
-    "liquidity_discount_pct": "3.0",
-    "liquidity_fee_pct": "2.0",
+    "liquidity_discount_pct": "0",  # the provider pays the units' value (0045, owner)
+    "liquidity_fee_pct": "1.5",  # the seller's fee when a provider buys (0045)
     "lp_exit_request_ttl_minutes": "1440",
     "lp_exit_price_band_pct": "10",
     "lp_passive_enabled": "false",
@@ -372,14 +378,16 @@ async def get_liquidity_settings(session: AsyncSession) -> dict[str, Decimal | i
         except (ArithmeticError, ValueError):
             return Decimal(fallback)
 
-    discount = _dec(await get_setting(session, "liquidity_discount_pct"), "3.0")
-    fee = _dec(await get_setting(session, "liquidity_fee_pct"), "2.0")
+    discount = _dec(await get_setting(session, "liquidity_discount_pct"), "0")
+    fee = _dec(await get_setting(session, "liquidity_fee_pct"), "1.5")
+    share = _dec(await get_setting(session, "lp_fee_share_pct"), "0.5")
     ttl = _dec(await get_setting(session, "lp_exit_request_ttl_minutes"), "1440")
     band = _dec(await get_setting(session, "lp_exit_price_band_pct"), "10")
     passive_raw = (await get_setting(session, "lp_passive_enabled")).strip().lower()
     return {
         "discount_pct": discount,
         "fee_pct": fee,
+        "fee_share_pct": share,
         "ttl_minutes": int(ttl),
         "band_pct": band,
         "passive_enabled": passive_raw in ("true", "1", "yes", "on"),
@@ -403,13 +411,22 @@ async def get_secondary_settings(session: AsyncSession) -> dict[str, Decimal | i
     try:
         resale_fee_pct = Decimal(fee_raw)
     except (ArithmeticError, ValueError):
-        resale_fee_pct = Decimal("1.0")
+        resale_fee_pct = Decimal("1.5")
+
+    async def _rate(key: str, fallback: str) -> Decimal:
+        try:
+            return Decimal(await get_setting(session, key))
+        except (ArithmeticError, ValueError):
+            return Decimal(fallback)
+
     try:
         lockup_days = int(Decimal(lockup_raw))
     except (ArithmeticError, ValueError):
         lockup_days = 0
     return {
-        "resale_fee_pct": resale_fee_pct,
+        "resale_fee_pct": resale_fee_pct,  # the buyer's fee
+        "seller_fee_pct": await _rate("secondary_seller_fee_pct", "0.5"),
+        "lp_fee_share_pct": await _rate("lp_fee_share_pct", "0.5"),
         "lockup_days": lockup_days,
         "price_min_pct": _pct_or_none(await get_setting(session, "secondary_price_min_pct")),
         "price_max_pct": _pct_or_none(await get_setting(session, "secondary_price_max_pct")),

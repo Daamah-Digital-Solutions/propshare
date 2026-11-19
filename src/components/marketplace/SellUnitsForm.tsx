@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, holdingsApi, secondaryApi } from "@/lib/api";
+import { secondaryFees } from "@/lib/marketFees";
 
 /** A sale the assistant prepared (from /secondary-market?tab=sell&property=…&units=…&price=…). */
 // units / price come only from a sale the assistant prepared; a plain "Sell" button on a
@@ -55,14 +56,25 @@ const SellUnitsForm = ({ prefill = null }: { prefill?: SellPrefill | null }) => 
   const ownedProperties = holdings?.items ?? [];
   const selected = ownedProperties.find((p) => p.property_id === selectedProperty);
   const refPrice = selected ? Number(selected.unit_price) : 0;
-  const feePct = settings ? Number(settings.resale_fee_pct) : 1.0;
+  const feePct = settings ? Number(settings.resale_fee_pct) : 1.5;
+  const sellerPct = Number(settings?.seller_fee_pct ?? 0);
+  const sharePct = Number(settings?.lp_fee_share_pct ?? 0);
 
+  // what each side pays and gets (client, 2026-11-18): units bought as a liquidity provider
+  // sell first, with no seller fee and a share of the buyer's fee
   const calc = useMemo(() => {
     const units = parseInt(unitsToSell) || 0;
     const price = parseFloat(pricePerUnit) || 0;
-    const gross = units * price;
-    return { units, price, gross, buyerFee: gross * (feePct / 100) };
-  }, [unitsToSell, pricePerUnit, feePct]);
+    const fees = secondaryFees({
+      gross: units * price,
+      units,
+      lpUnits: selected?.lp_units ?? 0,
+      buyerPct: feePct,
+      sellerPct,
+      sharePct,
+    });
+    return { units, price, ...fees };
+  }, [unitsToSell, pricePerUnit, feePct, sellerPct, sharePct, selected?.lp_units]);
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -236,16 +248,31 @@ const SellUnitsForm = ({ prefill = null }: { prefill?: SellPrefill | null }) => 
               <span className="font-medium">${calc.gross.toLocaleString()}</span>
             </div>
 
+            {calc.sellerFee > 0 && (
+              <div className="flex justify-between text-sm" data-testid="sell-seller-fee">
+                <span className="text-muted-foreground">{`Seller fee (${sellerPct}%)`}</span>
+                <span className="font-medium">-${calc.sellerFee.toFixed(2)}</span>
+              </div>
+            )}
+            {calc.lpFeeShare > 0 && (
+              <div className="flex justify-between text-sm" data-testid="sell-lp-share">
+                <span className="text-muted-foreground">
+                  {`Your share of the buyer's fee as a liquidity provider (${sharePct}%, ${calc.lpUnits} units)`}
+                </span>
+                <span className="font-medium text-primary">+${calc.lpFeeShare.toFixed(2)}</span>
+              </div>
+            )}
+
             <Separator />
 
             <div className="flex justify-between font-semibold">
               <span className="text-foreground">Net Proceeds (You Receive)</span>
-              <span className="text-primary">${calc.gross.toFixed(2)}</span>
+              <span className="text-primary" data-testid="sell-net">${calc.sellerNet.toFixed(2)}</span>
             </div>
 
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground flex items-center gap-1">
-                Buyer pays resale fee ({feePct}%)
+                {`Buyer pays a purchase fee (${feePct}%)`}
                 <Info className="h-3 w-3" />
               </span>
               <span className="font-medium">+${calc.buyerFee.toFixed(2)}</span>
@@ -257,9 +284,11 @@ const SellUnitsForm = ({ prefill = null }: { prefill?: SellPrefill | null }) => 
             <AlertCircle className="h-5 w-5 text-warning flex-shrink-0 mt-0.5" />
             <div className="text-sm">
               <p className="font-medium text-foreground">Fee Information</p>
+              <p className="text-muted-foreground">{`Seller fee: ${sellerPct}% of the sale.`}</p>
+              <p className="text-muted-foreground">{`Buyer fee: ${feePct}%, on top of your price.`}</p>
               <p className="text-muted-foreground">
-                You receive the full gross sale value. The {feePct}% resale fee is charged to the
-                buyer on top of your asking price.
+                Units you bought as a liquidity provider sell first, with no seller fee, and part of the
+                buyer's fee comes back to you.
               </p>
             </div>
           </div>

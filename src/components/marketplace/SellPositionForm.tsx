@@ -9,6 +9,7 @@ import { CalendarClock, CheckCircle, Info } from "lucide-react";
 import { toast } from "sonner";
 import { ApiError, secondaryApi, type MyPosition } from "@/lib/api";
 import { money, shortDate, unitPrice } from "@/lib/money";
+import { secondaryFees } from "@/lib/marketFees";
 
 /** A position sale prepared elsewhere (the Installments tab, or the assistant):
  * /secondary-market?tab=sell&plan=<plan id>[&units=N][&price=P] (N: part of the plan) */
@@ -62,7 +63,19 @@ function PositionRow({
   const remaining = cents(Number(position.remaining_principal) * share);
   const paid = cents(Number(position.cost) * share);
   const value = cents(asking * units);
-  const youReceive = cents(value - remaining);
+  const cash = cents(value - remaining);
+  // the seller fee comes out of it (client, 2026-11-18); a plan bought as a liquidity provider
+  // pays none and gets a share of the buyer's fee instead
+  const { data: rates } = useQuery({ queryKey: ["secondary", "settings"], queryFn: () => secondaryApi.settings() });
+  const fees = secondaryFees({
+    gross: cash,
+    units: Math.max(units, 1),
+    lpUnits: position.bought_as_lp ? Math.max(units, 1) : 0,
+    buyerPct: feePct,
+    sellerPct: Number(rates?.seller_fee_pct ?? 0),
+    sharePct: Number(rates?.lp_fee_share_pct ?? 0),
+  });
+  const youReceive = cash > 0 ? fees.sellerNet : cash;
   const gain = youReceive - paid;
   const minimum = units > 0 ? remaining / units : 0;
   const overdue = Number(position.overdue_amount ?? 0);
@@ -172,6 +185,18 @@ function PositionRow({
                 <span className="text-muted-foreground">Still to pay (the buyer takes it over)</span>
                 <span className="font-medium">−{money(remaining)}</span>
               </div>
+              {cash > 0 && fees.sellerFee > 0 && (
+                <div className="flex justify-between" data-testid="position-seller-fee">
+                  <span className="text-muted-foreground">{`Seller fee (${rates?.seller_fee_pct}%)`}</span>
+                  <span className="font-medium">−{money(fees.sellerFee)}</span>
+                </div>
+              )}
+              {cash > 0 && fees.lpFeeShare > 0 && (
+                <div className="flex justify-between" data-testid="position-lp-share">
+                  <span className="text-muted-foreground">{`Your share of the buyer's fee as a liquidity provider (${rates?.lp_fee_share_pct}%)`}</span>
+                  <span className="font-medium text-primary">+{money(fees.lpFeeShare)}</span>
+                </div>
+              )}
               <div className="border-t border-border pt-1.5 flex justify-between font-semibold">
                 <span>You receive</span>
                 <span className={youReceive > 0 ? "text-primary" : "text-destructive"}>{money(youReceive)}</span>
@@ -182,7 +207,7 @@ function PositionRow({
                   {`= ${money(paid)} you put in ${gain >= 0 ? "+" : "−"} ${money(Math.abs(gain))} price ${
                     gain >= 0 ? "increase" : "decrease"
                   } on ${units} units.`}{" "}
-                  Installment fees you paid are not returned. The buyer pays a {feePct}% fee on top.
+                  {`Installment fees you paid are not returned. The buyer pays a ${feePct}% fee on top.`}
                 </p>
               )}
             </div>

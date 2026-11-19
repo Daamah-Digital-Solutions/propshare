@@ -144,6 +144,8 @@ async def secondary_settings(session: SessionDep, principal: PrincipalDep):
     sett = await settings_service.get_secondary_settings(session)
     return SecondarySettingsOut(
         resale_fee_pct=str(sett["resale_fee_pct"]),
+        seller_fee_pct=str(sett["seller_fee_pct"]),
+        lp_fee_share_pct=str(sett["lp_fee_share_pct"]),
         lockup_days=int(sett["lockup_days"] or 0),
         price_min_pct=str(sett["price_min_pct"]) if sett["price_min_pct"] is not None else None,
         price_max_pct=str(sett["price_max_pct"]) if sett["price_max_pct"] is not None else None,

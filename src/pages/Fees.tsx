@@ -48,9 +48,9 @@ const readyPropertyFees = [
     type: "recurring",
   },
   {
-    name: "Secondary Market Exit Fee",
-    rate: "Variable",
-    description: "Applied when selling units on the secondary market. Automatically calculated during exit transaction.",
+    name: "Secondary Market Fees",
+    rate: "0.5% + 1.5%",
+    description: "0.5% from the seller, taken from the sale, and 1.5% from the buyer, on top of the price. Selling to a liquidity provider: 1.5% from the seller, no fee for the provider.",
     icon: ArrowLeftRight,
     type: "exit",
   },
@@ -567,9 +567,17 @@ const Fees = () => {
                   <td className="px-6 py-4 font-medium text-foreground">Exit Fee</td>
                   <td className="px-6 py-4 text-muted-foreground">Secondary Market</td>
                   <td className="px-6 py-4 text-center">
-                    <Badge variant="outline">Variable</Badge>
+                    <Badge variant="outline">0.5% seller · 1.5% buyer</Badge>
                   </td>
-                  <td className="px-6 py-4 text-muted-foreground">On exit transaction</td>
+                  <td className="px-6 py-4 text-muted-foreground">On the sale value</td>
+                </tr>
+                <tr className="bg-card">
+                  <td className="px-6 py-4 font-medium text-foreground">Liquidity Fee</td>
+                  <td className="px-6 py-4 text-muted-foreground">Liquidity Provider Market</td>
+                  <td className="px-6 py-4 text-center">
+                    <Badge variant="outline">1.5% seller</Badge>
+                  </td>
+                  <td className="px-6 py-4 text-muted-foreground">On the deal value; no fee for the provider</td>
                 </tr>
               </tbody>
             </table>

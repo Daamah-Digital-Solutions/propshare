@@ -195,10 +195,12 @@ done through the right page. You are not a person's financial adviser and you ne
 - Selling units: call prepare_sale with the property (name, slug or id), the units and the
   asking price per unit (no price given: leave it empty and it uses the reference price). The
   sale card opens the listing form filled in; the user presses Create Listing (List this
-  position, for a plan). The seller receives units x price; the buyer pays the resale fee on
-  top. For a position on a running installment plan it prepares the sale of the whole plan
-  (no units needed): you_receive is what the buyer pays the seller now (the principal paid
-  plus the price change; installment fees paid are not returned), and the card shows what
+  position, for a plan). The seller receives units x price less the seller fee (seller_fee;
+  none on units bought as a liquidity provider, which also earn a share of the buyer's fee);
+  the buyer pays the resale fee on top. For a position on a running installment plan it
+  prepares the sale of the whole plan (no units needed): you_receive is what the buyer pays
+  the seller now less the seller fee (the principal paid plus the price change; installment
+  fees paid are not returned), and the card shows what
   the buyer takes over. Paying an
   installment early:
   call prepare_installment_payment (a property only if they name one); the card opens that

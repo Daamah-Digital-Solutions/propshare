@@ -85,3 +85,5 @@ class TransactionType(enum.StrEnum):
     estate_transfer = "estate_transfer"
     # 0040 — a transfer of wallet balance to another person (held, delivered or returned)
     transfer = "transfer"
+    # 0045 — a liquidity provider's share of the fees of its deals
+    lp_fee_share = "lp_fee_share"

@@ -144,24 +144,26 @@ async def test_units_on_a_running_plan_are_sold_as_the_whole_position(client, db
     assert (pos["free_units"], pos["overdue_amount"]) == (12, "0.00")
 
     # "sell 1 unit" of it prepares that unit of the plan: 100 less a twelfth of the 900 still
-    # to pay; the buyer takes over a twelfth of every remaining installment
+    # to pay (25.00), less the 0.5% seller fee (0045); the buyer pays 1.5% of it on top and takes
+    # over a twelfth of every remaining installment
     one = await _run(asession, ctx, "prepare_sale", {"property": "Plan Tower", "units": 1})
     assert (one["ready"], one["kind"], one["units"], one["plan_units"]) == (True, "position", 1, 12)
     assert (one["you_receive"], one["buyer_fee"], one["remaining_principal"]) == (
-        "25.00",
-        "0.25",
+        "24.87",
+        "0.38",
         "75.00",
     )
     assert "Part of the plan is sold: 1 of its 12 units" in " ".join(one["notes"])
     assert "units=1" in _card_for("prepare_sale", one, [])["path"]
 
-    # the position, with no number of units, is the whole plan, ready to list
+    # the position, with no number of units, is the whole plan, ready to list: 300 less the 0.5%
+    # seller fee; the buyer pays 1.5% on top (0045)
     sale = await _run(asession, ctx, "prepare_sale", {"property": "Plan Tower", "position": True})
     assert (sale["ready"], sale["kind"], sale["units"]) == (True, "position", 12)
     assert (sale["you_receive"], sale["buyer_fee"], sale["buyer_pays"]) == (
-        "300.00",
-        "3.00",
-        "303.00",
+        "298.50",
+        "4.50",
+        "304.50",
     )
     assert (sale["remaining_principal"], sale["installments_left"]) == ("900.00", 11)
     assert "The whole position is sold: 12 units, 3 of them yours already" in " ".join(
@@ -187,7 +189,8 @@ async def test_units_on_a_running_plan_are_sold_as_the_whole_position(client, db
         "prepare_sale",
         {"property": "Plan Tower", "price_per_unit": 110, "position": True},
     )
-    assert (dearer["you_receive"], dearer["gain"]) == ("420.00", "120.00")
+    # what the seller gets is 420 less the 0.5% seller fee; the gain is the price change (0045)
+    assert (dearer["you_receive"], dearer["gain"]) == ("417.90", "120.00")
     # a price that would not cover what is still to pay is explained, not prepared
     low = await _run(
         asession, ctx, "prepare_sale", {"property": "Plan Tower", "price_per_unit": 70}

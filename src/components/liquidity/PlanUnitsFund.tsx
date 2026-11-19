@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { ApiError, liquidityApi, type LpExitRequest, type LpPlanUnits } from "@/lib/api";
 import { money, unitPrice } from "@/lib/money";
 import PlanPartSchedule from "@/components/marketplace/PlanPartSchedule";
+import LpDealSummary from "@/components/liquidity/LpDealSummary";
 
 /**
  * Funding an exit request for units of a running installment plan. The provider pays the
@@ -107,6 +108,7 @@ export default function PlanUnitsFund({ request, onDone }: { request: LpExitRequ
               <span>You pay now</span>
               <span className="text-primary">{money(pos.cash)}</span>
             </div>
+            <LpDealSummary deal={Number(pos.cash)} />
             <p className="text-xs text-muted-foreground">
               {pos.vested_units} of the {pos.units} unit(s) are paid for and yours at once; the others become yours as
               you pay.

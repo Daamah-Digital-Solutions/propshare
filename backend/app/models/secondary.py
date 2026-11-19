@@ -52,6 +52,15 @@ class SecondaryTrade(Base):
     gross: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     resale_fee: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     total_charged: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
+    # 0045: the seller's fee, the units sold under a liquidity provider's rules, and the
+    # provider's share of the buyer's fee on them (see market_fees)
+    seller_fee: Mapped[decimal.Decimal] = mapped_column(
+        Numeric(15, 2), nullable=False, server_default="0"
+    )
+    lp_units: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    lp_fee_share: Mapped[decimal.Decimal] = mapped_column(
+        Numeric(15, 2), nullable=False, server_default="0"
+    )
     # 0034 — the sale of an installment plan position. ``gross`` is then the cash the buyer
     # paid the seller (the position's value less the principal still to pay); these columns
     # keep the position as it was at the trade.

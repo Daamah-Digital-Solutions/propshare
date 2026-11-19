@@ -140,7 +140,7 @@ const PlatformRules = () => {
             <ul className="list-disc pl-6 space-y-2">
               <li>List units at fair market prices (no price manipulation)</li>
               <li>Honor all accepted offers within the specified timeframe</li>
-              <li>Pay all applicable fees (2% exit fee for sellers, 3% purchase fee for buyers)</li>
+              <li>Pay all applicable fees (0.5% seller fee and 1.5% buyer fee on the secondary market; 1.5% seller fee when a liquidity provider buys)</li>
               <li>Maintain sufficient balance for transaction completion</li>
               <li>Not engage in wash trading or artificial volume creation</li>
             </ul>

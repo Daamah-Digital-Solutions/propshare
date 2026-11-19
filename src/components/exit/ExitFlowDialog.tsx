@@ -59,6 +59,7 @@ type Step = "method" | "select" | "summary" | "done";
 // below the unit price and the liquidity fee is taken from that price.
 type Rates = {
   resalePct: number | null;
+  sellerPct: number | null;
   lpDiscountPct: number | null;
   lpFeePct: number | null;
   lpMinutes: number | null;
@@ -74,6 +75,13 @@ const openFor = (minutes: number | null) =>
       ? `${minutes / 60} hours`
       : `${minutes} minutes`;
 
+/** The liquidity card's fee tag: the fee, and the discount only when there is one. */
+function lpFeeTag(r: Rates): string {
+  if (r.lpDiscountPct == null || r.lpFeePct == null) return "A liquidity fee";
+  if (r.lpDiscountPct === 0) return `${r.lpFeePct}% fee`;
+  return `${r.lpDiscountPct}% below + ${r.lpFeePct}% fee`;
+}
+
 function useExitRates(enabled: boolean): Rates {
   const { data: sec } = useQuery({
     queryKey: ["secondary", "settings"],
@@ -87,6 +95,7 @@ function useExitRates(enabled: boolean): Rates {
   });
   return {
     resalePct: sec ? Number(sec.resale_fee_pct) : null,
+    sellerPct: sec ? Number(sec.seller_fee_pct ?? 0) : null,
     lpDiscountPct: liq ? Number(liq.discount_pct) : null,
     lpFeePct: liq ? Number(liq.fee_pct) : null,
     lpMinutes: liq ? liq.ttl_minutes : null,
@@ -105,7 +114,9 @@ function exitSummary(method: ExitMethod, position: OwnedPosition, units: number,
   const gross = cents(units * position.unitPrice);
   const remaining = position.units - units;
   if (method === "secondary") {
-    return { pricePerUnit: position.unitPrice, proceeds: gross, fee: 0, net: gross, remaining };
+    // the seller fee comes out of the sale (client, 2026-11-18); the buyer's is on top
+    const fee = cents((gross * (rates.sellerPct ?? 0)) / 100);
+    return { pricePerUnit: position.unitPrice, proceeds: gross, fee, net: cents(gross - fee), remaining };
   }
   if (rates.lpDiscountPct == null || rates.lpFeePct == null) return null;
   // liquidity_service._price_for: the discounted price, then the fee on it, each to the cent
@@ -330,38 +341,34 @@ function MethodStep({
           onClick={() => onSelect("secondary")}
           icon={ArrowRightLeft}
           title="Secondary Market Exit"
-          tag="Your price · no fee for you"
+          tag="Your price · a small seller fee"
           accent="from-primary to-accent"
           bullets={[
             "List your units on the secondary market",
-            "You are paid in full when an investor buys them",
-            `No fee for you: the buyer pays the ${pct(rates.resalePct)}resale fee`,
+            "You are paid when an investor buys them",
+            `A ${pct(rates.sellerPct)}seller fee is taken from the sale; the buyer pays a ${pct(rates.resalePct)}purchase fee on top`,
             "You can cancel the listing while it is unsold",
           ]}
           eta={SETTLEMENT.secondary}
-          fee="No seller fee"
+          fee={rates.sellerPct == null ? "A seller fee" : `${rates.sellerPct}% seller fee`}
         />
         <MethodCard
           active={selected === "liquidity"}
           onClick={() => onSelect("liquidity")}
           icon={Zap}
           title="Liquidity Provider Exit"
-          tag="Faster · below the unit price"
+          tag="Faster · paid at once"
           accent="from-accent via-primary to-accent"
           bullets={[
-            rates.lpDiscountPct == null
-              ? "A liquidity provider buys below the unit price"
+            rates.lpDiscountPct == null || rates.lpDiscountPct === 0
+              ? "A liquidity provider buys your units at their value"
               : `A liquidity provider buys at the unit price less ${rates.lpDiscountPct}%`,
             `A ${pct(rates.lpFeePct)}liquidity fee is taken from that price`,
             "Paid to your wallet as soon as a provider funds it",
             `The request stays open for ${openFor(rates.lpMinutes)}`,
           ]}
           eta={SETTLEMENT.liquidity}
-          fee={
-            rates.lpDiscountPct == null || rates.lpFeePct == null
-              ? "Below the unit price + a fee"
-              : `${rates.lpDiscountPct}% below + ${rates.lpFeePct}% fee`
-          }
+          fee={lpFeeTag(rates)}
         />
       </div>
 
@@ -628,7 +635,9 @@ function SelectStep({
               label="Fee"
               value={
                 method === "secondary"
-                  ? "None for you"
+                  ? rates.sellerPct == null
+                    ? "A seller fee"
+                    : `${rates.sellerPct}% of the sale`
                   : rates.lpFeePct == null
                     ? "On the price"
                     : `${rates.lpFeePct}% of the price`
@@ -714,8 +723,8 @@ function SummaryStep({
         <Row label="Estimated proceeds" value={money(summary.proceeds)} />
         {method === "secondary" ? (
           <Row
-            label="Exit fee"
-            value={rates.resalePct == null ? "None (the buyer pays it)" : `None (the buyer pays ${rates.resalePct}%)`}
+            label={rates.sellerPct == null ? "Seller fee" : `Seller fee (${rates.sellerPct}%)`}
+            value={summary.fee > 0 ? `−${money(summary.fee)}` : money(0)}
           />
         ) : (
           <Row

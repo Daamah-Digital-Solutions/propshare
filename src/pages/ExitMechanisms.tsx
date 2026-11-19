@@ -188,7 +188,7 @@ export default function ExitMechanisms() {
               </p>
 
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <Stat label="Liquidity fees" value="1.8% – 2.5%" />
+                <Stat label="Liquidity fee (seller)" value="1.5%" />
                 <Stat label="Settlement" value="Real-time" valueClass="text-primary" />
                 <Stat label="Liquidity available" value="$1.25M" />
                 <Stat label="Pricing" value="Provider-quoted" />

@@ -157,6 +157,7 @@ async def liquidity_settings(session: SessionDep, principal: PrincipalDep):
     return LiquiditySettingsOut(
         discount_pct=str(sett["discount_pct"]),
         fee_pct=str(sett["fee_pct"]),
+        fee_share_pct=str(sett["fee_share_pct"]),
         ttl_minutes=int(sett["ttl_minutes"]),
         band_pct=str(sett["band_pct"]),
         passive_enabled=bool(sett["passive_enabled"]),

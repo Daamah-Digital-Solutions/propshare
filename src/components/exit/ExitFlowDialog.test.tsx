@@ -25,7 +25,14 @@ vi.mock("@/lib/api", async (orig) => {
     secondaryApi: {
       settings: async () => {
         if (!rates.signedIn) throw new Error("401");
-        return { resale_fee_pct: "1.0", lockup_days: 0, price_min_pct: null, price_max_pct: null };
+        return {
+          resale_fee_pct: "1.5",
+          seller_fee_pct: "0.5",
+          lp_fee_share_pct: "0.5",
+          lockup_days: 0,
+          price_min_pct: null,
+          price_max_pct: null,
+        };
       },
       positions: () => positions(),
       create: (...a: unknown[]) => createListing(...a),
@@ -86,7 +93,9 @@ describe("ExitFlowDialog", () => {
 
   it("states the platform's real rates for each way out", async () => {
     mount();
-    expect(await screen.findByText("No fee for you: the buyer pays the 1% resale fee")).toBeInTheDocument();
+    expect(
+      await screen.findByText("A 0.5% seller fee is taken from the sale; the buyer pays a 1.5% purchase fee on top"),
+    ).toBeInTheDocument();
     expect(screen.getByText("A liquidity provider buys at the unit price less 5%")).toBeInTheDocument();
     expect(screen.getByText("A 2% liquidity fee is taken from that price")).toBeInTheDocument();
     expect(screen.getByText("The request stays open for 24 hours")).toBeInTheDocument();
@@ -94,19 +103,19 @@ describe("ExitFlowDialog", () => {
     expect(document.body.textContent).not.toMatch(/2\.5%|3\.5%|T\+3/);
   });
 
-  it("a secondary sale pays the seller in full: the fee is the buyer's", async () => {
+  it("a secondary sale pays the seller less the 0.5% seller fee; the buyer's fee is on top", async () => {
     createListing.mockResolvedValue({ listing_id: "lst-1" });
     mount();
     fireEvent.click(await screen.findByText("Secondary Market Exit"));
     fireEvent.click(await screen.findByText("Creek Tower"));
     // 25 of the 100 units at $110
     expect(await screen.findByText("You would receive")).toBeInTheDocument();
-    expect(screen.getByText("$2,750.00")).toBeInTheDocument();
-    expect(screen.getByText("None for you")).toBeInTheDocument();
+    expect(screen.getByText("$2,736.25")).toBeInTheDocument(); // 2,750 less 13.75
+    expect(screen.getByText("0.5% of the sale")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
-    expect(await screen.findByText("None (the buyer pays 1%)")).toBeInTheDocument();
+    expect(await screen.findByText("Seller fee (0.5%)")).toBeInTheDocument();
     const net = screen.getByText("Net to wallet").parentElement!;
-    expect(net).toHaveTextContent("$2,750.00");
+    expect(net).toHaveTextContent("$2,736.25");
     fireEvent.click(screen.getByRole("button", { name: /confirm exit request/i }));
     await vi.waitFor(() =>
       expect(createListing).toHaveBeenCalledWith({ property_id: "prop-1", units: 25, price_per_unit: 110 }),
@@ -144,8 +153,10 @@ describe("ExitFlowDialog", () => {
   it("still reads as sentences when the rates cannot be loaded (a visitor)", async () => {
     rates.signedIn = false;
     mount();
-    expect(await screen.findByText("No fee for you: the buyer pays the resale fee")).toBeInTheDocument();
-    expect(screen.getByText("A liquidity provider buys below the unit price")).toBeInTheDocument();
+    expect(
+      await screen.findByText("A seller fee is taken from the sale; the buyer pays a purchase fee on top"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("A liquidity provider buys your units at their value")).toBeInTheDocument();
     expect(screen.getByText("A liquidity fee is taken from that price")).toBeInTheDocument();
     expect(screen.getByText("The request stays open for a limited time")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/—%|the — |less —/);

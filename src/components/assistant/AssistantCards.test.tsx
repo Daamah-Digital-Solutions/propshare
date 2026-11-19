@@ -294,7 +294,7 @@ describe("document cards (client meeting 2026-10-01: 'give me the PDF here')", (
         heading: "Creek Tower Installment Suite",
         rows: [
           ["Units", "20"],
-          ["Share of the property", "0.04762%"],
+          ["Share of the SPV", "0.04762%"],
           ["Certificate number", "PSC-2026-K7M2Q9XA"],
           ["Verification code", "Xq3vN8bKp2LmR5tY7wZa1c"],
         ],
@@ -323,7 +323,7 @@ describe("document cards (client meeting 2026-10-01: 'give me the PDF here')", (
       </MemoryRouter>,
     );
     const card = screen.getByTestId("document-card");
-    expect(card).toHaveTextContent("Share of the property0.04762%");
+    expect(card).toHaveTextContent("Share of the SPV0.04762%");
     expect(card).toHaveTextContent("Certificate numberPSC-2026-K7M2Q9XA");
     expect(card).toHaveTextContent("Verification codeXq3vN8bKp2LmR5tY7wZa1c");
     fireEvent.click(screen.getAllByRole("button", { name: /certificate \(pdf\)/i })[1]);

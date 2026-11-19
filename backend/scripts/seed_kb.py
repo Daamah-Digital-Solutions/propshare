@@ -151,12 +151,14 @@ open a support ticket with the reference for a person to follow up.""",
 summary, so the total you see is the total you pay. The kinds of fees on the platform:
 - a platform fee when buying units, added on top of the units' price;
 - an annual management fee on income-generating properties, deducted before distributions;
-- a resale fee on a secondary-market trade, paid by the buyer on top of the price (the seller
-  receives the price in full); when an installment position is sold it is calculated on the
-  amount the buyer pays the seller;
+- secondary-market fees: the buyer pays a fee on top of the price and the seller a smaller fee
+  taken from the sale; when an installment position is sold they are calculated on the amount
+  the buyer pays the seller;
 - an installment fee on plans, added to the down payment and to each instalment and shown in
   the schedule;
-- a liquidity-market discount/fee when exiting instantly through a liquidity provider.
+- a seller fee when exiting instantly through a liquidity provider, who pays the value of the
+  units. The provider pays no purchase fee, and no seller fee when it resells those units; from
+  each of the two deals it gets a share of the fee the other side pays.
 Some properties or programmes carry a discount (for example reinvesting distributions).
 The current rates are platform settings: the assistant reads them live (get_platform_settings)
 and the Fees page and every checkout show them. Fee history is visible in your transactions.""",
@@ -607,10 +609,12 @@ statement" تنزّل للفترة التي تختارها، بصيغة PDF أو
 تدفعه. أنواع الرسوم في المنصة:
 - رسوم منصة عند شراء الوحدات، تُضاف على سعر الوحدات؛
 - رسوم إدارة سنوية على العقارات المدرّة للدخل، تُخصم قبل التوزيعات؛
-- رسوم إعادة بيع على صفقة السوق الثانوي، يدفعها المشتري فوق السعر (البائع يستلم السعر كاملًا)؛
-  وعند بيع مركز أقساط تُحسب على المبلغ الذي يدفعه المشتري للبائع؛
+- رسوم السوق الثانوي: يدفع المشتري رسومًا فوق السعر، ويدفع البائع رسومًا أقل تُقتطع من قيمة
+  البيع؛ وعند بيع مركز أقساط تُحسب على المبلغ الذي يدفعه المشتري للبائع؛
 - رسوم أقساط على الخطط، تُضاف للدفعة الأولى ولكل قسط وتظهر في الجدول؛
-- خصم/رسوم سوق السيولة عند الخروج الفوري عبر مزوّد سيولة.
+- رسوم على البائع عند الخروج الفوري عبر مزوّد سيولة، الذي يدفع قيمة الحصص. لا يدفع مزود
+  السيولة رسوم شراء، ولا رسوم بائع عند إعادة بيع هذه الحصص، ويحصل من كل صفقة من الصفقتين على
+  حصة من الرسوم التي يدفعها الطرف الآخر.
 بعض العقارات أو البرامج تحمل خصمًا (مثل إعادة استثمار التوزيعات). النسب الحالية إعدادات في
 المنصة: يقرأها المساعد مباشرة (get_platform_settings) وتعرضها صفحة الرسوم وكل عملية شراء. سجل
 الرسوم ظاهر في معاملاتك.""",

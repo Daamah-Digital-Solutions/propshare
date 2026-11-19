@@ -57,6 +57,7 @@ TYPE_LABELS = {
     "gift": "Gift",
     "estate_transfer": "Beneficiary transfer",
     "transfer": "Transfer",
+    "lp_fee_share": "Liquidity provider fee share",
 }
 STATUS_LABELS = {
     "completed": "Completed",

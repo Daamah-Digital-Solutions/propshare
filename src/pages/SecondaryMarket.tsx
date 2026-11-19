@@ -109,7 +109,7 @@ const SecondaryMarket = () => {
     queryFn: () => secondaryApi.mine(),
   });
 
-  const feePct = settings ? Number(settings.resale_fee_pct) : 1.0;
+  const feePct = settings ? Number(settings.resale_fee_pct) : 1.5;
 
   const listings = useMemo(() => {
     let rows = listingsData?.items ?? [];
@@ -393,8 +393,8 @@ const SecondaryMarket = () => {
                                       </div>
 
                                       <p className="text-xs text-muted-foreground">
-                                        The seller receives the full unit price; the purchase fee is
-                                        charged on top. Paid instantly from your wallet balance.
+                                        The purchase fee is charged on top of the price. Paid instantly
+                                        from your wallet balance.
                                       </p>
 
                                       <Button

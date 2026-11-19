@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import write_audit
 from app.core.errors import AppError
-from app.models import AuditLog, Investment, Property, Wallet
+from app.models import AuditLog, Investment, Property, SecondaryListing, Wallet
 from app.models.base import InvestmentStatus, PaymentMethod, PropertyStatus, TransactionType
 from app.models.investments import OwnershipLedger
 from app.services import (
@@ -1010,7 +1010,21 @@ async def portfolio_summary(session: AsyncSession, user_id: uuid.UUID) -> dict:
             ),
         )
     )
-    sold = decimal.Decimal(sold or 0) - decimal.Decimal(exit_fees or 0)
+    # 0045: a secondary sale takes the seller fee as its own line, and a provider reselling
+    # its LP-market units gets its share of the buyer's fee: both belong to what it brought
+    my_listings = select(SecondaryListing.id).where(SecondaryListing.seller_id == user_id)
+    sale_lines = await session.scalar(
+        select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+            Transaction.user_id == user_id,
+            Transaction.type.in_((TransactionType.fee, TransactionType.lp_fee_share)),
+            Transaction.reference_id.in_(my_listings),
+        )
+    )
+    sold = (
+        decimal.Decimal(sold or 0)
+        - decimal.Decimal(exit_fees or 0)
+        + decimal.Decimal(sale_lines or 0)
+    )
     wallet = (
         await session.execute(select(Wallet).where(Wallet.user_id == user_id))
     ).scalar_one_or_none()

@@ -70,6 +70,7 @@ from app.models.investments import OwnershipLedger
 from app.services import (
     certificate_service,
     installment_service,
+    market_fees,
     notification_service,
     price_service,
     settings_service,
@@ -337,6 +338,8 @@ async def create_listing(
         units_remaining=units,
         price_per_unit=price,
         status="active",
+        # units the seller bought as a liquidity provider sell first, under its fees (0045)
+        lp_units=min(units, await lp_units_free(session, seller_id, property_id)),
     )
     session.add(listing)
     await session.flush()
@@ -495,6 +498,8 @@ async def create_position_listing(
         units_remaining=units,
         price_per_unit=price,
         status="active",
+        # a plan the seller bought as a liquidity provider resells under its fees (0045)
+        lp_units=units if await plan_bought_as_lp(session, seller_id, plan.id) else 0,
     )
     session.add(listing)
     await session.flush()
@@ -566,8 +571,10 @@ async def _buy_position(
     cash = fig["equity"]
     if cash <= 0:  # the seller only ever pays the remainder down: a guard, not a path
         raise gone
-    resale_fee = _q(cash * fee_pct / _HUNDRED)
-    total_charged = _q(cash + resale_fee)
+    # the fees (0045) on the cash: a plan a provider bought through the LP market resells
+    # under the provider's rules
+    fees = _fees(sett, gross=cash, units=units, lp_units=units if listing.lp_units else 0)
+    resale_fee, total_charged = fees.buyer_fee, fees.total_charged
 
     # The buyer agreed to amounts on their screen. The seller may have paid an installment
     # since (more to pay now, less to take over), or the resale fee may have been changed:
@@ -623,6 +630,7 @@ async def _buy_position(
         description=f"Installment position sold — {prop.title}",
         actor_id=buyer_id,
     )
+    await _seller_fee_lines(session, seller_id, listing.id, fees, prop.title, buyer_id)
 
     now = _utcnow()
     bought_plan = plan
@@ -692,6 +700,9 @@ async def _buy_position(
         gross=cash,
         resale_fee=resale_fee,
         total_charged=total_charged,
+        seller_fee=fees.seller_fee,
+        lp_units=fees.lp_units,
+        lp_fee_share=fees.lp_fee_share,
         # the plan the buyer got: the seller's (whole), or the part's own (0042)
         plan_id=bought_plan.id,
         position_value=fig["value"],
@@ -916,12 +927,13 @@ async def buy_listing(
         raise AppError("NOT_FOUND", "Property not found", status_code=404)
 
     sett = await settings_service.get_secondary_settings(session)
-    fee_pct = decimal.Decimal(str(sett["resale_fee_pct"] or "0"))
     # Decision 2: the buyer acquires units at the CURRENT platform management-fee rate.
     buyer_fee_rate = await settings_service.get_management_fee_pct(session)
-    gross = _q(listing.price_per_unit * units)
-    resale_fee = _q(gross * fee_pct / decimal.Decimal(100))
-    total_charged = _q(gross + resale_fee)
+    # the fees (0045): the buyer's on top, the seller's out of the proceeds; units a provider
+    # bought through the LP market sell first, with no seller fee and a share of the buyer's
+    lp_take = min(units, listing.lp_units - await _lp_units_sold(session, listing.id))
+    fees = _fees(sett, gross=_q(listing.price_per_unit * units), units=units, lp_units=lp_take)
+    gross, resale_fee, total_charged = fees.gross, fees.buyer_fee, fees.total_charged
 
     # Lock order #3: both wallets, sorted by user_id (deadlock-free). credit()/debit()
     # re-lock the same rows harmlessly inside this critical section.
@@ -944,7 +956,7 @@ async def buy_listing(
     )
     buyer_wallet.total_invested = buyer_wallet.total_invested + gross
 
-    # Credit the seller the FULL gross (the fee is buyer-side, retained as revenue).
+    # The seller is credited the gross, then pays the seller fee and gets a provider's share.
     await wallet_service.credit(
         session,
         user_id=seller_id,
@@ -954,6 +966,7 @@ async def buy_listing(
         description=f"Secondary sale — {prop.title}",
         actor_id=buyer_id,
     )
+    await _seller_fee_lines(session, seller_id, listing.id, fees, prop.title, buyer_id)
 
     # Move ownership: seller -units, buyer +units (Σ per property conserved).
     session.add(
@@ -994,6 +1007,9 @@ async def buy_listing(
         gross=gross,
         resale_fee=resale_fee,
         total_charged=total_charged,
+        seller_fee=fees.seller_fee,
+        lp_units=fees.lp_units,
+        lp_fee_share=fees.lp_fee_share,
         idempotency_key=idempotency_key,
     )
     session.add(trade)
@@ -1110,6 +1126,23 @@ async def list_my_listings(session: AsyncSession, seller_id: uuid.UUID) -> list[
             )
         ).all()
     )
+    # 0045: what the seller gets, after the seller fee (and a provider's share): the trades'
+    # own figures for what sold, today's rates for what is still listed
+    sett = await settings_service.get_secondary_settings(session)
+    sold_fees = {
+        lid: (fee, share)
+        for lid, fee, share in (
+            await session.execute(
+                select(
+                    SecondaryTrade.listing_id,
+                    func.sum(SecondaryTrade.seller_fee),
+                    func.sum(SecondaryTrade.lp_fee_share),
+                )
+                .where(SecondaryTrade.seller_id == seller_id)
+                .group_by(SecondaryTrade.listing_id)
+            )
+        ).all()
+    }
     out: list[dict] = []
     for listing, prop in rows:
         position = (
@@ -1122,6 +1155,30 @@ async def list_my_listings(session: AsyncSession, seller_id: uuid.UUID) -> list[
             row["cash"] = str(sold_for[listing.id])
         if listing.plan_id is not None and listing.id in sold_for:
             row["sold_cash"] = str(sold_for[listing.id])
+        if listing.status == "active":
+            base = (
+                _q(decimal.Decimal(str(row["cash"])))
+                if row.get("cash") is not None
+                else _q(listing.price_per_unit * listing.units_for_sale)
+            )
+            est = _fees(
+                sett,
+                gross=base,
+                units=listing.units_for_sale,
+                lp_units=listing.lp_units,
+            )
+            row["seller_fee"], row["seller_net"] = str(est.seller_fee), str(est.seller_net)
+        elif listing.id in sold_fees:
+            fee, share = sold_fees[listing.id]
+            base = (
+                decimal.Decimal(str(row["cash"]))
+                if row.get("cash") is not None
+                else _q(listing.price_per_unit * (listing.units_for_sale - listing.units_remaining))
+            )
+            row["seller_fee"] = str(_q(decimal.Decimal(fee or 0)))
+            row["seller_net"] = str(
+                _q(base - decimal.Decimal(fee or 0) + decimal.Decimal(share or 0))
+            )
         out.append(row)
     return out
 
@@ -1184,6 +1241,8 @@ async def my_positions(session: AsyncSession, user_id: uuid.UUID) -> list[dict]:
                 "listing_id": listing_id,
                 "blocked": blocked,
                 "lockup_until": unlock,
+                # bought as a liquidity provider: resold with no seller fee (0045)
+                "bought_as_lp": await plan_bought_as_lp(session, user_id, plan.id),
             }
         )
     return out
@@ -1262,6 +1321,11 @@ async def my_holdings(session: AsyncSession, user_id: uuid.UUID) -> list[dict]:
                 "listed_units": reserved - pledged,
                 "pledged_units": pledged,
                 "sellable_units": max(0, held - reserved),
+                # of those, units bought as a liquidity provider: they sell first, with no
+                # seller fee and a share of the buyer's fee (0045)
+                "lp_units": min(
+                    max(0, held - reserved), await lp_units_free(session, user_id, pid)
+                ),
                 "unit_price": str(unit_price),
                 "held_back": held_back,
                 # units vested under a running installment plan: sold with the plan, as a
@@ -1298,6 +1362,8 @@ def _listing_result(
         "price_per_unit": str(listing.price_per_unit),
         "unit_price_ref": str(prop.unit_price) if prop else None,
         "status": listing.status,
+        # units sold under a liquidity provider's fees (0045)
+        "lp_units": listing.lp_units or 0,
         "created_at": listing.created_at.isoformat() if listing.created_at else None,
     }
 
@@ -1312,6 +1378,9 @@ def _trade_result(trade: SecondaryTrade) -> dict:
         "gross": str(trade.gross),
         "resale_fee": str(trade.resale_fee),
         "total_charged": str(trade.total_charged),
+        # 0045: the seller's fee, and a provider-seller's share of the buyer's fee
+        "seller_fee": _money(trade.seller_fee),
+        "lp_fee_share": _money(trade.lp_fee_share),
         "created_at": trade.created_at.isoformat() if trade.created_at else None,
         # the sale of an installment position: ``gross`` is the cash paid to the seller
         "plan_id": trade.plan_id,
@@ -1324,3 +1393,120 @@ def _trade_result(trade: SecondaryTrade) -> dict:
 
 def _str(value: decimal.Decimal | None) -> str | None:
     return str(value) if value is not None else None
+
+
+# --- market fees (0045, client 2026-11-18) ------------------------------------------------ #
+def _fees(
+    sett: dict, *, gross: decimal.Decimal, units: int, lp_units: int
+) -> market_fees.SecondaryFees:
+    return market_fees.secondary_fees(
+        gross=gross,
+        units=units,
+        lp_units=lp_units,
+        buyer_pct=decimal.Decimal(str(sett["resale_fee_pct"] or "0")),
+        seller_pct=decimal.Decimal(str(sett.get("seller_fee_pct") or "0")),
+        share_pct=decimal.Decimal(str(sett.get("lp_fee_share_pct") or "0")),
+    )
+
+
+async def _seller_fee_lines(
+    session: AsyncSession,
+    seller_id: uuid.UUID,
+    listing_id: uuid.UUID,
+    fees: market_fees.SecondaryFees,
+    title: str,
+    actor_id: uuid.UUID,
+) -> None:
+    """The seller pays the seller fee out of the proceeds; a provider reselling its LP-market
+    units gets its share of the buyer's fee instead (once, with the trade)."""
+    if fees.seller_fee > 0:
+        await wallet_service.debit(
+            session,
+            user_id=seller_id,
+            reference_id=listing_id,
+            line_items=[(TransactionType.fee, fees.seller_fee, f"Seller fee — {title}")],
+            actor_id=actor_id,
+        )
+    if fees.lp_fee_share > 0:
+        await wallet_service.credit(
+            session,
+            user_id=seller_id,
+            amount=fees.lp_fee_share,
+            reference_id=listing_id,
+            tx_type=TransactionType.lp_fee_share,
+            description=f"Your share of the buyer's fee (liquidity provider) — {title}",
+            actor_id=actor_id,
+        )
+
+
+async def _lp_units_sold(session: AsyncSession, listing_id: uuid.UUID) -> int:
+    return int(
+        await session.scalar(
+            select(func.coalesce(func.sum(SecondaryTrade.lp_units), 0)).where(
+                SecondaryTrade.listing_id == listing_id
+            )
+        )
+        or 0
+    )
+
+
+async def lp_units_free(session: AsyncSession, user_id: uuid.UUID, property_id: uuid.UUID) -> int:
+    """Units of this property the user bought as a liquidity provider through the LP market
+    and has not yet sold or listed on the secondary market (they sell first, under the
+    provider's fees). Never more than the units the user holds now."""
+    from app.models.liquidity import LpPosition
+
+    bought = int(
+        await session.scalar(
+            select(func.coalesce(func.sum(LpPosition.units), 0)).where(
+                LpPosition.lp_user_id == user_id,
+                LpPosition.property_id == property_id,
+                LpPosition.plan_id.is_(None),
+            )
+        )
+        or 0
+    )
+    sold = int(
+        await session.scalar(
+            select(func.coalesce(func.sum(SecondaryTrade.lp_units), 0)).where(
+                SecondaryTrade.seller_id == user_id,
+                SecondaryTrade.property_id == property_id,
+                SecondaryTrade.plan_id.is_(None),
+            )
+        )
+        or 0
+    )
+    listings = (
+        await session.execute(
+            select(SecondaryListing.id, SecondaryListing.lp_units).where(
+                SecondaryListing.seller_id == user_id,
+                SecondaryListing.property_id == property_id,
+                SecondaryListing.status == "active",
+                SecondaryListing.plan_id.is_(None),
+                SecondaryListing.lp_units > 0,
+            )
+        )
+    ).all()
+    listed = 0
+    for lid, lp in listings:
+        listed += max(0, int(lp) - await _lp_units_sold(session, lid))
+    holding = await _net_holding(session, user_id, property_id)
+    return max(0, min(bought - sold - listed, holding))
+
+
+async def plan_bought_as_lp(session: AsyncSession, user_id: uuid.UUID, plan_id: uuid.UUID) -> bool:
+    """Did the user get this installment plan as a liquidity provider (LP market)?"""
+    from app.models.liquidity import LpPosition
+
+    return bool(
+        await session.scalar(
+            select(func.count()).where(
+                LpPosition.lp_user_id == user_id, LpPosition.plan_id == plan_id
+            )
+        )
+    )
+
+
+def _money(value: decimal.Decimal | None) -> str:
+    """A fee as cents, zero included ("0.00", never "0")."""
+    return str(_q(decimal.Decimal(value or 0)))

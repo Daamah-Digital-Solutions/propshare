@@ -124,6 +124,13 @@ class LpPosition(Base):
     unit_price_snapshot: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
     discount_pct: Mapped[decimal.Decimal | None] = mapped_column(Numeric(6, 3))
     spread_at_entry: Mapped[decimal.Decimal | None] = mapped_column(Numeric(15, 2))
+    # 0045: the seller's fee of this fill, and the provider's share of it
+    liquidity_fee: Mapped[decimal.Decimal] = mapped_column(
+        Numeric(15, 2), nullable=False, server_default="0"
+    )
+    lp_fee_share: Mapped[decimal.Decimal] = mapped_column(
+        Numeric(15, 2), nullable=False, server_default="0"
+    )
     # 0042: the installment plan the provider took (a new part, or the whole plan)
     plan_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("installment_plans.id")

@@ -551,3 +551,23 @@ async def test_a_transfer_waits_for_nothing_overdue(client, db, asession):
     opts = (await client.get("/api/v1/transfers/options", headers=_h(sender_tok))).json()
     assert opts["plans"][0]["overdue_amount"] == "145.60"
     await _reconciles(asession)
+
+
+@pytest.fixture(autouse=True)
+def _pre_0045_fees(_clean, db):
+    """The trading mechanics here are pinned at the rates they were written with: buyer 1%,
+    no seller fee, a 3% liquidity discount and a 2% fee, no provider share. The market fees
+    of 0045 (client, 2026-11-18) have their own tests (test_market_fees_db)."""
+    for key, value in (
+        ("secondary_resale_fee_pct", "1.0"),
+        ("secondary_seller_fee_pct", "0"),
+        ("liquidity_fee_pct", "2.0"),
+        ("lp_fee_share_pct", "0"),
+        ("liquidity_discount_pct", "3.0"),
+    ):
+        db(
+            "INSERT INTO platform_settings (key, value) VALUES (:k, :v) "
+            "ON CONFLICT (key) DO UPDATE SET value = :v",
+            k=key,
+            v=value,
+        )

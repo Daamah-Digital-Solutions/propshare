@@ -51,6 +51,7 @@ from app.models.base import TransactionType
 from app.models.investments import OwnershipLedger
 from app.services import (
     installment_service,
+    market_fees,
     notification_service,
     secondary_service,
     settings_service,
@@ -362,6 +363,8 @@ async def fund_exit_request(
             line_items=[(TransactionType.fee, liquidity_fee, "Liquidity fee")],
             actor_id=lp_user_id,
         )
+    # the provider's share of the seller's fee (0045), credited once with the deal
+    share = await _credit_lp_share(session, lp_user_id, req.id, lp_price, liquidity_fee, prop.title)
 
     # Move ownership seller -> LP (Σ/property conserved). LP's acquired row carries the
     # platform management-fee rate at acquisition (Decision 2).
@@ -405,6 +408,8 @@ async def fund_exit_request(
         unit_price_snapshot=req.unit_price_snapshot,
         discount_pct=req.discount_pct_snapshot,
         spread_at_entry=_q(fill["gross"] - lp_price),
+        liquidity_fee=liquidity_fee,
+        lp_fee_share=share,
     )
     session.add(position)
     await session.flush()
@@ -924,6 +929,8 @@ async def _fund_plan_request(
             line_items=[(TransactionType.fee, liquidity_fee, "Liquidity fee")],
             actor_id=lp_user_id,
         )
+    # the provider's share of the seller's fee (0045), credited once with the deal
+    share = await _credit_lp_share(session, lp_user_id, req.id, cash, liquidity_fee, prop.title)
 
     whole = units == plan.units_total
     taken = await installment_service.take_plan_units(
@@ -957,6 +964,8 @@ async def _fund_plan_request(
         discount_pct=req.discount_pct_snapshot,
         spread_at_entry=_q(fill["gross"] - fill["lp_value"]),
         plan_id=taken.id,
+        liquidity_fee=liquidity_fee,
+        lp_fee_share=share,
     )
     session.add(position)
     await session.flush()
@@ -1018,3 +1027,29 @@ async def _fund_plan_request(
         email_category="investment_updates",
     )
     return _position_result(position)
+
+
+async def _credit_lp_share(
+    session: AsyncSession,
+    lp_user_id: uuid.UUID,
+    request_id: uuid.UUID,
+    deal: decimal.Decimal,
+    seller_fee: decimal.Decimal,
+    title: str,
+) -> decimal.Decimal:
+    """The provider's share of the seller's fee (client 2026-11-18: 0.5% of the deal out of the
+    1.5% the seller pays), credited to the provider's wallet in the same transaction as the
+    deal, so once per completed deal. Never more than the fee itself."""
+    rates = await settings_service.get_liquidity_settings(session)
+    share = min(market_fees.pct_of(deal, decimal.Decimal(rates["fee_share_pct"])), seller_fee)
+    if share > 0:
+        await wallet_service.credit(
+            session,
+            user_id=lp_user_id,
+            amount=share,
+            reference_id=request_id,
+            tx_type=TransactionType.lp_fee_share,
+            description=f"Your share of the seller's fee (liquidity provider) — {title}",
+            actor_id=lp_user_id,
+        )
+    return share

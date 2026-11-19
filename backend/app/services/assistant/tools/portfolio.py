@@ -125,7 +125,8 @@ class SalePrepOut(ToolOutput):
     price_per_unit: str
     reference_price: str  # the property's unit price
     vs_reference_pct: str  # asking price against the reference, e.g. "10.00" or "-5.00"
-    you_receive: str  # units x price: the resale fee is paid by the buyer, on top
+    you_receive: str  # units x price less the seller fee (0045); the buyer's fee is on top
+    seller_fee: str = "0.00"
     resale_fee_pct: str
     buyer_fee: str
     buyer_pays: str
@@ -233,8 +234,12 @@ async def _prepare_sale(session, ctx: AgentContext, args) -> dict:
     if kyc := kyc_note(ctx.kyc_status):
         blocking.append(kyc)
 
-    gross = _q(price * units)
-    buyer_fee = _q(gross * fee_pct / decimal.Decimal(100))
+    # the fees (0045): the buyer's on top, the seller's out of the sale; units bought as a
+    # liquidity provider sell first, with no seller fee and a share of the buyer's
+    fees = secondary_service._fees(
+        sett, gross=_q(price * units), units=units, lp_units=int(held.get("lp_units") or 0)
+    )
+    gross, buyer_fee = fees.gross, fees.buyer_fee
     vs_reference = _q((price - reference) / reference * 100) if reference else decimal.Decimal(0)
     return {
         "property_title": prop.title,
@@ -244,7 +249,8 @@ async def _prepare_sale(session, ctx: AgentContext, args) -> dict:
         "price_per_unit": f"{price:.2f}",
         "reference_price": f"{reference:.2f}",
         "vs_reference_pct": f"{vs_reference:.2f}",
-        "you_receive": f"{gross:.2f}",
+        "you_receive": f"{fees.seller_net:.2f}",
+        "seller_fee": f"{fees.seller_fee:.2f}",
         "resale_fee_pct": f"{fee_pct.normalize():f}",
         "buyer_fee": f"{buyer_fee:.2f}",
         "buyer_pays": f"{(gross + buyer_fee):.2f}",
@@ -353,7 +359,14 @@ async def _prepare_position_sale(
             f"{plan.units_total - units} unit(s), and each of your remaining installments goes "
             "down by the buyer's share."
         )
-    buyer_fee = _q(max(cash, decimal.Decimal(0)) * fee_pct / decimal.Decimal(100))
+    lp_plan = await secondary_service.plan_bought_as_lp(session, ctx.user_id, plan.id)
+    fees = secondary_service._fees(
+        sett,
+        gross=max(cash, decimal.Decimal(0)),
+        units=units,
+        lp_units=units if lp_plan else 0,
+    )
+    buyer_fee = fees.buyer_fee
     vs_reference = _q((price - reference) / reference * 100) if reference else decimal.Decimal(0)
     return {
         "property_title": prop.title,
@@ -363,7 +376,8 @@ async def _prepare_position_sale(
         "price_per_unit": f"{price:.2f}",
         "reference_price": f"{reference:.2f}",
         "vs_reference_pct": f"{vs_reference:.2f}",
-        "you_receive": f"{cash:.2f}",
+        "you_receive": f"{fees.seller_net if cash > 0 else cash:.2f}",
+        "seller_fee": f"{fees.seller_fee:.2f}",
         "resale_fee_pct": f"{fee_pct.normalize():f}",
         "buyer_fee": f"{buyer_fee:.2f}",
         "buyer_pays": f"{(cash + buyer_fee):.2f}",

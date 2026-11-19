@@ -73,6 +73,10 @@ class PositionOut(BaseModel):
 
 
 class ListingOut(BaseModel):
+    # 0045 (the seller's own listings): the seller fee and what the seller gets
+    seller_fee: str | None = None
+    seller_net: str | None = None
+    lp_units: int = 0
     listing_id: uuid.UUID
     property_id: str | None
     property_title: str | None
@@ -116,6 +120,8 @@ class TradeOut(BaseModel):
     gross: str
     resale_fee: str
     total_charged: str
+    seller_fee: str = "0"
+    lp_fee_share: str = "0"
     created_at: str | None
     # the sale of an installment position: ``gross`` is the cash paid to the seller
     plan_id: uuid.UUID | None = None
@@ -136,6 +142,8 @@ class HoldingOut(BaseModel):
     # held for Nova Finance until staff release the pledge (0032)
     pledged_units: int = 0
     sellable_units: int
+    # of the sellable units, those bought as a liquidity provider (sold under its fees)
+    lp_units: int = 0
     unit_price: str
     # why units cannot be listed: listed | lp_exit | family_pending | gift |
     # installment_plan | pledged | transfer -> units
@@ -165,6 +173,8 @@ class MyPositionOut(PositionOut):
     listing_id: uuid.UUID | None
     blocked: str | None
     lockup_until: dt.datetime | None
+    # bought as a liquidity provider through the LP market: resold under its fees (0045)
+    bought_as_lp: bool = False
     # 0042: units of the plan that can still be sold or sent (the rest are listed, or offered
     # to a liquidity provider), and what is overdue on it (a part changes hands only without)
     free_units: int = 0
@@ -187,7 +197,9 @@ class MyPositionListOut(BaseModel):
 
 
 class SecondarySettingsOut(BaseModel):
-    resale_fee_pct: str
+    resale_fee_pct: str  # the buyer's fee
+    seller_fee_pct: str = "0"
+    lp_fee_share_pct: str = "0"
     lockup_days: int
     price_min_pct: str | None
     price_max_pct: str | None
