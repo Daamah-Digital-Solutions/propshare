@@ -20,6 +20,7 @@ const leadsMock = vi.fn();
 const inviteMock = vi.fn();
 const introduceMock = vi.fn();
 const cancelMock = vi.fn();
+const cardJoinMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   ApiError: class extends Error {},
@@ -33,6 +34,10 @@ vi.mock("@/lib/api", () => ({
     inviteClient: (...a: unknown[]) => inviteMock(...a),
     introduceListing: (...a: unknown[]) => introduceMock(...a),
     cancelLead: (...a: unknown[]) => cancelMock(...a),
+  },
+  cardsApi: {
+    waitlist: async () => ({ joined: false, card_type: null, joined_at: null }),
+    joinWaitlist: (...a: unknown[]) => cardJoinMock(...a),
   },
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -94,13 +99,24 @@ describe("BrokerDashboard", () => {
   });
 });
 
-describe("VirtualCardRequest (D9 honest-disabled)", () => {
-  it("shows a not-yet-available state and disables the request button", () => {
-    render(<VirtualCardRequest role="broker" />);
-    expect(screen.getByText(/not yet available/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Request Virtual Card/i })).toBeDisabled();
+describe("VirtualCardRequest (no card issued; join the waitlist)", () => {
+  it("reads Coming soon and joins the waitlist for the broker's card", async () => {
+    cardJoinMock.mockResolvedValue({ joined: true, card_type: "broker", joined_at: "2026-11-19T10:00:00Z" });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <VirtualCardRequest role="broker" />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByText(/Request Virtual Card/i)).toBeNull();
+    expect(screen.getByRole("heading", { name: "Coming soon · Join the Waitlist" })).toBeInTheDocument();
     // no fake card numbers are rendered
     expect(screen.queryByText(/••••/)).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: "Coming soon · Join the Waitlist" }));
+    expect(screen.getAllByRole("radio")).toHaveLength(1); // the broker's own card
+    expect(screen.getByRole("radio", { name: /Broker card/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("card-waitlist-join"));
+    await waitFor(() => expect(cardJoinMock).toHaveBeenCalledWith("broker"));
   });
 });
 

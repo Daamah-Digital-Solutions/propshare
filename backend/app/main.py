@@ -21,6 +21,7 @@ from app.api.routes import (
     assistant,
     auth,
     broker,
+    cards,
     certificates,
     developer_updates,
     documents,
@@ -138,6 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(wallet.router)
     app.include_router(payments.router)
     app.include_router(investments.router)
+    app.include_router(cards.router)
     app.include_router(certificates.router)
     app.include_router(withdrawals.router)
     app.include_router(secondary.router)

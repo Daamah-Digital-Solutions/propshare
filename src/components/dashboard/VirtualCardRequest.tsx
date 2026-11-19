@@ -1,7 +1,7 @@
-import { CreditCard, Plus, Sparkles, Clock } from "lucide-react";
+import { CreditCard, Sparkles, Clock } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { CardWaitlistButton } from "./CardWaitlistDialog";
 
 export type VirtualCardRole = "developer" | "owner" | "broker" | "liquidity";
 
@@ -32,6 +32,8 @@ interface Props {
  * Virtual cards are deferred out of v1 (D9). This surface degrades honestly to a
  * "not yet available" state across ALL roles — it never fakes a successful card
  * issuance. The real feature (issuance, funding, spend controls) is a later phase.
+ * Client, 2026-11-19: the button reads "Coming soon · Join the Waitlist" and joins the waitlist
+ * for this role's card (CardWaitlistDialog); the design and the details stay as they were.
  */
 export function VirtualCardRequest({ role }: Props) {
   const copy = ROLE_COPY[role];
@@ -48,9 +50,7 @@ export function VirtualCardRequest({ role }: Props) {
           </div>
           <p className="text-sm text-muted-foreground max-w-2xl">{copy.subtitle}</p>
         </div>
-        <Button className="gap-2" disabled>
-          <Plus className="w-4 h-4" /> Request Virtual Card
-        </Button>
+        <CardWaitlistButton role={role} />
       </div>
 
       <Card className="border-dashed">
@@ -58,10 +58,10 @@ export function VirtualCardRequest({ role }: Props) {
           <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
             <Sparkles className="h-6 w-6 text-muted-foreground" />
           </div>
-          <h3 className="text-lg font-semibold">Virtual cards are not yet available</h3>
+          <h3 className="text-lg font-semibold">Coming soon · Join the Waitlist</h3>
           <p className="text-sm text-muted-foreground max-w-md">
-            Virtual card issuance and spend controls are planned for a future release. This
-            feature is not enabled yet — no cards can be issued at this time.
+            Virtual cards and spend controls are planned for a future release. Join the waitlist
+            and we will tell you as soon as you can request your card.
           </p>
         </CardContent>
       </Card>

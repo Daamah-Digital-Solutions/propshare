@@ -1,13 +1,12 @@
 import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CardWaitlistButton } from "./CardWaitlistDialog";
 import {
   CreditCard,
-  Plus,
   Eye,
   EyeOff,
   Snowflake,
@@ -28,6 +27,9 @@ import {
  * for prestige). Intentionally NOT wired to any backend: the figures below are clearly-labelled
  * sample data, no card is issued, and every control is inert. When the feature ships, this same
  * layout gets wired to real card/wallet data. (DELETE NOTHING — replaces the old placeholder.)
+ * Client, 2026-11-19: nothing here offers to issue a card any more; the header button reads
+ * "Coming soon · Join the Waitlist" and lets the investor join the waitlist for the card they
+ * want (CardWaitlistDialog). The design and the details stay as they were.
  */
 
 const CARDS = [
@@ -116,18 +118,16 @@ export const ProShareCards = () => {
           </div>
           <h2 className="text-2xl font-bold">Your Real Estate Spending Infrastructure</h2>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Issue virtual cards linked to your wallet, rental returns, and family allocations.
+            Virtual cards linked to your wallet, rental returns, and family allocations.
           </p>
         </div>
-        <Button className="gap-2" disabled>
-          <Plus className="w-4 h-4" /> Issue New Card
-        </Button>
+        <CardWaitlistButton />
       </div>
 
       {/* Honest preview note */}
       <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-2.5 text-sm text-amber-700">
-        Design preview — the figures below are sample data. Card issuance and spend controls
-        aren't live yet.
+        Design preview — the figures below are sample data. Cards are coming soon: join the
+        waitlist and we will tell you as soon as you can request yours.
       </div>
 
       {/* Stat tiles */}

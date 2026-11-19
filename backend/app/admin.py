@@ -29,6 +29,8 @@ from starlette.responses import HTMLResponse, RedirectResponse, Response
 from wtforms import SelectField
 
 from app.admin_assistant import ASSISTANT_VIEWS
+from app.admin_cards import CARD_VIEWS
+from app.admin_developers import DEVELOPER_VIEWS
 from app.admin_distribution import DISTRIBUTION_VIEWS
 from app.admin_estate import ESTATE_VIEWS
 from app.admin_leads import BROKER_LEAD_VIEWS
@@ -2151,6 +2153,8 @@ def setup_admin(app) -> Admin:
         InstallmentPaymentAdmin,
         DocumentUploadView,
         ListingEditorView,
+        *DEVELOPER_VIEWS,
+        *CARD_VIEWS,
         *OWNER_VIEWS,
         *BROKER_LEAD_VIEWS,
         *ESTATE_VIEWS,

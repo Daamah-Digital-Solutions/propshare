@@ -343,6 +343,9 @@ class SecondaryListing(Base):
     units_remaining: Mapped[int] = mapped_column(Integer, nullable=False)
     price_per_unit: Mapped[decimal.Decimal] = mapped_column(Numeric(15, 2), nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    # 0045: of the units listed, how many a liquidity provider bought through the LP market
+    # (they sell first, under the provider's fees: no seller fee, a share of the buyer's)
+    lp_units: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )
@@ -386,6 +389,9 @@ class Document(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     type: Mapped[str] = mapped_column(Text, nullable=False)
     file_url: Mapped[str] = mapped_column(Text, nullable=False)
+    # who issued it (the valuer, the insurer, the law firm) and the date on it (0043)
+    issuer: Mapped[str | None] = mapped_column(Text)
+    issued_on: Mapped[datetime.date | None] = mapped_column(Date)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )
@@ -556,6 +562,7 @@ from app.models.broker import (  # noqa: E402
     BrokerLead,
     BrokerReferral,
 )
+from app.models.cards import CardWaitlistEntry  # noqa: E402
 from app.models.certificates import InvestmentCertificate  # noqa: E402
 from app.models.compliance import AuditLog, KycWebhookEvent  # noqa: E402
 from app.models.developer_updates import (  # noqa: E402
@@ -656,6 +663,7 @@ __all__ = [
     "BrokerCode",
     "BrokerLead",
     "BrokerReferral",
+    "CardWaitlistEntry",
     "BrokerCommission",
     # notifications + email (Phase 12)
     "NotificationPreference",
