@@ -13,5 +13,7 @@ class DocumentOut(BaseModel):
     property_id: uuid.UUID | None
     title: str
     type: str
+    issuer: str | None = None
+    issued_on: dt.date | None = None
     download_url: str
     created_at: dt.datetime

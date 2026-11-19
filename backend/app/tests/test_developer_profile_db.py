@@ -60,6 +60,20 @@ def _prop(
         inv=investors,
         c=json.dumps(content),
     )
+    # the investors are the people holding units now (client letter, 2026-11-18): one each
+    for _ in range(investors):
+        uid = str(uuid.uuid4())
+        db(
+            "INSERT INTO users (id, email, full_name) VALUES (:i, :e, 'Holder')",
+            i=uid,
+            e=f"h-{uid[:8]}@x.com",
+        )
+        db(
+            "INSERT INTO ownership_ledger (user_id, property_id, units, unit_price, reason) "
+            "VALUES (:u, :p, 2, 100, 'purchase')",
+            u=uid,
+            p=pid,
+        )
     return pid
 
 
@@ -99,8 +113,14 @@ async def test_property_links_to_its_developer_and_the_profile_resolves(client, 
 @pytest.mark.asyncio
 async def test_profile_groups_public_listings_and_hides_everything_else(client, db):
     a = _prop(db, title="Tower A", developer=EMAAR, funded=10000, investors=3)
-    b = _prop(db, title="Tower B", status="funded", developer={"name": "EMAAR  properties"},
-              funded=100000, investors=40)
+    b = _prop(
+        db,
+        title="Tower B",
+        status="funded",
+        developer={"name": "EMAAR  properties"},
+        funded=100000,
+        investors=40,
+    )
     _prop(db, title="Secret Draft", status="draft", developer=EMAAR)
     _prop(db, title="Pending", status="under_review", developer=EMAAR)
     _prop(db, title="Other Dev", developer={"name": "Damac"})

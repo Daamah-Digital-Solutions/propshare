@@ -81,14 +81,14 @@ def _seed(
 
 
 def _wrapper(html: str, name: str) -> str:
-    m = re.search(rf'<div class="f" data-field="{name}"( hidden)?>', html)
+    m = re.search(rf'<div class="f(?: wide)?" data-field="{name}"( hidden)?>', html)
     assert m, f"no wrapper for {name}"
     return m.group(0)
 
 
 def _field_label(html: str, name: str) -> str:
     m = re.search(
-        rf'<div class="f" data-field="{name}"[^>]*>\s*<label[^>]*><span class="txt">([^<]*)</span>',
+        rf'<div class="f(?: wide)?" data-field="{name}"[^>]*>\s*<label[^>]*><span class="txt">([^<]*)</span>',
         html,
     )
     assert m, name

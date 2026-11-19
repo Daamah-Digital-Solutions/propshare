@@ -13,6 +13,11 @@ download route. Certificates are generated live (see ``certificate_service``), n
 
 from __future__ import annotations
 
+import base64
+import datetime as dt
+import hashlib
+import hmac
+import json
 import re
 import uuid
 
@@ -36,6 +41,7 @@ DOC_CATEGORIES: tuple[tuple[str, str], ...] = (
     ("financial", "Financial & Investment Studies"),
     ("agreement", "Agreements"),
     ("legal", "Legal Documents"),
+    ("due_diligence", "Legal Due Diligence"),
     ("insurance", "Insurance Certificates"),
     ("audit", "Audit Reports"),  # label renamed (Step 3); key kept for stored rows
     ("other", "Other Documents"),
@@ -132,6 +138,8 @@ def serialize(doc: Document) -> dict:
         "property_id": doc.property_id,
         "title": doc.title,
         "type": doc.type,
+        "issuer": doc.issuer,
+        "issued_on": doc.issued_on,
         "download_url": f"/api/v1/documents/{doc.id}/download",
         "created_at": doc.created_at,
     }
@@ -170,9 +178,12 @@ async def admin_create_property_document(
     doc_type: str,
     filename: str,
     data: bytes,
+    issuer: str | None = None,
+    issued_on: dt.date | None = None,
 ) -> Document:
     """Admin upload: publish a document for ANY property (no owner check — the /admin panel is
-    already admin-gated). Same storage + row shape as the owner path."""
+    already admin-gated). Same storage + row shape as the owner path. ``issuer`` and
+    ``issued_on`` say who issued the document and the date on it (0043)."""
     prop = await session.get(Property, prop_id)
     if prop is None:
         raise AppError("PROPERTY_NOT_FOUND", "Property not found.", status_code=404)
@@ -180,11 +191,113 @@ async def admin_create_property_document(
     safe = validate_file(filename, data)
     key = f"documents/{prop_id}/{uuid.uuid4().hex}-{safe}"
     storage.save(key, data, content_type_for(safe))
-    doc = Document(property_id=prop_id, user_id=None, title=title, type=doc_type, file_url=key)
+    doc = Document(
+        property_id=prop_id,
+        user_id=None,
+        title=title,
+        type=doc_type,
+        file_url=key,
+        issuer=(issuer or "").strip()[:200] or None,
+        issued_on=issued_on,
+    )
     session.add(doc)
     # flush (not commit): the caller owns the transaction — the API request session commits
     # at teardown and the admin panel's session_scope() commits on exit. Committing here
     # closed that outer transaction and made the panel's refresh()/exit blow up with 500.
+    await session.flush()
+    await session.refresh(doc)
+    return doc
+
+
+# --- files uploaded the moment they are picked (client letter, 2026-11-18, as on BRX) --- #
+# The Listing Editor sends each file as soon as it is chosen; it is checked and stored at once
+# and the page gets a signed token for it. Nothing is listed until the rows are saved: the
+# save turns each token into a document with its title (in every language), category, issuer
+# and date. A token names only a file of its own listing, and cannot be made up.
+
+
+def _stage_sig(payload: str) -> str:
+    key = ("staged-document|" + get_settings().jwt_secret).encode()
+    return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def stage_property_file(prop_id: uuid.UUID, filename: str, data: bytes) -> dict:
+    """Check and store one picked file of a listing; returns {token, name, size, image}."""
+    safe = validate_file(filename, data)
+    key = f"documents/{prop_id}/{uuid.uuid4().hex}-{safe}"
+    storage.save(key, data, content_type_for(safe))
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"p": str(prop_id), "k": key, "n": filename[:200]}).encode()
+    ).decode()
+    return {
+        "token": f"{payload}.{_stage_sig(payload)}",
+        "name": filename,
+        "size": len(data),
+        "image": content_type_for(safe).startswith("image/"),
+    }
+
+
+def read_stage_token(token: str, prop_id: uuid.UUID) -> tuple[str, str]:
+    """(storage key, original file name) of a staged file of this listing."""
+    payload, _, sig = str(token or "").partition(".")
+    if not payload or not hmac.compare_digest(sig, _stage_sig(payload)):
+        raise AppError(
+            "STAGED_FILE_INVALID", "A file was not uploaded. Choose it again.", status_code=422
+        )
+    try:
+        data = json.loads(base64.urlsafe_b64decode(payload.encode()))
+    except ValueError as exc:
+        raise AppError(
+            "STAGED_FILE_INVALID", "A file was not uploaded. Choose it again.", status_code=422
+        ) from exc
+    key = str(data.get("k") or "")
+    if data.get("p") != str(prop_id) or not key.startswith(f"documents/{prop_id}/"):
+        raise AppError(
+            "STAGED_FILE_INVALID", "That file belongs to another listing.", status_code=422
+        )
+    return key, str(data.get("n") or "Document")
+
+
+async def unstage_property_file(session: AsyncSession, token: str, prop_id: uuid.UUID) -> None:
+    """Remove a picked file before it was saved (a document already made of it is kept)."""
+    key, _name = read_stage_token(token, prop_id)
+    used = await session.scalar(select(Document.id).where(Document.file_url == key))
+    if used is None:
+        storage.delete(key)
+
+
+async def attach_staged_document(
+    session: AsyncSession,
+    *,
+    prop_id: uuid.UUID,
+    token: str,
+    title: str,
+    doc_type: str,
+    issuer: str | None = None,
+    issued_on: dt.date | None = None,
+) -> Document:
+    """The document made of a staged file (each token once)."""
+    key, _name = read_stage_token(token, prop_id)
+    if await session.scalar(select(Document.id).where(Document.file_url == key)) is not None:
+        raise AppError("STAGED_FILE_USED", "That file is already listed.", status_code=409)
+    try:
+        storage.load(key)
+    except storage.StorageNotFound as exc:
+        raise AppError(
+            "STAGED_FILE_GONE",
+            "A file was removed before saving. Choose it again.",
+            status_code=422,
+        ) from exc
+    doc = Document(
+        property_id=prop_id,
+        user_id=None,
+        title=title,
+        type=validate_doc_type(doc_type),
+        file_url=key,
+        issuer=(issuer or "").strip()[:200] or None,
+        issued_on=issued_on,
+    )
+    session.add(doc)
     await session.flush()
     await session.refresh(doc)
     return doc
@@ -297,5 +410,53 @@ async def replace_document_file(
         actor_id=actor_id,
         before={"key": old_key},
         after={"key": key},
+    )
+    return doc
+
+
+async def update_document_details(
+    session: AsyncSession,
+    *,
+    doc_id: uuid.UUID,
+    title: str,
+    doc_type: str,
+    issuer: str | None,
+    issued_on: dt.date | None,
+    actor_id: uuid.UUID | None,
+) -> Document:
+    """Change what a property document says about itself: its title, category, who issued it
+    and its date (the file stays). Admin only; audited."""
+    doc = await session.get(Document, doc_id)
+    if doc is None or doc.property_id is None:
+        raise AppError("NOT_FOUND", "Document not found.", status_code=404)
+    title = " ".join((title or "").split())
+    if not title:
+        raise AppError(
+            "VALIDATION_ERROR", "Document title: this field is required.", status_code=422
+        )
+    before = {
+        "title": doc.title,
+        "type": doc.type,
+        "issuer": doc.issuer,
+        "issued_on": doc.issued_on.isoformat() if doc.issued_on else None,
+    }
+    doc.title = title[:200]
+    doc.type = validate_doc_type(doc_type)
+    doc.issuer = (issuer or "").strip()[:200] or None
+    doc.issued_on = issued_on
+    await session.flush()
+    await write_audit(
+        session,
+        action="document.updated",
+        entity_type="document",
+        entity_id=str(doc.id),
+        actor_id=actor_id,
+        before=before,
+        after={
+            "title": doc.title,
+            "type": doc.type,
+            "issuer": doc.issuer,
+            "issued_on": doc.issued_on.isoformat() if doc.issued_on else None,
+        },
     )
     return doc

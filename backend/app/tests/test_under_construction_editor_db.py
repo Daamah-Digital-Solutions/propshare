@@ -62,7 +62,8 @@ async def test_editor_shows_every_restored_block_for_an_offplan_listing(client, 
     for heading in (
         "Overview tab — ownership, scenarios &amp; risks",
         "Financials tab — projections, market, cash flow &amp; exit",
-        "Construction status &amp; independent valuation",
+        "Construction status",
+        "Valuation, insurance &amp; legal due diligence",
         "Compliance points",
     ):
         assert heading in html, heading
@@ -90,19 +91,69 @@ async def test_row_sections_save_prefill_and_clear(client, db):
     await _admin(client, db)
     pid = _offplan(db)
 
-    await _post(client, pid, {"action": "save_rows", "section": "risks", "risks": "Construction delay | Medium | Escrow and milestone audits\nMarket downturn | high"})
-    await _post(client, pid, {"action": "save_rows", "section": "scenarios", "scenarios": "On-time delivery | About 18% by handover | positive"})
-    await _post(client, pid, {"action": "save_rows", "section": "ownershipStructure", "ownership_structure": "Ownership vehicle | DIFC SPV"})
-    await _post(client, pid, {"action": "save_rows", "section": "investmentStructure", "investment_structure": "Final settlement | On handover"})
-    await _post(client, pid, {"action": "save_rows", "section": "marketAnalysis", "market_analysis": "Area pipeline | 12 active towers"})
-    await _post(client, pid, {"action": "save_rows", "section": "exitMechanisms", "exit_mechanisms": "Secondary market | After handover | Sell units to other investors"})
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_rows",
+            "section": "risks",
+            "risks": "Construction delay | Medium | Escrow and milestone audits\nMarket downturn | high",
+        },
+    )
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_rows",
+            "section": "scenarios",
+            "scenarios": "On-time delivery | About 18% by handover | positive",
+        },
+    )
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_rows",
+            "section": "ownershipStructure",
+            "ownership_structure": "Ownership vehicle | DIFC SPV",
+        },
+    )
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_rows",
+            "section": "investmentStructure",
+            "investment_structure": "Final settlement | On handover",
+        },
+    )
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_rows",
+            "section": "marketAnalysis",
+            "market_analysis": "Area pipeline | 12 active towers",
+        },
+    )
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_rows",
+            "section": "exitMechanisms",
+            "exit_mechanisms": "Secondary market | After handover | Sell units to other investors",
+        },
+    )
 
     c = await _content(client, pid)
     assert c["risks"] == [
         {"label": "Construction delay", "level": "medium", "note": "Escrow and milestone audits"},
         {"label": "Market downturn", "level": "high"},
     ]
-    assert c["scenarios"] == [{"label": "On-time delivery", "outcome": "About 18% by handover", "tone": "positive"}]
+    assert c["scenarios"] == [
+        {"label": "On-time delivery", "outcome": "About 18% by handover", "tone": "positive"}
+    ]
     assert c["ownershipStructure"] == [{"label": "Ownership vehicle", "value": "DIFC SPV"}]
     assert c["exitMechanisms"][0]["eta"] == "After handover"
 
@@ -143,12 +194,68 @@ async def test_bad_rows_are_refused_with_a_clear_message_and_nothing_saved(clien
 async def test_valuation_construction_cashflow_compliance_spv_and_developer(client, db):
     await _admin(client, db)
     pid = _offplan(db)
-    await _post(client, pid, {"action": "save_valuation", "valuation_provider": "Knight Frank", "valuation_date": "June 2026", "valuation_value": "1,050,000", "valuation_impact": "+5% since foundation", "valuation_summary": "Supply is limited."})
-    await _post(client, pid, {"action": "save_construction_status", "engineering_status": "Certified", "audit_status": "On track"})
-    await _post(client, pid, {"action": "save_cashflow", "rental_projection": "Income after handover.", "costs": "", "exit_projection": "Secondary market."})
-    await _post(client, pid, {"action": "save_compliance", "compliance": "SPV holds the title\n- Escrow-secured payments\n\nSPV holds the title"})
-    await _post(client, pid, {"action": "save_spv", "jurisdiction": "DIFC", "asset_holding": "100% title held by the SPV", "investor_allocation": "Pro-rata certificates"})
-    await _post(client, pid, {"action": "save_developer", "name": "Harbour Line", "verified": "1", "years_experience": "12", "on_time_delivery": "96", "previous_projects": "Marina Heights\nCreek Villas", "verifications": "Trade license verified"})
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_valuation",
+            "valuation_provider": "Knight Frank",
+            "valuation_date": "June 2026",
+            "valuation_value": "1,050,000",
+            "valuation_impact": "+5% since foundation",
+            "valuation_summary": "Supply is limited.",
+        },
+    )
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_construction_status",
+            "engineering_status": "Certified",
+            "audit_status": "On track",
+        },
+    )
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_cashflow",
+            "rental_projection": "Income after handover.",
+            "costs": "",
+            "exit_projection": "Secondary market.",
+        },
+    )
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_compliance",
+            "compliance": "SPV holds the title\n- Escrow-secured payments\n\nSPV holds the title",
+        },
+    )
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_spv",
+            "jurisdiction": "DIFC",
+            "asset_holding": "100% title held by the SPV",
+            "investor_allocation": "Pro-rata certificates",
+        },
+    )
+    await _post(
+        client,
+        pid,
+        {
+            "action": "save_developer",
+            "name": "Harbour Line",
+            "verified": "1",
+            "years_experience": "12",
+            "on_time_delivery": "96",
+            "previous_projects": "Marina Heights\nCreek Villas",
+            "verifications": "Trade license verified",
+        },
+    )
 
     c = await _content(client, pid)
     assert c["valuation"] == {
@@ -159,7 +266,10 @@ async def test_valuation_construction_cashflow_compliance_spv_and_developer(clie
         "summary": "Supply is limited.",
     }
     assert c["construction"] == {"engineeringStatus": "Certified", "auditStatus": "On track"}
-    assert c["cashflow"] == {"rentalProjection": "Income after handover.", "exitProjection": "Secondary market."}
+    assert c["cashflow"] == {
+        "rentalProjection": "Income after handover.",
+        "exitProjection": "Secondary market.",
+    }
     assert c["compliance"] == ["SPV holds the title", "Escrow-secured payments"]
     assert c["spv"]["assetHolding"] == "100% title held by the SPV"
     assert c["spv"]["investorAllocation"] == "Pro-rata certificates"
@@ -176,21 +286,44 @@ async def test_valuation_construction_cashflow_compliance_spv_and_developer(clie
 async def test_milestone_price_index_is_editable_and_public(client, db):
     await _admin(client, db)
     pid = _offplan(db)
-    await _post(client, pid, {"action": "ms_add", "title": "Foundation", "status": "in_progress", "progress_pct": "40", "target_date": "2026-12-31", "value_index": "105"})
+    await _post(
+        client,
+        pid,
+        {
+            "action": "ms_add",
+            "title": "Foundation",
+            "status": "in_progress",
+            "progress_pct": "40",
+            "target_date": "2026-12-31",
+            "value_index": "105",
+        },
+    )
     ms = (await client.get(f"/api/v1/properties/{pid}")).json()["milestones"]
     assert ms[0]["value_index"] == 105
     mid = db("SELECT id FROM property_milestones WHERE property_id=:p", p=pid)[0][0]
-    await _post(client, pid, {"action": "ms_save", "ms_id": str(mid), "title": "Foundation", "status": "in_progress", "progress_pct": "40", "value_index": ""})
+    await _post(
+        client,
+        pid,
+        {
+            "action": "ms_save",
+            "ms_id": str(mid),
+            "title": "Foundation",
+            "status": "in_progress",
+            "progress_pct": "40",
+            "value_index": "",
+        },
+    )
     ms = (await client.get(f"/api/v1/properties/{pid}")).json()["milestones"]
     assert ms[0]["value_index"] is None
-    bad = await client.post(f"/admin/listing/{pid}", data={"action": "ms_add", "title": "X", "status": "planned", "value_index": "0"})
+    bad = await client.post(
+        f"/admin/listing/{pid}",
+        data={"action": "ms_add", "title": "X", "status": "planned", "value_index": "0"},
+    )
     assert bad.status_code == 400
 
 
 def test_row_parser_rules():
-    rows = listing_service.parse_rows(
-        "A | b\n\n  C  |  d  ", "X", ("label", "value"), 5
-    )
+    rows = listing_service.parse_rows("A | b\n\n  C  |  d  ", "X", ("label", "value"), 5)
     assert rows == [{"label": "A", "value": "b"}, {"label": "C", "value": "d"}]
     with pytest.raises(AppError):
         listing_service.parse_rows("A|b\n" * 6, "X", ("label", "value"), 5)

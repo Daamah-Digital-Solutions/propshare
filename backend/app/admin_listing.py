@@ -14,6 +14,9 @@ Every error shown to the user is a plain sentence — never a code or a tracebac
 # ruff: noqa: E501  (inline HTML/CSS template lines)
 from __future__ import annotations
 
+import copy
+import datetime as dt
+import decimal
 import html as _html
 import logging
 import uuid
@@ -22,7 +25,7 @@ from jinja2 import Environment
 from sqladmin import BaseView, expose
 from sqlalchemy import func, select
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.core.config import get_settings
 from app.core.db import session_scope
@@ -30,6 +33,7 @@ from app.core.errors import AppError
 from app.models import Document, Property
 from app.models.base import PropertyStatus
 from app.services import (
+    developer_service,
     document_service,
     listing_media_service,
     listing_service,
@@ -37,8 +41,10 @@ from app.services import (
     listing_translation_form,
     price_service,
     property_service,
+    valuation_service,
 )
 from app.services.integrations import storage
+from app.services.property_service import developer_slug
 
 log = logging.getLogger("capimax.admin.listing")
 
@@ -66,7 +72,26 @@ _STYLE = """
  .req{color:#b00;font-weight:700}
  .help{color:#6b726c;font-size:12px;margin-top:3px;line-height:1.4} .help .eg{color:#0f6e4e}
  input[type=text],input[type=number],input[type=date],input[type=file],select,textarea{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #d9dcd8;border-radius:8px;font-size:14px;background:#fff}
- textarea{min-height:90px}
+ textarea{min-height:90px;font-family:inherit;line-height:1.55;resize:vertical}
+ .cols>.f.wide{grid-column:1/-1}
+ table.rowed{margin:4px 0 6px} table.rowed td{padding:3px 4px;vertical-align:middle} table.rowed th{font-size:12px;padding:4px}
+ table.rowed input,table.rowed select{padding:6px 8px;font-size:13px} td.rowact{white-space:nowrap;width:1%}
+ .drop{display:block;border:2px dashed #c9d3cc;border-radius:12px;padding:18px;text-align:center;cursor:pointer;background:#fafcfa;font-weight:400;font-size:14px}
+ .drop.over{border-color:#198653;background:#eef8f1}
+ .drop span{display:block;margin-top:4px}
+ .drop input[type=file]{margin-top:10px;max-width:420px}
+ .pendwrap{overflow-x:auto;margin-top:10px} table.pending input,table.pending select{padding:6px 8px;font-size:13px;min-width:90px}
+ table.pending .thumb{display:block;height:34px;width:34px;object-fit:cover;border-radius:6px;margin-bottom:4px}
+ table.pending .state{font-size:11px;color:#6b726c;margin-top:2px;word-break:normal} table.pending .state.st-ok{color:#0f6e4e} table.pending .state.st-bad{color:#b00}
+ table.pending td.fname{min-width:150px} table.pending input[name=title]{min-width:170px}
+ table.pending td{vertical-align:middle} table.pending td.fname{font-size:12px;color:#6b726c;max-width:160px;word-break:break-all}
+ details.edit{display:inline-block} details.edit summary{list-style:none} details.edit[open] form{display:block;margin-top:6px;padding:10px;border:1px solid #e8e6e1;border-radius:8px;background:#fafaf8;min-width:240px}
+ details.edit label{margin:6px 0 2px;font-size:12px}
+ textarea.long{min-height:340px;max-height:75vh;font-size:15px;padding:12px 14px}
+ .longbar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px;font-size:12px;color:#6b726c}
+ textarea.long.full{position:fixed;top:58px;left:16px;right:16px;bottom:16px;z-index:1000;max-height:none;min-height:0;height:auto!important;font-size:16px;line-height:1.75;padding:20px 26px;box-shadow:0 10px 40px rgba(0,0,0,.25);resize:none}
+ body.editing-full::before{content:"";position:fixed;inset:0;background:rgba(20,30,25,.5);z-index:999}
+ .longbar button.floating{position:fixed;top:14px;right:16px;z-index:1001;font-size:14px;padding:8px 14px}
  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
  table{width:100%;border-collapse:collapse;font-size:14px} td,th{padding:8px 6px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}
  .ok{background:#e7f5ec;border:1px solid #b7e0c6;color:#0f6e4e;padding:10px 12px;border-radius:8px;margin-bottom:14px}
@@ -96,7 +121,7 @@ _FIELD_MACRO = """
 {% macro field(f, val, profile, model_locked=False) -%}
 {%- set shown = f.shown(profile) -%}
 {%- set req = f.is_required(profile) and not f.computed -%}
-<div class="f" data-field="{{ f.name }}"{% if not shown %} hidden{% endif %}>
+<div class="f{{ ' wide' if f.kind == 'textarea' }}" data-field="{{ f.name }}"{% if not shown %} hidden{% endif %}>
  <label for="f_{{ f.name }}"><span class="txt">{{ f.label_for(profile) }}</span>{% if req %}<span class="req" title="Required"> *</span>{% endif %}</label>
  {% if f.name == 'model' and model_locked -%}
   <input type="hidden" name="model" value="{{ val }}">
@@ -104,7 +129,7 @@ _FIELD_MACRO = """
  {%- elif f.computed -%}
   <input type="text" id="f_{{ f.name }}" value="{{ val if val is not none else '' }}" readonly tabindex="-1" style="background:#f4f5f3">
  {%- elif f.kind == 'textarea' -%}
-  <textarea id="f_{{ f.name }}" name="{{ f.name }}" placeholder="{{ f.example }}" {{ 'required' if req and shown }} {{ 'disabled' if not shown }}>{{ val if val is not none else '' }}</textarea>
+  <textarea class="long" id="f_{{ f.name }}" name="{{ f.name }}" placeholder="{{ f.example }}" {{ 'required' if req and shown }} {{ 'disabled' if not shown }}>{{ val if val is not none else '' }}</textarea>
  {%- elif f.kind == 'select' -%}
   <select id="f_{{ f.name }}" name="{{ f.name }}" {{ 'required' if req and shown }} {{ 'disabled' if not shown }}>{% if f.name == 'model' and val not in f.options|map('first')|list %}<option value="" selected>Choose an available model</option>{% endif %}{% for v, l in f.options %}<option value="{{ v }}" {{ 'selected' if v == val }}>{{ l }}</option>{% endfor %}</select>
  {%- elif f.kind == 'date' -%}
@@ -193,6 +218,315 @@ _FIELD_MACRO = """
   });
   calc();
 })();
+// Tables instead of "Label | value" lines (client letter, 2026-11-18: staff found the written
+// format hard). Each list becomes rows of fields (a year or item, a % or value, a choice where
+// the page needs one) with Add row / remove / move; the hidden box keeps the same lines, so the
+// server reads exactly what it read before.
+(function () {
+  var SPECS = {
+    ownership_structure: { cols: [["Item", "Ownership vehicle"], ["Value", "DIFC SPV"]] },
+    investment_structure: { cols: [["Year or item", "Year 1"], ["Return % or value", "8.5% / $120,000"]] },
+    market_analysis: { cols: [["Item", "Area pipeline"], ["Value", "12 active towers"]] },
+    scenarios: { cols: [["Scenario", "Base case"], ["Outcome", "+18% by handover"], ["Tone", ["positive", "neutral", "negative"]]], need: 2 },
+    risks: { cols: [["Risk", "Construction delay"], ["Level", ["low", "medium", "high"]], ["How it is mitigated", "Escrow and milestone audits"]], need: 2 },
+    exit_mechanisms: { cols: [["Name", "Secondary market"], ["Timing", "After handover"], ["Description", "Sell units to other investors"]], need: 1 }
+  };
+  var SEP = String.fromCharCode(124); // the separator the server reads
+  Object.keys(SPECS).forEach(function (name) {
+    var box = document.querySelector('textarea[name="' + name + '"]');
+    if (!box) return;
+    var spec = SPECS[name];
+
+    var help = box.parentElement.querySelector(".help");
+    var m = help ? /max ([0-9]+)/.exec(help.textContent) : null;
+    var max = m ? Number(m[1]) : 12;
+    box.hidden = true;
+    var wrap = document.createElement("div");
+    wrap.className = "rowed";
+    var table = document.createElement("table");
+    table.className = "rowed";
+    var head = "<thead><tr>" + spec.cols.map(function (c, i) {
+      return "<th>" + c[0] + (i < (spec.need || spec.cols.length) ? ' <span class="req">*</span>' : "") + "</th>";
+    }).join("") + "<th></th></tr></thead>";
+    table.innerHTML = head + "<tbody></tbody>";
+    var body = table.querySelector("tbody");
+    var add = document.createElement("button");
+    add.type = "button"; add.className = "mini"; add.textContent = "+ Add row";
+    wrap.appendChild(table); wrap.appendChild(add);
+    box.parentElement.insertBefore(wrap, box);
+    if (help) {
+
+      help.textContent = "One row per item, up to " + max + ". Empty rows are ignored. ";
+    }
+    function clean(v) { return String(v || "").split(SEP).join("/").trim(); }
+    function sync() {
+      var lines = [];
+      body.querySelectorAll("tr").forEach(function (tr) {
+        var vals = Array.prototype.map.call(tr.querySelectorAll("input,select"), function (e) { return clean(e.value); });
+        if (vals.some(function (v) { return v; })) lines.push(vals.join(" " + SEP + " ").replace(/[ |]+$/, ""));
+      });
+      box.value = lines.join(String.fromCharCode(10));
+      add.disabled = body.children.length >= max;
+    }
+    function row(vals) {
+      var tr = document.createElement("tr");
+      spec.cols.forEach(function (c, i) {
+        var td = document.createElement("td");
+        var el;
+        if (Array.isArray(c[1])) {
+          el = document.createElement("select");
+          el.innerHTML = '<option value="">—</option>' + c[1].map(function (o) { return '<option value="' + o + '">' + o + "</option>"; }).join("");
+          el.value = (vals[i] || "").toLowerCase();
+        } else {
+          el = document.createElement("input");
+          el.type = "text"; el.maxLength = 240; el.placeholder = c[1]; el.value = vals[i] || "";
+        }
+        el.setAttribute("aria-label", c[0]);
+        el.addEventListener("input", sync); el.addEventListener("change", sync);
+        td.appendChild(el); tr.appendChild(td);
+      });
+      var act = document.createElement("td");
+      act.className = "rowact";
+      [["Move up", "&uarr;", -1], ["Move down", "&darr;", 1]].forEach(function (b) {
+        var btn = document.createElement("button");
+        btn.type = "button"; btn.className = "mini"; btn.title = b[0]; btn.innerHTML = b[1];
+        btn.addEventListener("click", function () {
+          var to = b[2] < 0 ? tr.previousElementSibling : tr.nextElementSibling;
+          if (!to) return;
+          if (b[2] < 0) body.insertBefore(tr, to); else body.insertBefore(to, tr);
+          sync();
+        });
+        act.appendChild(btn);
+      });
+      var rm = document.createElement("button");
+      rm.type = "button"; rm.className = "mini danger"; rm.title = "Remove this row"; rm.innerHTML = "&times;";
+      rm.addEventListener("click", function () { tr.remove(); sync(); });
+      act.appendChild(rm);
+      tr.appendChild(act);
+      body.appendChild(tr);
+    }
+    var lines = box.value.split(String.fromCharCode(10)).filter(function (l) { return l.trim(); });
+    lines.forEach(function (l) { row(l.split(SEP).map(function (x) { return x.trim(); })); });
+    if (!lines.length) row([]);
+    add.addEventListener("click", function () { if (body.children.length < max) { row([]); sync(); } });
+    sync();
+  });
+})();
+// Developer card: filled from a saved developer (client letter, 2026-11-18).
+(function () {
+  var pick = document.querySelector("[data-saved-developer]");
+  var data = document.getElementById("saved-developers");
+  if (!pick || !data) return;
+  var saved = JSON.parse(data.textContent);
+  var form = pick.closest("form");
+  function set(name, v) {
+    var e = form.querySelector('[name="' + name + '"]');
+    if (!e) return;
+    if (e.type === "checkbox") e.checked = Boolean(v);
+    else e.value = v === undefined || v === null ? "" : Array.isArray(v) ? v.join(String.fromCharCode(10)) : v;
+  }
+  pick.addEventListener("change", function () {
+    var d = saved.filter(function (x) { return x.id === pick.value; })[0];
+    form.querySelector('[name="saved_developer_id"]').value = d ? d.id : "";
+    if (!d) return;
+    var p = d.profile || {};
+    set("name", p.name); set("rating", p.rating); set("projects_completed", p.projectsCompleted);
+    set("website", p.website); set("about", p.about); set("years_experience", p.yearsExperience);
+    set("on_time_delivery", p.onTimeDelivery); set("previous_projects", p.previousProjects);
+    set("verifications", p.verifications); set("verified", p.verified);
+    var note = form.querySelector("[data-saved-logo]");
+    if (!note) {
+      note = document.createElement("div"); note.className = "muted"; note.setAttribute("data-saved-logo", "");
+      form.querySelector('[data-field="logo"]').appendChild(note);
+    }
+    note.innerHTML = p.logo ? 'The saved logo is used: <img alt="logo" style="height:28px;vertical-align:middle;border-radius:6px">' : "";
+    if (p.logo) note.querySelector("img").src = p.logo;
+  });
+})();
+// Photos: dropped or chosen, previewed before upload.
+(function () {
+  var drop = document.querySelector("[data-drop-photos]");
+  if (!drop) return;
+  var input = drop.querySelector("input[type=file]");
+  var box = document.querySelector("[data-photo-previews]");
+  var count = drop.querySelector("[data-photo-count]");
+  function show() {
+    box.innerHTML = "";
+    var files = Array.prototype.slice.call(input.files || []);
+    if (files.length) count.textContent = files.length + (files.length === 1 ? " photo ready to upload" : " photos ready to upload");
+    files.forEach(function (f) {
+      var d = document.createElement("div"); d.className = "img";
+      var im = document.createElement("img"); im.src = URL.createObjectURL(f); im.alt = f.name;
+      d.appendChild(im); box.appendChild(d);
+    });
+  }
+  input.addEventListener("change", show);
+  ["dragenter", "dragover"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); }); });
+  ["dragleave", "drop"].forEach(function (ev) { drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("over"); }); });
+  drop.addEventListener("drop", function (e) {
+    if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+    var dt = new DataTransfer();
+    Array.prototype.slice.call(input.files || []).forEach(function (g) { dt.items.add(g); });
+    Array.prototype.slice.call(e.dataTransfer.files).forEach(function (g) { if (g.type.indexOf("image/") === 0) dt.items.add(g); });
+    input.files = dt.files; show();
+  });
+})();
+// Documents: several files at once, dropped or chosen (client letter, 2026-11-18, as on
+// Capimax BRX). Each file is uploaded the moment it is picked and kept until the rows are saved;
+// its row has its name in English (from the file name), Arabic and French, a category guessed
+// from the name, who issued it and its date. Removing a row removes its file.
+(function () {
+  var form = document.querySelector("[data-doc-upload]");
+  if (!form) return;
+  var input = form.querySelector("input[type=file]");
+  var drop = form.querySelector("[data-drop]");
+  var table = form.querySelector("[data-pending]");
+  var body = table.querySelector("tbody");
+  var single = form.querySelector("[data-single]");
+  var button = form.querySelector("[data-upload-label]");
+  var cats = document.getElementById("doc-categories").innerHTML;
+  var stageUrl = form.getAttribute("data-stage-url");
+  var unstageUrl = form.getAttribute("data-unstage-url");
+  var busy = 0;
+  function title(name) {
+    var stem = name.replace(/\\.[^.]+$/, "").replace(/[_-]+/g, " ").replace(/\\s+/g, " ").trim();
+    return stem || "Document";
+  }
+  function guess(name) {
+    var n = name.toLowerCase();
+    if (/valu|apprais/.test(n)) return "valuation";
+    if (/insur|policy/.test(n)) return "insurance";
+    if (/diligence|\\bdd\\b/.test(n)) return "due_diligence";
+    if (/legal|title.?deed|contract/.test(n)) return "legal";
+    if (/spv|incorporat|memorandum|articles/.test(n)) return "spv";
+    if (/audit/.test(n)) return "audit";
+    if (/agreement|subscription/.test(n)) return "agreement";
+    if (/financ|feasib|study|projection/.test(n)) return "financial";
+    return "other";
+  }
+  function cell(html) { var td = document.createElement("td"); td.innerHTML = html; return td; }
+  function refresh() {
+    var all = body.querySelectorAll("tr").length;
+    var ready = body.querySelectorAll("tr[data-ready]").length;
+    table.parentNode.hidden = all === 0;
+    single.hidden = all > 0;
+    single.querySelectorAll("input,select").forEach(function (e) { e.disabled = all > 0; });
+    input.required = all === 0;
+    button.disabled = busy > 0 || (all > 0 && ready === 0);
+    if (busy > 0) button.textContent = "Uploading " + busy + " file" + (busy > 1 ? "s" : "") + "…";
+    else if (ready > 1) button.textContent = "Save " + ready + " documents";
+    else if (ready === 1) button.textContent = "Save document";
+    else button.textContent = "Upload document";
+  }
+  function add(f) {
+    var tr = document.createElement("tr");
+    var file = cell(""); file.className = "fname";
+    if (f.type.indexOf("image/") === 0) {
+      var img = document.createElement("img"); img.className = "thumb"; img.alt = "";
+      img.src = URL.createObjectURL(f); file.appendChild(img);
+    }
+    file.appendChild(document.createTextNode(f.name));
+    var state = document.createElement("div"); state.className = "state"; state.textContent = "Uploading…";
+    file.appendChild(state);
+    var token = document.createElement("input"); token.type = "hidden"; token.name = "staged"; token.disabled = true;
+    file.appendChild(token);
+    tr.appendChild(file);
+    var t = cell('<input type="text" name="title" maxlength="200" required>'); t.querySelector("input").value = title(f.name); tr.appendChild(t);
+    tr.appendChild(cell('<input type="text" name="title_ar" maxlength="200" dir="rtl" lang="ar">'));
+    tr.appendChild(cell('<input type="text" name="title_fr" maxlength="200" lang="fr">'));
+    var c = cell('<select name="doc_type">' + cats + "</select>"); c.querySelector("select").value = guess(f.name); tr.appendChild(c);
+    tr.appendChild(cell('<input type="text" name="issuer" maxlength="200" placeholder="Knight Frank">'));
+    tr.appendChild(cell('<input type="date" name="issued_on">'));
+    var rm = cell('<button type="button" class="mini danger" title="Remove this file">&times;</button>');
+    rm.querySelector("button").addEventListener("click", function () {
+      if (token.value) {
+        var fd = new FormData(); fd.append("token", token.value);
+        fetch(unstageUrl, { method: "POST", body: fd, credentials: "same-origin" });
+      }
+      tr.remove(); refresh();
+    });
+    tr.appendChild(rm);
+    body.appendChild(tr);
+    busy++; refresh();
+    var fd = new FormData(); fd.append("file", f);
+    fetch(stageUrl, { method: "POST", body: fd, credentials: "same-origin" })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok || !j.token) throw new Error(j.error || "The upload failed. Remove the row and choose the file again.");
+          return j;
+        });
+      })
+      .then(function (j) {
+        token.value = j.token; token.disabled = false; tr.setAttribute("data-ready", "");
+        state.textContent = "Uploaded · kept, attached when you save"; state.className = "state st-ok";
+      })
+      .catch(function (e) {
+        state.textContent = e.message; state.className = "state st-bad";
+        tr.querySelectorAll("input,select").forEach(function (x) { x.disabled = true; });
+      })
+      .then(function () { busy--; refresh(); });
+  }
+  input.addEventListener("change", function () {
+    Array.prototype.slice.call(input.files || []).forEach(add);
+    input.value = "";
+  });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("over"); });
+  });
+  drop.addEventListener("drop", function (e) {
+    if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+    Array.prototype.slice.call(e.dataTransfer.files).forEach(add);
+  });
+  form.addEventListener("submit", function (e) { if (busy > 0) e.preventDefault(); });
+})();
+// The long texts (the description and its translations) grow with what is written, so the
+// whole text is read without scrolling inside the box; very long ones stop at 3/4 of the screen.
+(function () {
+  function fit(t) {
+    if (!t.offsetParent || t.classList.contains("full")) return; // closed section / full screen
+    t.style.height = "auto";
+    t.style.height = t.scrollHeight + 2 + "px";
+  }
+  var boxes = document.querySelectorAll("textarea.long");
+  boxes.forEach(function (t) { fit(t); t.addEventListener("input", function () { fit(t); }); });
+  // Under each long box: how long it is, and a full-screen mode to read and edit several
+  // paragraphs at once (client, 2026-11-19). Esc or the button goes back to the form.
+  function full(t, btn, on) {
+    t.classList.toggle("full", on);
+    document.body.classList.toggle("editing-full", on);
+    btn.classList.toggle("floating", on);
+    btn.textContent = on ? "Done, back to the form" : "Expand to full screen";
+    if (on) { t.style.height = ""; t.focus(); } else { fit(t); t.scrollIntoView({ block: "center" }); }
+  }
+  boxes.forEach(function (t) {
+    var bar = document.createElement("div"); bar.className = "longbar";
+    var count = document.createElement("span");
+    var btn = document.createElement("button"); btn.type = "button"; btn.className = "mini";
+    btn.textContent = "Expand to full screen"; btn.setAttribute("data-expand", "");
+    bar.appendChild(count); bar.appendChild(btn);
+    t.parentNode.insertBefore(bar, t.nextSibling);
+    function counts() {
+      var s = t.value.trim();
+      var words = s ? s.split(/\\s+/).length : 0;
+      var paras = s ? s.split(/\\n\\s*\\n/).length : 0;
+      count.textContent = paras + " paragraph" + (paras === 1 ? "" : "s") + " · " + words + " word" + (words === 1 ? "" : "s");
+    }
+    counts(); t.addEventListener("input", counts);
+    btn.addEventListener("click", function () { full(t, btn, !t.classList.contains("full")); });
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    var open = document.querySelector("textarea.long.full");
+    if (open) open.nextSibling.querySelector("[data-expand]").click();
+  });
+  document.querySelectorAll("details").forEach(function (d) {
+    d.addEventListener("toggle", function () { d.querySelectorAll("textarea.long").forEach(fit); });
+  });
+  window.addEventListener("resize", function () { boxes.forEach(fit); });
+})();
 </script>
 {%- endmacro %}
 """
@@ -275,7 +609,7 @@ _PAGE = _env.from_string(
     <div class="f" data-field="{{ f.name }}">
      <label for="t_{{ v.lang }}_{{ loop.index }}_{{ f.name }}">{{ f.label }}</label>
      {% if f.kind == 'line' %}<input type="text" id="t_{{ v.lang }}_{{ loop.index }}_{{ f.name }}" name="{{ f.name }}" dir="{{ v.dir }}" lang="{{ v.lang }}" maxlength="{{ f.max_len }}" value="{{ f.value }}">
-     {% else %}<textarea id="t_{{ v.lang }}_{{ loop.index }}_{{ f.name }}" name="{{ f.name }}" dir="{{ v.dir }}" lang="{{ v.lang }}" rows="{{ 6 if f.kind == 'text' else 3 }}">{{ f.value }}</textarea>{% endif %}
+     {% else %}<textarea {% if f.kind == 'text' %}class="long" {% endif %}id="t_{{ v.lang }}_{{ loop.index }}_{{ f.name }}" name="{{ f.name }}" dir="{{ v.dir }}" lang="{{ v.lang }}" rows="{{ 6 if f.kind == 'text' else 3 }}">{{ f.value }}</textarea>{% endif %}
      <div class="help english">{% if f.kind == 'lines' %}One per line. {% endif %}English: {{ f.english }}</div>
     </div>
     {% endfor %}
@@ -308,23 +642,35 @@ _PAGE = _env.from_string(
  {% else %}<p class="muted">No photos yet — the public page shows a “Photos coming soon” placeholder until you add some.</p>{% endif %}
  <form method="post" enctype="multipart/form-data" style="margin-top:12px">
   <input type="hidden" name="action" value="upload_images">
-  <div data-field="files"><label for="f_files">Add photos <span class="req">*</span></label>
-  <input id="f_files" type="file" name="files" accept="image/jpeg,image/png,image/webp" multiple required>
-  <div class="help">You can select several at once. Max {{ max_mb }} MB each. <span class="eg">Example: exterior, living room, bedroom, view.</span></div></div>
+  <div data-field="files"><label class="drop" for="f_files" data-drop-photos><b>Drop photos here</b> or <u>choose photos</u> — several at once
+  <span class="muted" data-photo-count>Max {{ max_mb }} MB each. Example: exterior, living room, bedroom, view.</span>
+  <input id="f_files" type="file" name="files" accept="image/jpeg,image/png,image/webp" multiple required></label>
+  <div class="grid" data-photo-previews style="margin-top:8px"></div></div>
   <button class="primary" type="submit" style="margin-top:8px">Upload photos</button>
  </form>
 </div>
 
 <div class="card">
  <h2>Documents</h2>
- <p class="lead">Shown in the Documents tab and downloadable by anyone who can see the listing. PDF, Word, Excel, CSV, text or images · max {{ max_mb }} MB.</p>
+ <p class="lead">Shown in the Documents tab, grouped by category, and downloadable by anyone who can see the listing. Valuation reports, insurance certificates and the legal due diligence also appear in the <b>Due Diligence</b> tab. PDF, Word, Excel, CSV, text or images · max {{ max_mb }} MB each.</p>
  {% if docs %}
- <table><tr><th>Title</th><th>Category</th><th>Added</th><th></th></tr>
+ <table class="docs"><tr><th>Title</th><th>Category</th><th>Issued by</th><th>Date</th><th></th></tr>
  {% for d in docs %}
  <tr>
-  <td>{{ d.title }}</td><td>{{ cat_labels.get(d.type, d.type) }}</td><td>{{ d.created_at.strftime('%Y-%m-%d') }}</td>
+  <td>{{ d.title }}</td><td>{{ cat_labels.get(d.type, d.type) }}</td><td>{{ d.issuer or '—' }}</td><td>{{ d.issued_on.isoformat() if d.issued_on else d.created_at.strftime('%Y-%m-%d') ~ ' (uploaded)' }}</td>
   <td class="actions">
    <a class="btn mini" href="/api/v1/documents/{{ d.id }}/download{{ '?preview=' ~ preview_token if preview_token else '' }}" target="_blank" rel="noopener">Download</a>
+   <details class="edit"><summary class="btn mini">Edit</summary>
+    <form method="post" class="docedit"><input type="hidden" name="action" value="doc_edit"><input type="hidden" name="doc_id" value="{{ d.id }}">
+     <label>Name (English)</label><input type="text" name="title" maxlength="200" required value="{{ d.title }}">
+     <label>Name in Arabic</label><input type="text" name="title_ar" maxlength="200" dir="rtl" lang="ar" value="{{ (doc_titles.get(d.id|string) or {}).get('ar', '') }}">
+     <label>Name in French</label><input type="text" name="title_fr" maxlength="200" lang="fr" value="{{ (doc_titles.get(d.id|string) or {}).get('fr', '') }}">
+     <label>Category</label><select name="doc_type">{% for v,l in categories %}<option value="{{ v }}" {{ 'selected' if v == d.type }}>{{ l }}</option>{% endfor %}</select>
+     <label>Issued by</label><input type="text" name="issuer" maxlength="200" value="{{ d.issuer or '' }}" placeholder="Knight Frank">
+     <label>Date on the document</label><input type="date" name="issued_on" value="{{ d.issued_on.isoformat() if d.issued_on else '' }}">
+     <button class="mini primary" type="submit" style="margin-top:6px">Save</button>
+    </form>
+   </details>
    <form method="post" enctype="multipart/form-data" class="inline"><input type="hidden" name="action" value="doc_replace"><input type="hidden" name="doc_id" value="{{ d.id }}"><input type="file" name="file" required style="width:200px;display:inline-block;padding:3px" title="Choose the new file"><button class="mini" type="submit">Replace file</button></form>
    <form method="post" class="inline" onsubmit="return confirm('Delete this document and its file?')"><input type="hidden" name="action" value="doc_delete"><input type="hidden" name="doc_id" value="{{ d.id }}"><button class="mini danger" type="submit">Delete</button></form>
   </td>
@@ -332,15 +678,25 @@ _PAGE = _env.from_string(
  {% endfor %}
  </table>
  {% else %}<p class="muted">No documents yet.</p>{% endif %}
- <form method="post" enctype="multipart/form-data" style="margin-top:12px">
+ <form method="post" enctype="multipart/form-data" style="margin-top:12px" data-doc-upload data-stage-url="/admin/listing/{{ p.id }}/stage-doc" data-unstage-url="/admin/listing/{{ p.id }}/unstage-doc">
   <input type="hidden" name="action" value="upload_doc">
-  <div class="cols">
-   <div data-field="title"><label for="f_doc_title">Document title <span class="req">*</span></label><input id="f_doc_title" type="text" name="title" required maxlength="200" placeholder="Independent Valuation Report"><div class="help">What investors see in the list. <span class="eg">Example: Independent Valuation Report</span></div></div>
+  <label class="drop" for="f_doc_file" data-drop>
+   <b>Drop files here</b> or <u>choose files</u> — several at once
+   <span class="muted">Each file is uploaded as soon as you pick it. Its row takes its name from the file, in English, with its Arabic and French names, category, issuer and date; nothing is listed until you save.</span>
+   <input id="f_doc_file" type="file" name="file" multiple required>
+  </label>
+  <div class="pendwrap" hidden><table class="pending" data-pending><thead><tr><th>File</th><th>Name (English) <span class="req">*</span></th><th>Name in Arabic</th><th>Name in French</th><th>Category <span class="req">*</span></th><th>Issued by</th><th>Date on the document</th><th></th></tr></thead><tbody></tbody></table></div>
+  <div class="cols" data-single>
+   <div data-field="title"><label for="f_doc_title">Document title</label><input id="f_doc_title" type="text" name="title" maxlength="200" placeholder="Independent Valuation Report"><div class="help">What investors see in the list; blank uses the file name. <span class="eg">Example: Independent Valuation Report</span></div></div>
    <div data-field="doc_type"><label for="f_doc_type">Category <span class="req">*</span></label><select id="f_doc_type" name="doc_type">{% for v,l in categories %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select><div class="help">Groups the document on the page. <span class="eg">Example: Valuation Reports</span></div></div>
-   <div data-field="file"><label for="f_doc_file">File <span class="req">*</span></label><input id="f_doc_file" type="file" name="file" required><div class="help">PDF is best. <span class="eg">Example: valuation-2026.pdf</span></div></div>
+   <div data-field="issuer"><label for="f_doc_issuer">Issued by</label><input id="f_doc_issuer" type="text" name="issuer" maxlength="200" placeholder="Knight Frank"><div class="help">The valuer, insurer or law firm. <span class="eg">Example: Knight Frank</span></div></div>
+   <div data-field="issued_on"><label for="f_doc_date">Date on the document</label><input id="f_doc_date" type="date" name="issued_on"><div class="help">Blank shows the upload date.</div></div>
+   <div data-field="title_ar"><label for="f_doc_title_ar">Name in Arabic</label><input id="f_doc_title_ar" type="text" name="title_ar" maxlength="200" dir="rtl" lang="ar"><div class="help">Shown when the site is in Arabic; blank shows the English.</div></div>
+   <div data-field="title_fr"><label for="f_doc_title_fr">Name in French</label><input id="f_doc_title_fr" type="text" name="title_fr" maxlength="200" lang="fr"><div class="help">Shown when the site is in French; blank shows the English.</div></div>
   </div>
-  <button class="primary" type="submit" style="margin-top:8px">Upload document</button>
+  <button class="primary" type="submit" style="margin-top:8px" data-upload-label>Upload document</button>
  </form>
+ <template id="doc-categories">{% for v,l in categories %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</template>
 </div>
 
 <div class="card">
@@ -363,8 +719,15 @@ _PAGE = _env.from_string(
 
 <div class="card">
  <h2>Developer</h2>
- <p class="lead">The developer card in the Overview tab, and the developer's public profile page that its <b>View Profile</b> button opens. Every listing with the same developer name shares one profile. Shown only when a name is set; the other fields appear only when filled.</p>
- <form method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="save_developer">
+ <p class="lead">The developer card in the Overview tab, and the developer's public profile page that its <b>View Profile</b> button opens. Every listing with the same developer name shares one profile. Shown only when a name is set; the other fields appear only when filled. Saving also keeps this developer in <a href="/admin/developers">Developers</a>, ready for the next listing.</p>
+ <form method="post" enctype="multipart/form-data" data-developer-form><input type="hidden" name="action" value="save_developer"><input type="hidden" name="saved_developer_id" value="">
+  {% if saved_developers %}
+  <div data-field="saved_developer" class="note"><label for="f_saved_dev" style="margin-top:0">Fill from a saved developer</label>
+   <select id="f_saved_dev" data-saved-developer><option value="">Choose a developer…</option>{% for d in saved_developers %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}</select>
+   <div class="help">Fills every field below from the saved profile, logo included. Review, then <b>Save developer</b>: the developer's Arabic and French versions come with it.</div>
+  </div>
+  <script type="application/json" id="saved-developers">{{ saved_developers|tojson }}</script>
+  {% endif %}
   <div class="cols">
    <div data-field="name"><label for="f_dev_name">Developer name</label><input id="f_dev_name" type="text" name="name" maxlength="120" value="{{ developer.name or '' }}" placeholder="Emaar Properties"><div class="help">Company name as investors know it. <span class="eg">Example: Emaar Properties</span></div></div>
    <div data-field="rating"><label for="f_dev_rating">Rating (0–5)</label><input id="f_dev_rating" type="number" name="rating" min="0" max="5" step="0.1" placeholder="4.6" value="{{ developer.rating if developer.rating is not none }}"><div class="help">Your own assessment; blank hides it. <span class="eg">Example: 4.6</span></div></div>
@@ -458,8 +821,8 @@ _PAGE = _env.from_string(
 </div>
 
 <div class="card" data-profiles="offplan_single offplan_portfolio"{% if profile not in ('offplan_single', 'offplan_portfolio') %} hidden{% endif %}>
- <h2>Construction status &amp; independent valuation</h2>
- <p class="lead">The Construction Progress and Independent Valuation cards. Each field is hidden when blank; the valuation card is hidden until a provider or a valuation is entered.</p>
+ <h2>Construction status</h2>
+ <p class="lead">The Construction Progress card. Each field is hidden when blank. The valuation is in <b>Valuation, insurance &amp; legal due diligence</b> below.</p>
  <form method="post"><input type="hidden" name="action" value="save_construction_status">
   <div class="cols">
    <div data-field="engineering_status"><label for="f_eng">Engineering status</label><input id="f_eng" type="text" name="engineering_status" maxlength="60" value="{{ construction.engineeringStatus or '' }}" placeholder="Certified"><div class="help">As stated in the latest engineering report. <span class="eg">Example: Certified</span></div></div>
@@ -467,16 +830,55 @@ _PAGE = _env.from_string(
   </div>
   <button class="primary" type="submit" style="margin-top:6px">Save construction status</button>
  </form>
- <form method="post" style="margin-top:10px"><input type="hidden" name="action" value="save_valuation">
+</div>
+
+<div class="card" id="due-diligence">
+ <h2>Valuation, insurance &amp; legal due diligence</h2>
+ <p class="lead">The property page's <b>Due Diligence</b> tab: one card each for the valuation, the insurance and the legal due diligence, with who issued it, the date, an explanation and the documents of its category (Valuation Reports, Insurance Certificates, Legal Due Diligence). A card with nothing filled says it is not published yet.</p>
+ <h3>Valuation</h3>
+ <div class="{{ 'warn' if val_status.due else 'note' }}" data-valuation-status>
+  {% if val_status.last %}Latest valuation on record: <b>{{ val_status.last }}</b> ({{ val_status.days }} day{{ '' if val_status.days == 1 else 's' }} ago).{% else %}No valuation on record yet.{% endif %}
+  {% if val_quarterly %}{% if val_status.due %} <b>The quarterly valuation is due</b>: investors are told an under-construction property is revalued every 3 months. Save the new valuation here.{% else %} The next quarterly valuation is due by <b>{{ val_status.next_due }}</b>; the admins are reminded when it is.{% endif %}{% endif %}
+ </div>
+ <form method="post"><input type="hidden" name="action" value="save_valuation">
   <div class="cols">
    <div data-field="valuation_provider"><label for="f_val_prov">Valuation provider</label><input id="f_val_prov" type="text" name="valuation_provider" maxlength="200" value="{{ valuation.provider or '' }}" placeholder="Knight Frank"><div class="help"><span class="eg">Example: Knight Frank</span></div></div>
    <div data-field="valuation_date"><label for="f_val_date">Report date</label><input id="f_val_date" type="text" name="valuation_date" maxlength="60" value="{{ valuation.reportDate or '' }}" placeholder="June 2026"><div class="help"><span class="eg">Example: June 2026</span></div></div>
    <div data-field="valuation_value"><label for="f_val_value">Latest valuation (USD)</label><input id="f_val_value" type="number" name="valuation_value" min="0" step="1" value="{{ valuation.get('value')|int if valuation.get('value') is not none else '' }}" placeholder="1520000"><div class="help">The figure in the signed report. <span class="eg">Example: 1520000</span></div></div>
    <div data-field="valuation_impact"><label for="f_val_impact">Development impact</label><input id="f_val_impact" type="text" name="valuation_impact" maxlength="240" value="{{ valuation.impactNote or '' }}" placeholder="+5% since foundation sign-off"><div class="help"><span class="eg">Example: +5% since foundation sign-off</span></div></div>
-   <div data-field="valuation_summary" style="grid-column:1/-1"><label for="f_val_summary">Market analysis</label><textarea id="f_val_summary" name="valuation_summary" rows="3" maxlength="800" placeholder="Prime-area supply is limited; comparable off-plan units sold 8% higher this quarter.">{{ valuation.summary or '' }}</textarea><div class="help">A short paragraph from the report.</div></div>
+   <div data-field="valuation_summary" style="grid-column:1/-1"><label for="f_val_summary">About the valuation</label><textarea id="f_val_summary" name="valuation_summary" rows="3" maxlength="800" placeholder="Prime-area supply is limited; comparable off-plan units sold 8% higher this quarter.">{{ valuation.summary or '' }}</textarea><div class="help">How the value was reached, in a short paragraph from the report. Blank shows a standard explanation.</div></div>
   </div>
-  <div class="note">Upload the report itself in <b>Documents</b> with the category <i>Valuation</i> — the page's “Download valuation report” button then opens it.</div>
+  {% if p.status.value in ('active', 'funded') %}
+  <div class="note" data-field="valuation_unit_price"><label for="f_val_price" style="margin-top:0">New unit price from this valuation (USD)</label>
+   <input id="f_val_price" type="number" name="valuation_unit_price" min="0.01" step="0.01" placeholder="{{ '%.2f'|format(p.unit_price) }}">
+   <div class="help">The current unit price is <b>${{ '%.2f'|format(p.unit_price) }}</b>.{% if val_implied %} This valuation divided by the {{ p.total_units }} units is <b>${{ val_implied }}</b> <button type="button" class="mini" data-use-implied onclick="document.getElementById('f_val_price').value='{{ val_implied }}'">Use it</button>.{% endif %} Filled in, it becomes the unit price when you save: the price history gets a Valuation entry, the units still for sale are offered at it, and every holder and installment payer is told by email and in the app, as on the Unit prices page. Blank keeps the current price.</div>
+   <label class="inline" style="font-weight:400"><input type="checkbox" name="confirm_large" value="1"> The change is more than {{ val_max_step }}% in one step and it is right</label>
+  </div>
+  {% else %}<div class="note">Once the listing is published, a new valuation can set the unit price here. Until then the price is set under Listing details.</div>{% endif %}
+  <div class="note">Upload each valuation report in <b>Documents</b> with the category <i>Valuation Reports</i>, who issued it and its date: they are listed under the valuation, newest first.</div>
   <button class="primary" type="submit" style="margin-top:6px">Save valuation</button>
+ </form>
+
+ <h3>Insurance</h3>
+ <form method="post"><input type="hidden" name="action" value="save_insurance">
+  <div class="cols">
+   <div data-field="insurance_provider"><label for="f_ins_prov">Insurance provider</label><input id="f_ins_prov" type="text" name="insurance_provider" maxlength="200" value="{{ insurance.provider or '' }}" placeholder="AXA Gulf"><div class="help">The insurer. <span class="eg">Example: AXA Gulf</span></div></div>
+   <div data-field="insurance_policy"><label for="f_ins_policy">Policy number</label><input id="f_ins_policy" type="text" name="insurance_policy" maxlength="80" value="{{ insurance.policyNumber or '' }}" placeholder="PRP-2026-00418"><div class="help">Blank hides it. <span class="eg">Example: PRP-2026-00418</span></div></div>
+   <div data-field="insurance_coverage"><label for="f_ins_cov">Coverage amount (USD)</label><input id="f_ins_cov" type="number" name="insurance_coverage" min="0" step="1" value="{{ insurance.get('coverage')|int if insurance.get('coverage') is not none else '' }}" placeholder="1650000"><div class="help">Blank hides it. <span class="eg">Example: 1650000</span></div></div>
+   <div data-field="insurance_summary" style="grid-column:1/-1"><label for="f_ins_summary">About the insurance</label><textarea id="f_ins_summary" name="insurance_summary" rows="3" maxlength="800" placeholder="Building and contents insured against fire, flood and third-party liability for the full reinstatement value.">{{ insurance.summary or '' }}</textarea><div class="help">What the policy covers. Blank shows a standard explanation.</div></div>
+  </div>
+  <div class="note">Upload the policy or certificate in <b>Documents</b> with the category <i>Insurance Certificates</i>.</div>
+  <button class="primary" type="submit" style="margin-top:6px">Save insurance</button>
+ </form>
+ <h3>Legal due diligence</h3>
+ <form method="post"><input type="hidden" name="action" value="save_legal_dd">
+  <div class="cols">
+   <div data-field="legal_dd_provider"><label for="f_ldd_prov">Law firm</label><input id="f_ldd_prov" type="text" name="legal_dd_provider" maxlength="200" value="{{ legal_dd.provider or '' }}" placeholder="Al Tamimi &amp; Company"><div class="help">Who carried out the review. <span class="eg">Example: Al Tamimi &amp; Company</span></div></div>
+   <div data-field="legal_dd_date"><label for="f_ldd_date">Review date</label><input id="f_ldd_date" type="date" name="legal_dd_date" value="{{ legal_dd.date or '' }}"><div class="help">The date on the report.</div></div>
+   <div data-field="legal_dd_summary" style="grid-column:1/-1"><label for="f_ldd_summary">About the review</label><textarea id="f_ldd_summary" name="legal_dd_summary" rows="3" maxlength="800" placeholder="Title deed, SPV ownership and the offering documents reviewed; no encumbrances found.">{{ legal_dd.summary or '' }}</textarea><div class="help">What was checked and found. Blank shows a standard explanation.</div></div>
+  </div>
+  <div class="note">Upload the report in <b>Documents</b> with the category <i>Legal Due Diligence</i>.</div>
+  <button class="primary" type="submit" style="margin-top:6px">Save legal due diligence</button>
  </form>
 </div>
 
@@ -551,12 +953,13 @@ _INDEX_PAGE = _env.from_string(
 <p class="lead">Every property the platform lists. Open one to edit photos, documents, facts, milestones — or create a new draft.</p></div>
 <div class="actions">{% if full_admin %}<a class="btn" href="/admin/owner-submissions">Owner submissions{% if owner_waiting %} ({{ owner_waiting }} waiting){% endif %}</a>{% endif %}<a class="btn primary" href="/admin/listing/new">+ New listing</a></div></div>
 {% if full_admin and owner_waiting %}<div class="warn">{{ owner_waiting }} propert{{ 'y' if owner_waiting == 1 else 'ies' }} submitted by owners {{ 'is' if owner_waiting == 1 else 'are' }} waiting for review in <a href="/admin/owner-submissions">Owner Submissions</a>. They join this list once approved.</div>{% endif %}
+{% if valuation_due %}<div class="warn" data-valuation-due>{{ valuation_due|length }} under-construction listing{{ '' if valuation_due|length == 1 else 's' }} {{ 'has' if valuation_due|length == 1 else 'have' }} gone 3 months without a valuation (investors are told it is every 3 months): {% for pid, d in valuation_due.items() %}<a href="/admin/listing/{{ pid }}#due-diligence">{{ d.title }}</a> ({{ d.days }} days){{ ', ' if not loop.last }}{% endfor %}.</div>{% endif %}
 <div class="card">
 {% if rows %}<table><tr><th>Title</th><th>Model</th><th>Status</th><th>Location</th><th>Updated</th><th></th></tr>
 {% for p in rows %}<tr>
  <td><a href="/admin/listing/{{ p.id }}">{{ p.title }}</a></td>
  <td class="muted">{{ model_labels.get(p.model, p.model) }}</td>
- <td><span class="badge {{ 'active' if p.status.value in ('active','funded') else ('closed' if p.status.value == 'closed' else 'draft') }}">{{ status_labels.get(p.status.value, p.status.value) }}</span></td>
+ <td><span class="badge {{ 'active' if p.status.value in ('active','funded') else ('closed' if p.status.value == 'closed' else 'draft') }}">{{ status_labels.get(p.status.value, p.status.value) }}</span>{% if valuation_due.get(p.id|string) %} <span class="badge closed">Valuation due</span>{% endif %}</td>
  <td class="muted">{{ p.location }}</td>
  <td class="muted">{{ p.updated_at.strftime('%Y-%m-%d') if p.updated_at else '' }}</td>
  <td><a class="btn mini" href="/admin/listing/{{ p.id }}">Edit</a></td>
@@ -747,8 +1150,13 @@ class ListingEditorView(BaseView):
                     Property.status == PropertyStatus.under_review,
                 )
             )
+            valuation_due = {
+                str(r["property"].id): {"title": r["property"].title, "days": r["days"]}
+                for r in await valuation_service.due_listings(session)
+            }
             html = _INDEX_PAGE.render(
                 rows=rows,
+                valuation_due=valuation_due,
                 status_labels=_STATUS_LABELS,
                 model_labels=listing_service.MODEL_LABELS,
                 full_admin=is_full_admin(request),
@@ -811,6 +1219,49 @@ class ListingEditorView(BaseView):
         return HTMLResponse(html, status_code=400 if error else 200)
 
     # ------------------------------------------------------------------ editor #
+    # ------------------------------------------------------- picked documents #
+    # Each file the Documents card is given is uploaded the moment it is picked (client
+    # letter, 2026-11-18, as on Capimax BRX) and answered with a signed token; the card's save
+    # turns the tokens into documents. A file removed from the card before saving is deleted.
+    @expose("/listing/{prop_id}/stage-doc", methods=["POST"])
+    async def stage_doc(self, request: Request):
+        if self._gate(request) is not None:
+            return JSONResponse({"error": "Sign in again."}, status_code=401)
+        try:
+            prop_id = uuid.UUID(request.path_params["prop_id"])
+        except ValueError:
+            return JSONResponse({"error": "Listing not found."}, status_code=404)
+        form = await request.form()
+        got = await _read_upload(form.get("file"))
+        if not got:
+            return JSONResponse({"error": "The file is empty."}, status_code=422)
+        async with session_scope() as session:
+            if await session.get(Property, prop_id) is None:
+                return JSONResponse({"error": "Listing not found."}, status_code=404)
+        try:
+            staged = document_service.stage_property_file(prop_id, got[0], got[1])
+        except AppError as exc:
+            return JSONResponse({"error": exc.message}, status_code=exc.status_code)
+        return JSONResponse(staged)
+
+    @expose("/listing/{prop_id}/unstage-doc", methods=["POST"])
+    async def unstage_doc(self, request: Request):
+        if self._gate(request) is not None:
+            return JSONResponse({"error": "Sign in again."}, status_code=401)
+        try:
+            prop_id = uuid.UUID(request.path_params["prop_id"])
+        except ValueError:
+            return JSONResponse({"error": "Listing not found."}, status_code=404)
+        form = await request.form()
+        try:
+            async with session_scope() as session:
+                await document_service.unstage_property_file(
+                    session, str(form.get("token") or ""), prop_id
+                )
+        except AppError as exc:
+            return JSONResponse({"error": exc.message}, status_code=exc.status_code)
+        return JSONResponse({"removed": True})
+
     @expose("/listing/{prop_id}", methods=["GET", "POST"])
     async def editor(self, request: Request):
         if (resp := self._gate(request)) is not None:
@@ -879,6 +1330,17 @@ class ListingEditorView(BaseView):
             profile = listing_service.profile_of(prop.model)
             terms = await _installment_terms(session)
             content = dict(prop.content or {})
+            saved_developers = developer_service.options(
+                await developer_service.list_saved(session)
+            )
+            last_val = (await valuation_service.last_valuations(session, [prop])).get(prop.id)
+            val_status = valuation_service.status_of(prop, last_val, dt.datetime.now(dt.UTC).date())
+            val_value = (content.get("valuation") or {}).get("value")
+            val_implied = (
+                f"{decimal.Decimal(str(val_value)) / prop.total_units:.2f}"
+                if val_value and prop.total_units
+                else ""
+            )
             base = get_settings().app_base_url.rstrip("/")
             ref = prop.slug or str(prop.id)
             if preview_token:
@@ -906,8 +1368,15 @@ class ListingEditorView(BaseView):
                 details=content.get("details") or {},
                 amenities_text="\n".join((content.get("details") or {}).get("amenities") or []),
                 developer=content.get("developer") or {},
+                saved_developers=saved_developers,
                 spv=content.get("spv") or {},
                 valuation=content.get("valuation") or {},
+                val_status=val_status,
+                val_quarterly=valuation_service.is_quarterly(prop),
+                val_implied=val_implied,
+                val_max_step=price_service.MAX_STEP_PCT,
+                insurance=content.get("insurance") or {},
+                legal_dd=content.get("legalDueDiligence") or {},
                 construction=content.get("construction") or {},
                 cashflow=content.get("cashflow") or {},
                 content_compliance=content.get("compliance") or [],
@@ -925,6 +1394,7 @@ class ListingEditorView(BaseView):
                 construction_progress=listing_service.construction_progress(milestones),
                 ms_statuses=list(listing_service.MILESTONE_STATUS_LABELS.items()),
                 categories=document_service.DOC_CATEGORIES,
+                doc_titles=_doc_titles(content),
                 cat_labels=dict(document_service.DOC_CATEGORIES),
                 max_mb=get_settings().storage_max_upload_mb,
                 public_url=f"{base}/property/{ref}",
@@ -1004,23 +1474,109 @@ class ListingEditorView(BaseView):
             return "Photo order updated.", preview_token
         # --- documents -------------------------------------------------------------- #
         if action == "upload_doc":
-            got = await _read_upload(form.get("file"))
-            if not got:
-                raise ValueError("Choose a file to upload.")
-            title = str(form.get("title") or "").strip()
-            if not title:
-                raise ValueError(
-                    "Document title: this field is required. Example: Independent Valuation Report."
+            # Several files at once (client letter, 2026-11-18, as on Capimax BRX). With the
+            # page's script each file was uploaded when picked and comes back as a signed
+            # token; without it the files come in the form. Each row has its name in English,
+            # Arabic and French, its category, issuer and date, in the order chosen. Every row
+            # is checked before any document is made, so a refused one makes nothing.
+            tokens = [str(t) for t in form.getlist("staged") if str(t).strip()]
+            ups = [] if tokens else [u for u in form.getlist("file") if getattr(u, "filename", "")]
+            if not tokens and not ups:
+                raise ValueError("Choose at least one file to upload.")
+
+            def nth(name: str, i: int) -> str:
+                vals = form.getlist(name)
+                return str(
+                    vals[i] if i < len(vals) else (vals[0] if len(vals) == 1 else "")
+                ).strip()
+
+            def names(i: int) -> dict[str, str]:
+                return {
+                    lang: " ".join(nth(f"title_{lang}", i).split())[:200]
+                    for lang in listing_translation.LANGUAGES
+                }
+
+            if tokens:
+                rows = []
+                for i, token in enumerate(tokens):
+                    _key, fname = document_service.read_stage_token(token, prop.id)
+                    title = nth("title", i) or _title_from_filename(fname)
+                    doc_type = document_service.validate_doc_type(nth("doc_type", i) or "other")
+                    issued_on = _form_day(nth("issued_on", i), f"{title}: date")
+                    rows.append(
+                        (token, title[:200], doc_type, nth("issuer", i), issued_on, names(i))
+                    )
+                made = []
+                for token, title, doc_type, issuer, issued_on, langs in rows:
+                    doc = await document_service.attach_staged_document(
+                        session,
+                        prop_id=prop.id,
+                        token=token,
+                        title=title,
+                        doc_type=doc_type,
+                        issuer=issuer,
+                        issued_on=issued_on,
+                    )
+                    made.append((doc, title, langs))
+                await _save_doc_titles(session, prop, made, actor)
+                if len(made) == 1:
+                    return f"Uploaded “{_html.escape(made[0][1])}”.", preview_token
+                return f"Uploaded {len(made)} documents.", preview_token
+
+            batch = []
+            for i, up in enumerate(ups):
+                got = await _read_upload(up)
+                if not got:
+                    raise ValueError(f"{_html.escape(up.filename)}: the file is empty.")
+                title = nth("title", i) or _title_from_filename(got[0])
+                doc_type = document_service.validate_doc_type(nth("doc_type", i) or "other")
+                document_service.validate_file(got[0], got[1])
+                issued_on = _form_day(nth("issued_on", i), f"{title}: date")
+                batch.append((title[:200], doc_type, nth("issuer", i), issued_on, got, names(i)))
+            made = []
+            for title, doc_type, issuer, issued_on, got, langs in batch:
+                doc = await document_service.admin_create_property_document(
+                    session,
+                    prop_id=prop.id,
+                    title=title,
+                    doc_type=doc_type,
+                    filename=got[0],
+                    data=got[1],
+                    issuer=issuer,
+                    issued_on=issued_on,
                 )
-            await document_service.admin_create_property_document(
+                made.append((doc, title, langs))
+            await _save_doc_titles(session, prop, made, actor)
+            if len(batch) == 1:
+                return f"Uploaded “{_html.escape(batch[0][0])}”.", preview_token
+            return f"Uploaded {len(batch)} documents.", preview_token
+        if action == "doc_edit":
+            title = str(form.get("title") or "").strip()
+            await document_service.update_document_details(
                 session,
-                prop_id=prop.id,
+                doc_id=_uuid(form.get("doc_id")),
                 title=title,
                 doc_type=str(form.get("doc_type") or "other"),
-                filename=got[0],
-                data=got[1],
+                issuer=str(form.get("issuer") or ""),
+                issued_on=_form_day(str(form.get("issued_on") or ""), "Date"),
+                actor_id=actor,
             )
-            return f"Uploaded “{_html.escape(title)}”.", preview_token
+            if any(f"title_{lang}" in form for lang in listing_translation.LANGUAGES):
+                doc_id = _uuid(form.get("doc_id"))
+                langs = {
+                    lang: " ".join(str(form.get(f"title_{lang}") or "").split())[:200]
+                    for lang in listing_translation.LANGUAGES
+                }
+                new = _with_doc_titles(prop.content or {}, {str(doc_id): langs}, clear_blank=True)
+                if new != (prop.content or {}):
+                    await listing_service.apply_content(
+                        session,
+                        prop=prop,
+                        new_content=new,
+                        section=listing_translation.KEY,
+                        actor_id=actor,
+                    )
+            return f"Saved “{_html.escape(title)}”.", preview_token
         if action == "doc_delete":
             await document_service.delete_document(
                 session, doc_id=_uuid(form.get("doc_id")), actor_id=actor
@@ -1055,10 +1611,49 @@ class ListingEditorView(BaseView):
                 key = f"property-images/{prop.id}/developer-logo-{uuid.uuid4().hex}.{ext}"
                 storage.save(key, blob, ctype)
                 logo_url = storage.public_url(key)
-            new = listing_service.with_developer(prop.content or {}, form, logo_url=logo_url)
+            saved_id = str(form.get("saved_developer_id") or "").strip()
+            picked = (
+                await developer_service.get_saved(session, _uuid(saved_id)) if saved_id else None
+            )
+            if logo_url is None and picked is not None and str(form.get("clear_logo") or "") != "1":
+                # filled from a saved developer: its logo comes with it
+                logo_url = (picked.profile or {}).get("logo") or None
+            before = prop.content or {}
+            old_name = str(developer_service.profile_of(before).get("name") or "")
+            new = listing_service.with_developer(before, form, logo_url=logo_url)
+            new_name = str(developer_service.profile_of(new).get("name") or "")
+            # the developer's Arabic / French text (client 2026-11-19): a developer picked from
+            # the saved list brings its own; one typed by name fills the languages not yet
+            # translated; the text of the developer the card named before goes with it
+            saved = await developer_service.find_saved(session, new_name)
+            new = developer_service.with_versions(
+                new,
+                saved.versions if saved is not None else {},
+                replace=picked is not None and saved is not None and saved.id == picked.id,
+                drop_missing=developer_slug(old_name) != developer_slug(new_name),
+            )
+            came = [
+                name
+                for lang, name in listing_translation.LANGUAGES.items()
+                if (saved is not None and (saved.versions or {}).get(lang))
+                and developer_service.versions_in(new).get(lang)
+                != developer_service.versions_in(before).get(lang)
+            ]
             await listing_service.apply_content(
                 session, prop=prop, new_content=new, section="developer", actor_id=actor
             )
+            await developer_service.remember(
+                session,
+                developer_service.profile_of(new),
+                actor_id=actor,
+                versions=developer_service.versions_in(new),
+            )
+            if came:
+                return (
+                    f"Developer saved, with its {' and '.join(came)} version"
+                    f"{'s' if len(came) > 1 else ''} from the saved developer.",
+                    preview_token,
+                )
             return "Developer saved.", preview_token
         if action == "save_spv":
             names = [f.name for f in listing_service.fields_in(listing_service.GROUP_SPV)]
@@ -1079,11 +1674,56 @@ class ListingEditorView(BaseView):
             )
             return f"{listing_service.ROW_LABELS[section]} saved.", preview_token
         if action == "save_valuation":
+            before = dict((prop.content or {}).get("valuation") or {})
             new = listing_service.with_valuation(prop.content or {}, form)
+            after = dict(new.get("valuation") or {})
+            raw_price = str(form.get("valuation_unit_price") or "").strip()
+            changed = any(
+                before.get(k) != after.get(k)
+                for k in ("provider", "reportDate", "value", "impactNote", "summary")
+            )
+            if (changed or raw_price) and any(
+                after.get(k) for k in ("provider", "reportDate", "value")
+            ):
+                # the day of this valuation: the quarterly reminder counts from it
+                after["recordedOn"] = dt.datetime.now(dt.UTC).date().isoformat()
+                new["valuation"] = after
             await listing_service.apply_content(
                 session, prop=prop, new_content=new, section="valuation", actor_id=actor
             )
-            return "Valuation saved.", preview_token
+            if not raw_price:
+                return "Valuation saved.", preview_token
+            # adopted as the unit price in the same step (client letter, 2026-11-18): the price
+            # history, the repricing and the notice to every holder, as on Unit prices
+            old_price = decimal.Decimal(prop.unit_price)
+            note = ", ".join(str(x) for x in (after.get("provider"), after.get("reportDate")) if x)
+            await price_service.record_price(
+                session,
+                property_id=prop.id,
+                price=raw_price,
+                label=valuation_service.PRICE_LABEL,
+                note=note or None,
+                actor_id=actor,
+                confirm_large=str(form.get("confirm_large") or "") == "1",
+            )
+            return (
+                f"Valuation saved and adopted as the unit price: {price_service.usd(old_price)} "
+                f"to {price_service.usd(decimal.Decimal(prop.unit_price))}. Every holder and "
+                "installment payer is told by email and in the app.",
+                preview_token,
+            )
+        if action == "save_insurance":
+            new = listing_service.with_insurance(prop.content or {}, form)
+            await listing_service.apply_content(
+                session, prop=prop, new_content=new, section="insurance", actor_id=actor
+            )
+            return "Insurance saved.", preview_token
+        if action == "save_legal_dd":
+            new = listing_service.with_legal_due_diligence(prop.content or {}, form)
+            await listing_service.apply_content(
+                session, prop=prop, new_content=new, section="legalDueDiligence", actor_id=actor
+            )
+            return "Legal due diligence saved.", preview_token
         if action == "save_construction_status":
             new = listing_service.with_construction_status(prop.content or {}, form)
             await listing_service.apply_content(
@@ -1128,6 +1768,9 @@ class ListingEditorView(BaseView):
                 section=listing_translation.KEY,
                 actor_id=actor,
             )
+            # the developer's text in this language is kept with the saved developer, for the
+            # next listing that picks it (client 2026-11-19)
+            await developer_service.remember_version(session, new, lang, actor_id=actor)
             return f"{listing_translation.LANGUAGES[lang]} version saved.", preview_token
         # --- milestones ------------------------------------------------------------- #
         if action == "ms_add":
@@ -1163,3 +1806,82 @@ def _uuid(raw) -> uuid.UUID:
         return uuid.UUID(str(raw))
     except ValueError as exc:
         raise ValueError("That item no longer exists. Please reload the page.") from exc
+
+
+def _doc_titles(content: dict) -> dict[str, dict[str, str]]:
+    """{document id: {lang: name}} of the listing's Arabic / French document names."""
+    out: dict[str, dict[str, str]] = {}
+    for lang in listing_translation.LANGUAGES:
+        docs = listing_translation.version(content, lang).get("documents")
+        for doc_id, cells in (docs if isinstance(docs, dict) else {}).items():
+            if isinstance(cells, dict) and cells.get("title"):
+                out.setdefault(str(doc_id), {})[lang] = str(cells["title"])
+    return out
+
+
+def _with_doc_titles(
+    content: dict, titles: dict[str, dict[str, str]], *, clear_blank: bool = False
+) -> dict:
+    """The listing's content with these documents' Arabic / French names (the same place the
+    translations card keeps them). A blank name is left alone, or removed with ``clear_blank``."""
+    new = copy.deepcopy(content or {})
+    versions = new.get(listing_translation.KEY)
+    versions = versions if isinstance(versions, dict) else {}
+    for doc_id, by_lang in titles.items():
+        for lang in listing_translation.LANGUAGES:
+            name = (by_lang.get(lang) or "").strip()
+            if not name and not clear_blank:
+                continue
+            version = versions.get(lang) if isinstance(versions.get(lang), dict) else {}
+            docs = version.get("documents") if isinstance(version.get("documents"), dict) else {}
+            if name:
+                docs[str(doc_id)] = {"title": name}
+            else:
+                docs.pop(str(doc_id), None)
+            if docs:
+                version["documents"] = docs
+            else:
+                version.pop("documents", None)
+            if version:
+                versions[lang] = version
+            else:
+                versions.pop(lang, None)
+    new[listing_translation.KEY] = versions
+    if not versions:
+        new.pop(listing_translation.KEY, None)
+    return new
+
+
+async def _save_doc_titles(session, prop: Property, made: list, actor) -> None:
+    """Keep the Arabic / French names typed next to the files just uploaded."""
+    titles = {str(doc.id): langs for doc, _title, langs in made if any(langs.values())}
+    if not titles:
+        return
+    await listing_service.apply_content(
+        session,
+        prop=prop,
+        new_content=_with_doc_titles(prop.content or {}, titles),
+        section=listing_translation.KEY,
+        actor_id=actor,
+    )
+
+
+def _title_from_filename(name: str) -> str:
+    """A document's title when none is typed: its file name without the extension, with
+    "_" / "-" as spaces ("valuation_report-2026.pdf" -> "valuation report 2026")."""
+    stem = name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    stem = stem.rsplit(".", 1)[0] if "." in stem else stem
+    return " ".join(stem.replace("_", " ").replace("-", " ").split()) or "Document"
+
+
+def _form_day(raw: str, field: str):
+    """A date field (YYYY-MM-DD) or None when blank."""
+    import datetime as _dt
+
+    s = (raw or "").strip()
+    if not s:
+        return None
+    try:
+        return _dt.date.fromisoformat(s)
+    except ValueError as exc:
+        raise ValueError(f"{field}: must be a date.") from exc

@@ -168,7 +168,7 @@ async def test_listing_editor_documents_validate_delete_replace(client, db):
     # invalid category
     r = await client.post(
         f"/admin/listing/{pid}",
-        data={"action": "upload_doc", "title": "DD", "doc_type": "due_diligence"},
+        data={"action": "upload_doc", "title": "DD", "doc_type": "brochure-old"},
         files={"file": ("dd.pdf", b"%PDF-1.4 x", "application/pdf")},
     )
     assert r.status_code == 400 and "category must be one of" in r.text

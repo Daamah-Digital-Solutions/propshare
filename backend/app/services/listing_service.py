@@ -1462,6 +1462,44 @@ def with_valuation(content: dict, form: dict) -> dict:
     return c
 
 
+def _opt_day(raw: Any, field: str) -> str:
+    """A calendar day as YYYY-MM-DD (a date field), or blank."""
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    try:
+        return dt.date.fromisoformat(s).isoformat()
+    except ValueError as exc:
+        raise _bad(field, "must be a date") from exc
+
+
+def with_insurance(content: dict, form: dict) -> dict:
+    """The property's insurance, for the Due Diligence tab (client letter, 2026-11-18): who
+    insures it, the policy, what it covers, and a short explanation. The policy itself is a
+    document of the category Insurance Certificates."""
+    c = copy.deepcopy(content or {})
+    d = _section(c, "insurance")
+    _put(d, "provider", _opt_str(form.get("insurance_provider"), "Insurance provider"))
+    _put(d, "policyNumber", _opt_str(form.get("insurance_policy"), "Policy number", max_len=80))
+    _put(d, "coverage", _opt_num(form.get("insurance_coverage"), "Coverage amount"))
+    _put(d, "summary", _opt_text(form.get("insurance_summary"), "About the insurance", max_len=800))
+    _put(c, "insurance", d)
+    return c
+
+
+def with_legal_due_diligence(content: dict, form: dict) -> dict:
+    """The legal due diligence, for the Due Diligence tab (client letter, 2026-11-18): the law
+    firm that carried it out, the date and a short explanation. The report itself is a document
+    of the category Legal Due Diligence."""
+    c = copy.deepcopy(content or {})
+    d = _section(c, "legalDueDiligence")
+    _put(d, "provider", _opt_str(form.get("legal_dd_provider"), "Law firm"))
+    _put(d, "date", _opt_day(form.get("legal_dd_date"), "Review date"))
+    _put(d, "summary", _opt_text(form.get("legal_dd_summary"), "About the review", max_len=800))
+    _put(c, "legalDueDiligence", d)
+    return c
+
+
 def with_construction_status(content: dict, form: dict) -> dict:
     c = copy.deepcopy(content or {})
     d = _section(c, "construction")

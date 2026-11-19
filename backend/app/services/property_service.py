@@ -26,7 +26,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from app.core.audit import write_audit
 from app.core.config import get_settings
 from app.core.errors import AppError
-from app.models import Property
+from app.models import OwnershipLedger, Property
 from app.models.base import PropertyStatus
 from app.models.identity import User
 from app.schemas.property import OWNERSHIP_MODELS
@@ -112,7 +112,11 @@ def serialize_summary(prop: Property, owner_names: dict[uuid.UUID, str | None]) 
         "funding_progress": _num(prop.funding_progress),
         "total_units": prop.total_units,
         "available_units": prop.available_units,
-        "investors_count": prop.investors_count,
+        # the people who hold it now (live_investors) when the caller counted them, else the
+        # running count of purchases kept on the row
+        "investors_count": getattr(prop, "_live_investors", None)
+        if getattr(prop, "_live_investors", None) is not None
+        else prop.investors_count,
         "developer_name": _developer_name(prop, owner_names),
         "developer_slug": developer_slug(_developer_name(prop, owner_names)),
     }
@@ -152,6 +156,32 @@ async def get_owned_for_update(
     if prop.owner_id != owner_id:
         raise AppError("NOT_PROPERTY_OWNER", "You do not own this property.", status_code=403)
     return prop
+
+
+async def attach_live_investors(session: AsyncSession, props: list[Property]) -> None:
+    """Count, for each listing, the people who hold it now: units in the ownership ledger, or an
+    installment plan still running. A buyer who bought twice is one investor, and one who sold
+    everything is none (the running investors_count counts purchases). Stored on the objects as
+    a transient attribute that serialize_summary reads; nothing is written."""
+    ids = [p.id for p in props]
+    if not ids:
+        return
+    from app.models.installments import InstallmentPlan
+
+    held = (
+        select(OwnershipLedger.property_id.label("pid"), OwnershipLedger.user_id.label("uid"))
+        .where(OwnershipLedger.property_id.in_(ids))
+        .group_by(OwnershipLedger.property_id, OwnershipLedger.user_id)
+        .having(func.sum(OwnershipLedger.units) > 0)
+    )
+    paying = select(
+        InstallmentPlan.property_id.label("pid"), InstallmentPlan.investor_id.label("uid")
+    ).where(InstallmentPlan.property_id.in_(ids), InstallmentPlan.status == "active")
+    both = held.union(paying).subquery()
+    rows = await session.execute(select(both.c.pid, func.count()).group_by(both.c.pid))
+    counts = {pid: int(n) for pid, n in rows.all()}
+    for p in props:
+        p._live_investors = counts.get(p.id, 0)  # type: ignore[attr-defined]
 
 
 async def _owner_names(session: AsyncSession, props: list[Property]) -> dict[uuid.UUID, str | None]:
@@ -285,6 +315,7 @@ async def public_developer_profile(
                 return dev[key]
         return None
 
+    await attach_live_investors(session, mine)
     summaries = [
         listing_translation.localized_summary(serialize_summary(p, owner_names), p.content, lang)
         for p in mine
@@ -302,7 +333,7 @@ async def public_developer_profile(
             "active": sum(1 for p in mine if p.status == PropertyStatus.active),
             "funded": sum(1 for p in mine if p.status == PropertyStatus.funded),
             "total_raised": float(sum((p.funded_amount or 0) for p in mine)),
-            "investors": sum(int(p.investors_count or 0) for p in mine),
+            "investors": sum(int(getattr(p, "_live_investors", 0) or 0) for p in mine),
         },
         "properties": summaries,
     }

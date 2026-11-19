@@ -127,7 +127,7 @@ async def test_editor_covers_every_optional_page_block_with_labels_help_and_exam
     for f in listing_service.CORE_FIELDS:
         profile = listing_service.profile_of("installment")
         wrapper = re.search(
-            rf'<div class="f" data-field="{f.name}"(?: hidden)?>(.*?)<div class="help">(.*?)</div>',
+            rf'<div class="f(?: wide)?" data-field="{f.name}"(?: hidden)?>(.*?)<div class="help">(.*?)</div>',
             html,
             re.S,
         )
@@ -164,7 +164,8 @@ async def test_editor_covers_every_optional_page_block_with_labels_help_and_exam
         "files",
         "title",
         "doc_type",
-        "file",
+        "issuer",
+        "issued_on",
         "ms_title",
         "ms_status",
         "ms_progress",

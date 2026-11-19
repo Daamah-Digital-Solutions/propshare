@@ -100,14 +100,16 @@ GROUPS: tuple[tuple[str, tuple[Text, ...], tuple[str, ...]], ...] = (
         ("investmentStructure", "marketAnalysis", "exitMechanisms"),
     ),
     (
-        "Construction status & valuation",
+        "Construction status, valuation, insurance & legal due diligence",
         (
             Text("construction.engineeringStatus", "Engineering status", max_len=60),
             Text("construction.auditStatus", "Milestone audit", max_len=60),
             Text("valuation.provider", "Valuation provider"),
             Text("valuation.reportDate", "Report date", max_len=60),
             Text("valuation.impactNote", "Development impact", max_len=240),
-            Text("valuation.summary", "Market analysis", "text", 800),
+            Text("valuation.summary", "About the valuation", "text", 800),
+            Text("insurance.summary", "About the insurance", "text", 800),
+            Text("legalDueDiligence.summary", "About the legal review", "text", 800),
         ),
         (),
     ),

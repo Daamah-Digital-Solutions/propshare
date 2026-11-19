@@ -97,3 +97,5 @@ class InstallmentRunOut(BaseModel):
     reminders_sent: int
     paid: int
     overdue: int
+    # the same hourly job reminds the admins of quarterly valuations that are due
+    valuation_reminders: int = 0

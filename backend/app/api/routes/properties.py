@@ -77,6 +77,7 @@ async def list_properties(
         offset=offset,
     )
     owner_names = await property_service._owner_names(session, rows)
+    await property_service.attach_live_investors(session, rows)
     items = [
         PropertySummaryOut(
             **listing_translation.localized_summary(
@@ -111,6 +112,7 @@ async def get_property(
     it lets the owner see a draft exactly as investors will, without publishing it."""
     prop = await property_service.get_public_detail(session, id_or_slug, preview_token=preview)
     owner_names = await property_service._owner_names(session, [prop])
+    await property_service.attach_live_investors(session, [prop])
     data = property_service.serialize_detail(prop, owner_names)
     # Overlay the live, admin-configurable fee rates so the displayed platform &
     # management fees always match what the investment engine will actually charge.
