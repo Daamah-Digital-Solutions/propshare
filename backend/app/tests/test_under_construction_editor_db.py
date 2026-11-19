@@ -9,6 +9,7 @@ change and clear every one of them.
 # ruff: noqa: E501  (long literal form payloads keep the scenarios readable)
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 
 import pytest
@@ -264,6 +265,8 @@ async def test_valuation_construction_cashflow_compliance_spv_and_developer(clie
         "value": 1050000.0,
         "impactNote": "+5% since foundation",
         "summary": "Supply is limited.",
+        # the day it was saved: the quarterly valuation reminder counts from it
+        "recordedOn": dt.datetime.now(dt.UTC).date().isoformat(),
     }
     assert c["construction"] == {"engineeringStatus": "Certified", "auditStatus": "On track"}
     assert c["cashflow"] == {
