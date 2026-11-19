@@ -47,6 +47,10 @@ import { assetValue as valueOf } from "@/lib/properties";
 import UnitPriceHistory from "@/components/property/UnitPriceHistory";
 import { fundedPct, fundingBar, fundingText } from "@/lib/funding";
 import PropertyGallery from "@/components/property/PropertyGallery";
+import InvestmentModelSection from "@/components/property/InvestmentModelSection";
+import DueDiligenceTab from "@/components/property/DueDiligenceTab";
+import { textDir } from "@/lib/textDir";
+import { InvestmentStrategyButton } from "./InvestmentStrategyButton";
 
 /**
  * Under-construction property page — the design the client knew (the model page removed on
@@ -337,10 +341,15 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                   ) : (
                     <Badge className="bg-success text-success-foreground">Open for Investment</Badge>
                   )}
+                  <InvestmentStrategyButton ready={false} />
                 </div>
                 <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-3">{detail.title}</h1>
                 {/* The listing's own subtitle when it has one, otherwise the model tagline. */}
-                <p className="text-muted-foreground mb-4">{detail.subtitle?.trim() || cfg.tagline}</p>
+                {detail.subtitle?.trim() ? (
+                  <p translate="no" dir={textDir(detail.subtitle)} className="text-muted-foreground mb-4">{detail.subtitle}</p>
+                ) : (
+                  <p className="text-muted-foreground mb-4">{cfg.tagline}</p>
+                )}
                 <div className="flex items-center gap-2 text-sm text-muted-foreground mb-6">
                   <MapPin size={16} /> {detail.location}
                 </div>
@@ -385,6 +394,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                 <TabsTrigger value="financials" className="rounded-lg">Financials</TabsTrigger>
                 <TabsTrigger value="structure" className="rounded-lg">SPV Structure</TabsTrigger>
                 <TabsTrigger value="documents" className="rounded-lg">Documents</TabsTrigger>
+                <TabsTrigger value="due-diligence" className="rounded-lg">Due Diligence</TabsTrigger>
                 <TabsTrigger value="timeline" className="rounded-lg">Timeline</TabsTrigger>
                 <TabsTrigger value="developer" className="rounded-lg">Developer</TabsTrigger>
               </TabsList>
@@ -393,7 +403,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
               <TabsContent value="overview" className="mt-6 space-y-6">
                 <SectionCard icon={Building2} title="Property Overview">
                   <div className="text-sm text-muted-foreground space-y-4">
-                    {detail.description && <p className="whitespace-pre-line">{detail.description}</p>}
+                    {detail.description && <p translate="no" dir={textDir(detail.description)} className="whitespace-pre-line">{detail.description}</p>}
                     <div>
                       <div className="text-xs uppercase text-muted-foreground mb-2">Investment Highlights</div>
                       <div className="grid sm:grid-cols-2 gap-2">
@@ -420,6 +430,9 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                     )}
                   </div>
                 </SectionCard>
+
+                {/* how this property makes its return, after purchase, on exit (client letter) */}
+                <InvestmentModelSection ready={false} />
 
                 {offersPlan && (
                   <Card className="border-amber-500/30" data-testid="installment-structure">
@@ -614,12 +627,12 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                         {str(valuation.provider) && <Tile label="Valuation Provider" value={str(valuation.provider)} />}
                         {str(valuation.reportDate) && <Tile label="Report Issue Date" value={str(valuation.reportDate)} />}
                         {num(valuation.value) != null && <Tile label="Latest Valuation" value={fmt(num(valuation.value)!)} />}
-                        {str(valuation.impactNote) && <Tile label="Development Impact on Valuation" value={str(valuation.impactNote)} accent="success" />}
+                        {str(valuation.impactNote) && <Tile label="Development Impact on Valuation" value={<span translate="no" dir={textDir(str(valuation.impactNote))}>{str(valuation.impactNote)}</span>} accent="success" />}
                       </div>
                       {str(valuation.summary) && (
                         <div className="p-3 rounded-lg bg-secondary/40 border border-border">
                           <div className="text-xs uppercase text-muted-foreground mb-1">Market Analysis</div>
-                          <div className="text-foreground whitespace-pre-line">{str(valuation.summary)}</div>
+                          <div translate="no" dir={textDir(str(valuation.summary))} className="text-foreground whitespace-pre-line">{str(valuation.summary)}</div>
                         </div>
                       )}
                       {valuationDoc && (
@@ -699,13 +712,13 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                         {str(cashflow.rentalProjection) && (
                           <div className="p-3 rounded-lg bg-secondary/30 border border-border">
                             <div className="text-xs text-muted-foreground mb-1">Rental / Income Projections</div>
-                            <div className="text-foreground whitespace-pre-line">{str(cashflow.rentalProjection)}</div>
+                            <div translate="no" dir={textDir(str(cashflow.rentalProjection))} className="text-foreground whitespace-pre-line">{str(cashflow.rentalProjection)}</div>
                           </div>
                         )}
                         {str(cashflow.costs) && (
                           <div className="p-3 rounded-lg bg-secondary/30 border border-border">
                             <div className="text-xs text-muted-foreground mb-1">Development &amp; Operating Costs</div>
-                            <div className="text-foreground whitespace-pre-line">{str(cashflow.costs)}</div>
+                            <div translate="no" dir={textDir(str(cashflow.costs))} className="text-foreground whitespace-pre-line">{str(cashflow.costs)}</div>
                           </div>
                         )}
                         {appreciation != null && (
@@ -717,7 +730,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                         {str(cashflow.exitProjection) && (
                           <div className="p-3 rounded-lg bg-secondary/30 border border-border">
                             <div className="text-xs text-muted-foreground mb-1">Exit Projection</div>
-                            <div className="text-foreground whitespace-pre-line">{str(cashflow.exitProjection)}</div>
+                            <div translate="no" dir={textDir(str(cashflow.exitProjection))} className="text-foreground whitespace-pre-line">{str(cashflow.exitProjection)}</div>
                           </div>
                         )}
                       </div>
@@ -745,7 +758,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                             <div className="text-sm font-semibold text-foreground">{e.name}</div>
                             {e.eta && <Badge variant="outline" className="text-[10px]">{e.eta}</Badge>}
                           </div>
-                          {e.description && <div className="text-xs text-muted-foreground mt-1">{e.description}</div>}
+                          {e.description && <div translate="no" dir={textDir(e.description)} className="text-xs text-muted-foreground mt-1">{e.description}</div>}
                         </div>
                       ))}
                     </div>
@@ -809,6 +822,10 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                 </SectionCard>
               </TabsContent>
 
+              <TabsContent value="due-diligence" className="mt-6">
+                <DueDiligenceTab content={detail.content} propertyId={detail.id} preview={preview} />
+              </TabsContent>
+
               {/* TIMELINE */}
               <TabsContent value="timeline" className="mt-6 space-y-6">
                 <SectionCard icon={HardHat} title="Construction Phase & Pricing Progression">
@@ -844,7 +861,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                                     {m.value_index != null ? ` · Price index ${m.value_index}` : ""}
                                   </span>
                                 </div>
-                                {m.description && <div className="text-xs text-muted-foreground">{m.description}</div>}
+                                {m.description && <div translate="no" dir={textDir(m.description)} className="text-xs text-muted-foreground">{m.description}</div>}
                                 <Progress value={pct} className="h-1.5 mt-1" />
                               </div>
                             </div>
@@ -897,7 +914,7 @@ export default function UnderConstructionView({ detail, investPanel, documentsPa
                       {str(dev.about) && (
                         <div>
                           <div className="text-xs uppercase text-muted-foreground mb-2">Company Overview</div>
-                          <p className="text-sm text-muted-foreground whitespace-pre-line">{str(dev.about)}</p>
+                          <p translate="no" dir={textDir(str(dev.about))} className="text-sm text-muted-foreground whitespace-pre-line">{str(dev.about)}</p>
                         </div>
                       )}
 

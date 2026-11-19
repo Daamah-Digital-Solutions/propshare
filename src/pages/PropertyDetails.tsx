@@ -41,6 +41,10 @@ import { Loader2 } from "lucide-react";
 import { assetUrl, brokerApi, propertyApi, type PropertyDetail } from "@/lib/api";
 import { assetValue } from "@/lib/properties";
 import { fundedPct } from "@/lib/funding";
+import InvestmentModelSection from "@/components/property/InvestmentModelSection";
+import DueDiligenceTab from "@/components/property/DueDiligenceTab";
+import { textDir } from "@/lib/textDir";
+import { InvestmentStrategyButton } from "@/components/property/InvestmentStrategyButton";
 
 const READY_MODELS = new Set(["ready-income", "ready-portfolio"]);
 
@@ -396,12 +400,13 @@ const PropertyDetails = () => {
                       Under Construction
                     </Badge>
                   )}
+                  <InvestmentStrategyButton ready={propertyData.type === "ready"} />
                 </div>
                 
                 <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2">
                   {propertyData.title}
                 </h1>
-                <p className="text-lg text-muted-foreground mb-4">{propertyData.subtitle}</p>
+                <p translate="no" dir={textDir(propertyData.subtitle)} className="text-lg text-muted-foreground mb-4">{propertyData.subtitle}</p>
                 
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <MapPin size={18} />
@@ -436,6 +441,7 @@ const PropertyDetails = () => {
                   <TabsTrigger value="financials" className="rounded-lg">Financials</TabsTrigger>
                   <TabsTrigger value="structure" className="rounded-lg">SPV Structure</TabsTrigger>
                   <TabsTrigger value="documents" className="rounded-lg">Documents</TabsTrigger>
+                  <TabsTrigger value="due-diligence" className="rounded-lg">Due Diligence</TabsTrigger>
                   <TabsTrigger value="timeline" className="rounded-lg">Timeline</TabsTrigger>
                 </TabsList>
 
@@ -443,10 +449,13 @@ const PropertyDetails = () => {
                   {/* Description */}
                   <div>
                     <h3 className="text-xl font-semibold text-foreground mb-4">Property Description</h3>
-                    <div className="prose prose-sm text-muted-foreground max-w-none whitespace-pre-line">
+                    <div translate="no" dir={textDir(propertyData.description)} className="prose prose-sm text-muted-foreground max-w-none whitespace-pre-line">
                       {propertyData.description}
                     </div>
                   </div>
+
+                  {/* how this property makes its return, after purchase, on exit (client letter) */}
+                  <InvestmentModelSection ready />
 
                   {/* Amenities */}
                   {propertyData.amenities.length > 0 && (
@@ -669,6 +678,10 @@ const PropertyDetails = () => {
 
                 <TabsContent value="documents" className="mt-6">
                   <PropertyDocuments propertyId={propertyData.id} preview={preview} />
+                </TabsContent>
+
+                <TabsContent value="due-diligence" className="mt-6">
+                  <DueDiligenceTab content={data?.content} propertyId={propertyData.id} preview={preview} />
                 </TabsContent>
 
                 <TabsContent value="timeline" className="mt-6">

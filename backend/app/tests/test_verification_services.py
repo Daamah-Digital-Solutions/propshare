@@ -58,7 +58,10 @@ def test_the_page_and_the_assistant_list_the_same_services():
         )
     )
     backend = [(s.key, s.title, s.provider, s.url) for s in verification_partners.SERVICES]
-    assert spa == backend
+    # the page lists them all but blockchain records (client, 2026-11-19: not on PropShare's
+    # page); the assistant keeps that one for questions about the blockchain-enabled platforms
+    assert spa == [b for b in backend if b[0] != "blockchain"]
+    assert [b[0] for b in backend][-1] == "blockchain"
     # the certificate check is ours: its "url" is a page of the site, not a link out
     assert verification_partners.CERTIFICATES.internal
     assert verification_partners.CERTIFICATES.url == "/verification-center"

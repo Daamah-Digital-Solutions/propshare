@@ -1,8 +1,8 @@
 /**
  * "Verify Your Documents" (client text, 2026-10-01; certificates 2026-10-28): investment
  * certificates are verified on PropShare itself, by their QR code or the code printed beside
- * it (as on Capimax BRX); the other four kinds of record link to their partner's own site in
- * a new tab.
+ * it (as on Capimax BRX); the other three kinds of record link to their partner's own site in
+ * a new tab. Blockchain records (Proof Anchor) are not listed on PropShare (client, 2026-11-19).
  */
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
@@ -14,7 +14,6 @@ const PARTNERS: [string, string, string, string][] = [
   ["valuation_financial", "CIM Global Financial", "Verify Valuation / Financial Report", "https://www.cimglobalfinancial.com/capimax-verify"],
   ["insurance", "CoverTech Insurance", "Verify Insurance Certificate", "https://www.covertechinsurance.com/capimax-ecosystem"],
   ["legal", "LexCrest Global", "Verify Legal Document", "https://lexcrestlegal.xyz/document-center"],
-  ["blockchain", "Proof Anchor", "Verify Blockchain Record", "https://www.proofanchor.io/verify"],
 ];
 
 function VerifyPage() {
@@ -34,11 +33,13 @@ function mount() {
 }
 
 describe("VerificationPartners", () => {
-  it("lists the five services in order; the four partners link to their own site in a new tab", () => {
+  it("lists the four services in order; the three partners link to their own site in a new tab", () => {
     mount();
     expect(screen.getByRole("heading", { name: "Verify Your Documents" })).toBeInTheDocument();
     const items = within(screen.getByTestId("verification-partners")).getAllByRole("listitem");
-    expect(items).toHaveLength(5);
+    expect(items).toHaveLength(4);
+    expect(screen.queryByTestId("verification-partner-blockchain")).toBeNull();
+    expect(screen.getByTestId("verification-partners")).not.toHaveTextContent(/blockchain|Proof Anchor/i);
     expect(items[0]).toBe(screen.getByTestId("verification-partner-capimax_certificates"));
     PARTNERS.forEach(([key, provider, action, url], i) => {
       const card = screen.getByTestId(`verification-partner-${key}`);

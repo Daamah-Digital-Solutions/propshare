@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TrendingUp, DollarSign, Building2, PiggyBank, BarChart3, Tag } from "lucide-react";
 import { ExitButton } from "@/components/exit/ExitButton";
-import { investApi, returnsApi } from "@/lib/api";
+import { holdingsApi, investApi, returnsApi } from "@/lib/api";
+import { changeLabel, valueChange } from "@/lib/holdingChange";
 
 const money = (v: string | number) => `$${Number(v).toLocaleString()}`;
 
@@ -14,6 +15,9 @@ export const PortfolioOverview = () => {
   });
   const { data: investments } = useQuery({ queryKey: ["investments", "list"], queryFn: investApi.list });
   const { data: returns } = useQuery({ queryKey: ["returns", "mine"], queryFn: returnsApi.getMine });
+  // the units held against what they cost (client letter, 2026-11-18)
+  const { data: held } = useQuery({ queryKey: ["holdings", "mine"], queryFn: holdingsApi.mine });
+  const change = valueChange(held?.items ?? []);
 
   const stats = [
     { title: "Total Invested", value: portfolio ? money(portfolio.invested) : "—", icon: DollarSign },
@@ -69,6 +73,14 @@ export const PortfolioOverview = () => {
                   {stat.title === "Current Value" && portfolio && (
                     <p className="text-xs text-muted-foreground mt-2">
                       {portfolio.units} unit(s) held
+                    </p>
+                  )}
+                  {stat.title === "Current Value" && change.paid !== 0 && (
+                    <p
+                      className={`text-xs font-medium mt-1 ${change.amount < 0 ? "text-destructive" : "text-primary"}`}
+                      data-testid="portfolio-value-change"
+                    >
+                      {`${changeLabel(change)} since purchase`}
                     </p>
                   )}
                 </div>

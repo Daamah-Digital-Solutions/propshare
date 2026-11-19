@@ -15,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import PropertyGrid from "@/components/marketplace/PropertyGrid";
 import { ApiError, assetUrl, developerApi } from "@/lib/api";
 import { toMarketplaceProperty } from "@/lib/properties";
+import { textDir } from "@/lib/textDir";
 
 /**
  * Public developer profile — opened by "View Profile" on a property page.
@@ -151,7 +152,7 @@ export default function DeveloperProfile() {
         {data.about && (
           <section>
             <h2 className="mb-3 text-xl font-semibold text-foreground">About {name}</h2>
-            <div className="max-w-3xl space-y-3 leading-relaxed text-muted-foreground">
+            <div translate="no" dir={textDir(data.about)} className="max-w-3xl space-y-3 leading-relaxed text-muted-foreground">
               {data.about.split(/\n{2,}/).map((para, i) => (
                 <p key={i}>{para}</p>
               ))}

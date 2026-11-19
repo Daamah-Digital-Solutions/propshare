@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import type { Property } from "@/pages/Marketplace";
 import { fundingBar, fundingText } from "@/lib/funding";
+import CardSalesStats from "@/components/marketplace/CardSalesStats";
 
 interface PropertyGridProps {
   properties: Property[];
@@ -150,7 +151,7 @@ const PropertyCard = ({ property, viewMode }: { property: Property; viewMode: "g
               <div className="flex items-center gap-4">
                 <div className="w-32">
                   <div className="flex justify-between text-xs mb-1">
-                    <span className="text-muted-foreground">Funded</span>
+                    <span className="text-muted-foreground">Sold</span>
                     <span className="font-medium text-foreground">{fundingText(property.funded)}</span>
                   </div>
                   <Progress value={fundingBar(property.funded)} className="h-1.5" />
@@ -237,28 +238,15 @@ const PropertyCard = ({ property, viewMode }: { property: Property; viewMode: "g
             </div>
           </div>
 
-          {/* Progress Bar */}
-          <div className="mb-4">
-            <div className="flex justify-between text-sm mb-2">
-              <span className="text-muted-foreground">Funding Progress</span>
-              <span className="font-medium text-foreground">{fundingText(property.funded)}</span>
-            </div>
-            <Progress value={fundingBar(property.funded)} className="h-2" />
-          </div>
+          {/* investors + share sold (client letter, as on Capimax BRX) */}
+          <CardSalesStats investors={property.investors} sold={property.funded} />
 
-          {/* Footer Stats */}
-          <div className="flex items-center justify-between text-xs text-muted-foreground mb-4">
-            <span className="flex items-center gap-1">
-              <Users size={12} />
-              {property.investors} investors
-            </span>
-            {property.daysLeft > 0 && (
-              <span className="flex items-center gap-1">
-                <Clock size={12} />
-                {property.daysLeft} days left
-              </span>
-            )}
-          </div>
+          {property.daysLeft > 0 && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground mb-4">
+              <Clock size={12} />
+              {property.daysLeft} days left
+            </div>
+          )}
 
           {/* CTA */}
           <Button variant="default" className="w-full group/btn">

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Blocks,
   ExternalLink,
   FileCheck2,
   LineChart,
@@ -33,7 +32,6 @@ const ICONS: Record<string, LucideIcon> = {
   valuation_financial: LineChart,
   insurance: ShieldCheck,
   legal: Scale,
-  blockchain: Blocks,
 };
 
 /** The verification code printed beside a certificate's QR code -> its page. */

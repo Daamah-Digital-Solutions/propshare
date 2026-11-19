@@ -33,6 +33,7 @@ import {
 import { payMethod, type PayMethodId } from "@/lib/paymentMethods";
 import { fundingBar, fundingText } from "@/lib/funding";
 import { useNumberDraft } from "@/hooks/useNumberDraft";
+import UnitsField from "./UnitsField";
 
 interface PropertyData {
   propertyValue: number;
@@ -357,6 +358,16 @@ const InvestmentCalculator = ({
 
       {/* Investment Form */}
       <div className="p-6 space-y-6">
+        {/* the number of units, typed directly; it sets the amount below (units x unit price) */}
+        {!reinvesting && unitPrice > 0 && (
+          <UnitsField
+            unitPrice={unitPrice}
+            units={wholeUnits}
+            minAmount={propertyData.minInvestment}
+            maxAmount={propertyData.maxInvestment}
+            onUnits={(n) => setInvestmentAmount(Math.round(n * unitPrice * 100) / 100)}
+          />
+        )}
         {/* Amount Selection */}
         <div>
           <label className="block text-sm font-medium text-foreground mb-3">
@@ -501,7 +512,7 @@ const InvestmentCalculator = ({
               <span className="font-medium text-success">+${netAnnualReturn.toFixed(2)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Est. Total Return (5yr)</span>
+              <span className="text-muted-foreground">Est. Total Return</span>
               <span className="font-medium text-success">+${expectedTotalReturn.toFixed(2)}</span>
             </div>
           </div>

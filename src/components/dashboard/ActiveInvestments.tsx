@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,13 +13,16 @@ import {
   Layers,
   TrendingDown,
   TrendingUp,
+  Send,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ExitButton } from "@/components/exit/ExitButton";
 import { PaymentReturnStatus } from "@/components/dashboard/PaymentReturnStatus";
 import { SukukCertificatesCard } from "@/components/dashboard/SukukCertificatesCard";
 import { UnitMovements } from "@/components/dashboard/UnitMovements";
+import { TransferDialog } from "@/components/dashboard/TransferDialog";
 import { holdingsApi, investApi } from "@/lib/api";
+import { changeLabel, valueChange } from "@/lib/holdingChange";
 
 const money = (v: number) => `$${v.toLocaleString()}`;
 const shortDay = (iso: string) =>
@@ -31,6 +35,8 @@ export const ActiveInvestments = () => {
     queryFn: holdingsApi.mine,
   });
   const holdings = (data?.items ?? []).filter((h) => h.units > 0);
+  // a transfer started from a holding: that property's units, to another investor
+  const [transferFor, setTransferFor] = useState<string | null>(null);
   // Purchases paid through a hosted checkout that the server has not confirmed yet: the
   // units are reserved, the money is with the provider — show them instead of nothing.
   const { data: investments } = useQuery({ queryKey: ["investments", "list"], queryFn: investApi.list });
@@ -52,6 +58,8 @@ export const ActiveInvestments = () => {
   // say so only when both figures are in and really differ (never while one is loading)
   const countsPositions = Boolean(portfolio) && holdingsLoaded && Math.abs(totalValue - heldValue) >= 0.01;
   const totalUnits = holdings.reduce((s, h) => s + h.units, 0);
+  // the units held against what they cost: the change in value, amount and percentage
+  const change = valueChange(holdings);
 
   return (
     <div className="space-y-6">
@@ -104,6 +112,14 @@ export const ActiveInvestments = () => {
               <div>
                 <p className="text-sm text-muted-foreground">Current Value</p>
                 <p className="text-2xl font-bold text-foreground">{money(totalValue)}</p>
+                {change.paid !== 0 && (
+                  <p
+                    className={change.amount < 0 ? "text-[11px] font-medium text-destructive" : "text-[11px] font-medium text-primary"}
+                    data-testid="value-change"
+                  >
+                    {`${changeLabel(change)} since purchase`}
+                  </p>
+                )}
                 {countsPositions && (
                   <p className="text-[11px] text-muted-foreground" data-testid="value-with-positions">
                     with your installment plans as positions
@@ -225,9 +241,9 @@ export const ActiveInvestments = () => {
                         className={`text-[11px] ${
                           Number(h.unit_price) < Number(h.average_cost) ? "text-destructive" : "text-primary"
                         }`}
+                        data-testid="holding-change"
                       >
-                        {Number(h.unit_price) > Number(h.average_cost) ? "+" : "−"}
-                        {money(Math.abs(h.units * (Number(h.unit_price) - Number(h.average_cost))))} on what you paid
+                        {`${changeLabel(valueChange([h]))} on what you paid`}
                       </p>
                     )}
                   </div>
@@ -281,6 +297,18 @@ export const ActiveInvestments = () => {
                       className="text-success border-success/50 hover:bg-success/10"
                     />
                   )}
+                  {h.sellable_units > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => setTransferFor(h.property_id)}
+                      data-testid="holding-transfer"
+                    >
+                      <Send className="h-3 w-3" />
+                      Transfer
+                    </Button>
+                  )}
                   <Link to={`/property/${h.property_id}`}>
                     <Button variant="outline" size="sm" className="gap-2">
                       View
@@ -296,6 +324,15 @@ export const ActiveInvestments = () => {
 
       {/* how the units got here, and where units that left went */}
       <UnitMovements />
+
+      <TransferDialog
+        open={transferFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setTransferFor(null);
+        }}
+        initialAsset="units"
+        initialPropertyId={transferFor ?? undefined}
+      />
     </div>
   );
 };

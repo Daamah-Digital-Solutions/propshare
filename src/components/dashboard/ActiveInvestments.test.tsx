@@ -90,7 +90,8 @@ describe("ActiveInvestments: the unit price of each holding", () => {
     expect(price).toHaveTextContent("+10.0% since launch");
     expect(price).toHaveTextContent("launched at $100 · updated Sep 28, 2026");
     expect(screen.getByText("bought at $100 on average")).toBeInTheDocument();
-    expect(screen.getByText("+$100 on what you paid")).toBeInTheDocument(); // 10 × (110 − 100)
+    expect(screen.getByText("+$100 (+10%) on what you paid")).toBeInTheDocument(); // 10 × (110 − 100), on $1,000
+    expect(screen.getByTestId("value-change")).toHaveTextContent("+$100 (+10%) since purchase");
     expect(screen.queryByTestId("holding-plan-units")).toBeNull();
     expect(screen.queryByTestId("value-with-positions")).toBeNull(); // 10 × $110, nothing else
     // one Sell: it opens the sell flow (secondary market or a liquidity provider) on this property
@@ -105,7 +106,7 @@ describe("ActiveInvestments: the unit price of each holding", () => {
     });
     mount();
     expect(await screen.findByTestId("holding-price")).toHaveTextContent("-5.0% since launch");
-    expect(screen.getByText("−$50 on what you paid")).toBeInTheDocument();
+    expect(screen.getByText("−$50 (−5%) on what you paid")).toBeInTheDocument();
   });
 
   it("shows units on a running plan as part of a position, not as listed for sale", async () => {

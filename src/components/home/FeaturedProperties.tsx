@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { assetUrl, propertyApi } from "@/lib/api";
 import { assetValue, cardReturn } from "@/lib/properties";
-import { fundedPct, fundingBar, fundingText } from "@/lib/funding";
+import { fundedPct } from "@/lib/funding";
+import CardSalesStats from "@/components/marketplace/CardSalesStats";
 
 interface Property {
   id: string;
@@ -16,6 +17,7 @@ interface Property {
   minInvestment: number;
   yield: number;
   funded: number;
+  investors: number;
   type: "ready" | "construction";
   status: "open" | "funding" | "funded";
   developer: string;
@@ -94,19 +96,8 @@ const PropertyCard = ({ property }: { property: Property }) => {
           </div>
         </div>
 
-        {/* Progress Bar */}
-        <div className="mb-4">
-          <div className="flex justify-between text-sm mb-2">
-            <span className="text-muted-foreground">Funding Progress</span>
-            <span className="font-medium text-foreground">{fundingText(property.funded)}</span>
-          </div>
-          <div className="h-2 bg-secondary rounded-full overflow-hidden">
-            <div
-              className="h-full bg-gradient-hero rounded-full transition-all duration-500"
-              style={{ width: `${fundingBar(property.funded)}%` }}
-            />
-          </div>
-        </div>
+        {/* investors + share sold (client letter, as on Capimax BRX) */}
+        <CardSalesStats investors={property.investors} sold={property.funded} />
 
         {/* CTA */}
         <Link to={`/property/${property.id}`}>
@@ -135,6 +126,7 @@ const FeaturedProperties = () => {
     minInvestment: s.minimum_investment,
     yield: cardReturn(s),
     funded: fundedPct(s),
+    investors: s.investors_count,
     type: READY_MODELS.has(s.model) ? "ready" : "construction",
     status: s.status === "funded" ? "funded" : s.funding_progress >= 90 ? "funding" : "open",
     developer: s.developer_name ?? "—",

@@ -69,10 +69,13 @@ export function TransferDialog({
   open,
   onOpenChange,
   initialAsset = "units",
+  initialPropertyId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialAsset?: Asset;
+  /** Opened from a holding in Investments (client letter, 2026-11-18): that property's units. */
+  initialPropertyId?: string;
 }) {
   const qc = useQueryClient();
   const [step, setStep] = useState<Step>("form");
@@ -111,6 +114,7 @@ export function TransferDialog({
     if (!open) return;
     setStep("form");
     setAsset(initialAsset);
+    if (initialPropertyId) setPropertyId(initialPropertyId);
     setUnits("");
     setAmount("");
     setEmail("");
@@ -121,9 +125,12 @@ export function TransferDialog({
     setQuote(null);
     setResult(null);
     setError(null);
-  }, [open, initialAsset]);
+  }, [open, initialAsset, initialPropertyId]);
+  // the first position, unless the one chosen (or asked for) is among them
   useEffect(() => {
-    if (!propertyId && positions.length) setPropertyId(positions[0].property_id);
+    if (positions.length && !positions.some((p) => p.property_id === propertyId)) {
+      setPropertyId(positions[0].property_id);
+    }
   }, [positions, propertyId]);
   useEffect(() => {
     if (!planId && plans.length) setPlanId(plans[0].plan_id);

@@ -45,6 +45,8 @@ const written = new WeakMap<Node, string>();
 let observer: MutationObserver | null = null;
 
 const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+// The longest value a sentence template fills in (a property title, a person's name, an amount).
+const MAX_VALUE = 80;
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 function build(dict: Record<string, string>) {
@@ -102,7 +104,9 @@ export function translate(text: string): string | null {
   if (out === undefined) {
     for (const t of templates) {
       const m = key.match(t.re);
-      if (m) {
+      // the values a template fills in are figures and names: a long one means this is written
+      // text that only happens to contain the template's words ("next to the ..."), left as is
+      if (m && m.slice(1).every((v) => (v ?? "").length <= MAX_VALUE)) {
         // A filled-in value that is itself known text is translated too.
         out = t.out.replace(/\{(\d+)\}/g, (_x, i) => {
           const value = m[Number(i) + 1] ?? "";

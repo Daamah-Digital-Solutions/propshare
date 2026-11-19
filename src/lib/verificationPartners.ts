@@ -3,12 +3,14 @@
  * Verification Center page and in the dashboard's Verification tab. The first is PropShare's
  * own (client, 2026-10-28, as on Capimax BRX): an investment certificate's QR code opens its
  * verification page here, /verify/{code}; it is no longer checked at CIM Global Financial. The
- * other four are partners' sites.
+ * other three are partners' sites.
  *
- * The backend keeps the same five for the assistant, which may link exactly the partners' URLs
+ * The page no longer lists the fifth service, blockchain records at Proof Anchor (client,
+ * 2026-11-19): PropShare is the ecosystem's non-blockchain platform. The backend keeps the same
+ * entries plus that one for the assistant, which may link exactly the partners' URLs and still
+ * answers a question about the blockchain-enabled platforms (Capimax BRX, Capimax RT)
  * (backend/app/services/verification_partners.py); test_verification_services.py keeps the
- * two lists in step. The blockchain wording of the fifth entry is about the ecosystem's
- * blockchain-enabled platforms (Capimax BRX, Capimax RT), never about PropShare units.
+ * two lists in step.
  */
 
 export interface VerificationPartner {
@@ -105,21 +107,6 @@ export const VERIFICATION_PARTNERS: VerificationPartner[] = [
     action: "Verify Legal Document",
     linkLabel: "Open LexCrest Document Center",
     url: "https://lexcrestlegal.xyz/document-center",
-  },
-  {
-    key: "blockchain",
-    title: "Blockchain, Smart Contract & Digital Asset Verification",
-    provider: "Proof Anchor",
-    providerLine: "Proof Anchor",
-    description:
-      "Verify blockchain records, smart contracts, tokenized assets, tokens, audit reports and " +
-      "digital certificates associated with Capimax blockchain-enabled platforms.",
-    howTo:
-      "Search using a Certificate Number, Verification Number, Contract Address, Token Address, " +
-      "Asset ID, or Project Name to access the corresponding verification record.",
-    action: "Verify Blockchain Record",
-    linkLabel: "Verify with Proof Anchor",
-    url: "https://www.proofanchor.io/verify",
   },
 ];
 

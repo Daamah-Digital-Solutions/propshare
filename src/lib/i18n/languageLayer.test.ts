@@ -35,6 +35,20 @@ describe("languageLayer", () => {
     expect(document.getElementById("f")!.textContent).toBe("أكتوبر 2026");
   });
 
+  it("never swaps a listing's written text piece by piece (client letter, 2026-11-18)", () => {
+    const text =
+      "One-bedroom apartments in a 38-storey residential tower in Dubai Creek Harbour, a waterfront " +
+      "community next to the Ras Al Khor wildlife sanctuary, with road access to Downtown Dubai and the " +
+      "airport. Investors lock today's unit price and pay through the platform's standard installment " +
+      "plan: a down payment followed by equal monthly installments.";
+    document.body.innerHTML = `<p id="a">${text}</p><p id="b">Jan to Mar: 3 payments</p>
+      <div id="c" translate="no" dir="auto">Wallet</div>`;
+    enableLanguage("ar", { ...DICT, "{0} to {1}: {2}": "{0} إلى {1}: {2}" });
+    expect(document.getElementById("a")!.textContent).toBe(text); // the values would be whole sentences
+    expect(document.getElementById("b")!.textContent).toBe("يناير إلى مارس: 3 payments"); // short values still are
+    expect(document.getElementById("c")!.textContent).toBe("Wallet");
+  });
+
   it("French has its own months, with the time when there is one", () => {
     document.body.innerHTML = `<p id="a">Oct 28, 2026, 4:07 PM</p>`;
     enableLanguage("fr", {});

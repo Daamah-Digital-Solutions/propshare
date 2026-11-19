@@ -797,6 +797,27 @@ export interface DepositMethods {
   bank: boolean;
 }
 
+/** Cards are not issued yet (client, 2026-11-19): a member can join the waitlist. */
+export type CardType = "personal" | "family" | "team" | "developer" | "owner" | "broker" | "liquidity";
+
+export interface CardWaitlistStatus {
+  joined: boolean;
+  card_type: CardType | null;
+  joined_at: string | null;
+}
+
+export const cardsApi = {
+  waitlist(): Promise<CardWaitlistStatus> {
+    return apiRequest<CardWaitlistStatus>("/api/v1/cards/waitlist");
+  },
+  joinWaitlist(card_type: CardType): Promise<CardWaitlistStatus> {
+    return apiRequest<CardWaitlistStatus>("/api/v1/cards/waitlist", {
+      method: "POST",
+      body: { card_type },
+    });
+  },
+};
+
 export const paymentApi = {
   get(id: string): Promise<PaymentStatus> {
     return apiRequest<PaymentStatus>(`/api/v1/payments/${id}`);
@@ -1119,6 +1140,9 @@ export interface PropertyDocument {
   property_id: string | null;
   title: string;
   type: string;
+  /** who issued it (the valuer, the insurer, the law firm) and the date on it (0043) */
+  issuer?: string | null;
+  issued_on?: string | null;
   download_url: string; // backend-relative; use apiUrl() for an <a href>
   created_at: string;
 }
@@ -1159,6 +1183,8 @@ export interface MyCertificate {
   spv_name: string | null;
   location: string | null;
   status: "valid" | "superseded" | "revoked";
+  /** final = fully paid; provisional = an installment plan on the property is still paid */
+  payment_status?: "final" | "provisional" | null;
   issued_at: string;
 }
 
@@ -1184,6 +1210,8 @@ export interface CertificateVerification {
   signature: string;
   issuer: string;
   verified_at: string;
+  /** final = fully paid; provisional = an installment plan on the property is still paid */
+  payment_status?: "final" | "provisional" | null;
 }
 
 export const certificateApi = {
@@ -2007,6 +2035,10 @@ export const connectApi = {
 
 // --- Secondary market (Phase 8) -------------------------------------------- //
 export interface SecondaryListing {
+  /** 0045, the seller's own listings: the seller fee and what the seller gets */
+  seller_fee?: string | null;
+  seller_net?: string | null;
+  lp_units?: number;
   listing_id: string;
   property_id: string | null;
   property_title: string | null;
@@ -2074,6 +2106,8 @@ export interface MyPosition extends ListingPosition {
   property_id: string;
   property_title: string | null;
   property_location: string | null;
+  /** bought as a liquidity provider through the LP market: resold under its fees (0045) */
+  bought_as_lp?: boolean;
   unit_price: string;
   listing_id: string | null;
   /** pledged | lockup | listed: why it cannot be listed now (null = it can) */
@@ -2104,6 +2138,9 @@ export interface SecondaryTrade {
   gross: string;
   resale_fee: string;
   total_charged: string;
+  /** 0045: the seller's fee, and a provider-seller's share of the buyer's fee */
+  seller_fee?: string;
+  lp_fee_share?: string;
   created_at: string | null;
   /** the sale of an installment position: `gross` is the cash paid to the seller */
   plan_id?: string | null;
@@ -2114,7 +2151,12 @@ export interface SecondaryTrade {
 }
 
 export interface SecondarySettings {
+  /** the buyer's fee, on top of the price */
   resale_fee_pct: string;
+  /** the seller's fee, out of the proceeds (0045) */
+  seller_fee_pct?: string;
+  /** a liquidity provider's share of the fees of its deals (0045) */
+  lp_fee_share_pct?: string;
   lockup_days: number;
   price_min_pct: string | null;
   price_max_pct: string | null;
@@ -2131,6 +2173,8 @@ export interface Holding {
   /** held for Nova Finance until the pledge is released (paid with a Nova Sukuk certificate) */
   pledged_units?: number;
   sellable_units: number;
+  /** of those, units bought as a liquidity provider: no seller fee, a share of the buyer's */
+  lp_units?: number;
   /** the price of a unit now */
   unit_price: string;
   /** why units cannot be listed, by reason -> units */
@@ -2286,7 +2330,10 @@ export interface LpPoolTier {
 
 export interface LiquiditySettings {
   discount_pct: string;
+  /** the seller's fee when a provider buys */
   fee_pct: string;
+  /** the provider's share of it, percent of the deal (0045) */
+  fee_share_pct?: string;
   ttl_minutes: number;
   band_pct: string;
   passive_enabled: boolean;
